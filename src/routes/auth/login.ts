@@ -1,0 +1,149 @@
+import { FastifyInstance } from "fastify";
+import { db } from "../../database/index.js";
+import { users } from "../../database/schema.js";
+import { loginBodySchema } from "../../schemas/auth.schema.js";
+import bcrypt from "bcryptjs";
+import { eq } from "drizzle-orm";
+import { verifyRecaptcha, isRecaptchaEnabled } from "../../utils/recaptcha.js";
+import { JWT_EXPIRY } from "../../constants/auth.js";
+
+export default async function (fastify: FastifyInstance) {
+  fastify.post("/login", async (request, reply) => {
+    // 1. Validate request body
+    const result = loginBodySchema.safeParse(request.body);
+    if (!result.success) {
+      return reply.status(400).send({
+        success: false,
+        error: "Invalid input",
+        details: result.error.flatten(),
+      });
+    }
+
+    const { email, pharmacyLicenseId, password, recaptchaToken } = result.data;
+
+    // Verify reCAPTCHA if enabled
+    if (isRecaptchaEnabled()) {
+      if (!recaptchaToken) {
+        return reply.status(400).send({
+          success: false,
+          error: "reCAPTCHA verification required",
+        });
+      }
+
+      const isValidRecaptcha = await verifyRecaptcha(recaptchaToken);
+      if (!isValidRecaptcha) {
+        return reply.status(400).send({
+          success: false,
+          error: "reCAPTCHA verification failed",
+        });
+      }
+    }
+
+    try {
+      // 2. Find user (by email OR pharmacyLicenseId based on what is provided)
+      let userQuery = db.select().from(users);
+      if (email) {
+        userQuery = userQuery.where(eq(users.email, email)) as any;
+      } else if (pharmacyLicenseId) {
+        userQuery = userQuery.where(eq(users.pharmacyLicenseId, pharmacyLicenseId)) as any;
+      }
+
+      const userList = await userQuery.limit(1);
+
+      if (userList.length === 0) {
+        return reply.status(401).send({
+          success: false,
+          error: "Invalid email or password",
+        });
+      }
+
+      const user = userList[0];
+
+      // 3. Verify password
+      const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+
+      if (!isPasswordValid) {
+        return reply.status(401).send({
+          success: false,
+          error: "Invalid email or password",
+        });
+      }
+
+      // 4. Check account status
+      if (user.status === 'pending_approval') {
+        return reply.status(403).send({
+          success: false,
+          error: "ACCOUNT_PENDING",
+        });
+      }
+
+      if (user.status === 'rejected') {
+        return reply.status(403).send({
+          success: false,
+          error: "ACCOUNT_REJECTED",
+          rejectionReason: user.rejectionReason,
+        });
+      }
+
+      // 5. Map delegate type
+      let delegateType = "";
+      let isThai = user.country === "Thailand";
+
+      switch (user.role) {
+        case "student":
+          delegateType = isThai ? "thai_student" : "international_student";
+          break;
+        case "pharmacist":
+          delegateType = isThai ? "thai_pharmacist" : "international_pharmacist";
+          break;
+        case "medical_professional":
+          delegateType = "medical_professional";
+          break;
+        case "general":
+          delegateType = "general";
+          break;
+        default:
+          delegateType = "unknown";
+      }
+
+      // 6. Sign JWT token
+      const token = fastify.jwt.sign(
+        {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+        },
+        { expiresIn: JWT_EXPIRY }
+      );
+
+      // 7. Return user data with token
+      return reply.send({
+        success: true,
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          country: user.country,
+          delegateType,
+          isThai: isThai,
+          idCard: user.thaiIdCard,
+          phone: user.phone,
+          institution: user.institution,
+          university: user.university,
+          pharmacyLicenseId: user.pharmacyLicenseId,
+          name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+        },
+      });
+
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: "Internal server error",
+      });
+    }
+  });
+}

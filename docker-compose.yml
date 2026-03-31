@@ -1,0 +1,24 @@
+# Development Docker Compose - Conference Hub API
+# Run: docker compose up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: confer-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: confer_user
+      POSTGRES_PASSWORD: confer_password
+      POSTGRES_DB: confer_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U confer_user -d confer_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
