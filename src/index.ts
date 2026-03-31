@@ -260,8 +260,9 @@ fastify.get("/", async () => ({
 // ============================================================================
 const start = async () => {
   try {
-    await fastify.listen({ port: 3002, host: "0.0.0.0" });
-    fastify.log.info("🚀 API running on http://localhost:3002");
+    const port = parseInt(process.env.PORT || "3002", 10);
+    await fastify.listen({ port, host: "0.0.0.0" });
+    fastify.log.info(`🚀 API running on port ${port}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
