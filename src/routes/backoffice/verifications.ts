@@ -1,9 +1,10 @@
 import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
-import { users, verificationRejectionHistory, backofficeUsers } from "../../database/schema.js";
+import { users, verificationRejectionHistory, backofficeUsers, events } from "../../database/schema.js";
 import { eq, desc, isNotNull, ilike, or, count, and, SQL } from "drizzle-orm";
 import z from "zod";
-import { sendVerificationApprovedEmail, sendVerificationRejectedEmail } from "../../services/emailService.js";
+import { sendEventVerificationApprovedEmail, sendEventVerificationRejectedEmail } from "../../services/emailTemplates.js";
+import { buildEventEmailContext, getDefaultEventEmailContext, EventEmailRow } from "../../services/emailTemplates.types.js";
 
 const rejectSchema = z.object({
   reason: z.string().min(1, "Reason is required"),
@@ -128,10 +129,31 @@ export default async function (fastify: FastifyInstance) {
         return reply.status(404).send({ error: "User not found" });
       }
 
+      // Lookup event context from user's registeredFromEvent
+      let ctx = getDefaultEventEmailContext();
+      if (updatedUser.registeredFromEvent) {
+        const [eventRow] = await db
+          .select({
+            eventName: events.eventName,
+            startDate: events.startDate,
+            endDate: events.endDate,
+            location: events.location,
+            websiteUrl: events.websiteUrl,
+            shortName: events.shortName,
+          })
+          .from(events)
+          .where(eq(events.eventCode, updatedUser.registeredFromEvent))
+          .limit(1);
+        if (eventRow) {
+          ctx = buildEventEmailContext(eventRow as EventEmailRow);
+        }
+      }
+
       // Send email notification
-      await sendVerificationApprovedEmail(
+      await sendEventVerificationApprovedEmail(
         updatedUser.email,
         updatedUser.firstName,
+        ctx,
         comment
       );
 
@@ -176,12 +198,33 @@ export default async function (fastify: FastifyInstance) {
         rejectedBy: backofficeUser?.id ?? null,
       });
 
+      // Lookup event context from user's registeredFromEvent
+      let ctx = getDefaultEventEmailContext();
+      if (updatedUser.registeredFromEvent) {
+        const [eventRow] = await db
+          .select({
+            eventName: events.eventName,
+            startDate: events.startDate,
+            endDate: events.endDate,
+            location: events.location,
+            websiteUrl: events.websiteUrl,
+            shortName: events.shortName,
+          })
+          .from(events)
+          .where(eq(events.eventCode, updatedUser.registeredFromEvent))
+          .limit(1);
+        if (eventRow) {
+          ctx = buildEventEmailContext(eventRow as EventEmailRow);
+        }
+      }
+
       // Send rejection email notification
       try {
-        await sendVerificationRejectedEmail(
+        await sendEventVerificationRejectedEmail(
           updatedUser.email,
           updatedUser.firstName,
           updatedUser.lastName,
+          ctx,
           result.data.reason
         );
         fastify.log.info(`Verification rejected email sent to ${updatedUser.email}`);

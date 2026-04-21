@@ -6,7 +6,7 @@ export const coAuthorSchema = z.object({
     lastName: z.string().min(1, 'Last name is required'),
     email: z.string().email('Invalid email address'),
     institution: z.string().min(1, 'Institution is required'),
-    country: z.string().min(1, 'Country is required'),
+    country: z.string().optional(),
 });
 
 // Abstract submission validation schema
@@ -16,7 +16,7 @@ export const abstractSubmissionSchema = z.object({
     lastName: z.string().min(1, 'Last name is required'),
     email: z.string().email('Invalid email address'),
     affiliation: z.string().min(1, 'Affiliation is required'),
-    country: z.string().min(1, 'Country is required'),
+    country: z.string().optional(),
     phone: z.string().optional(),
 
     // Abstract Details
@@ -35,8 +35,8 @@ export const abstractSubmissionSchema = z.object({
     // Co-Authors (optional, will be parsed from JSON string in multipart)
     coAuthors: z.array(coAuthorSchema).optional().default([]),
 
-    // Event ID
-    eventId: z.coerce.number().optional(),
+    // Event Code (e.g. "PRIS-2026")
+    eventCode: z.string().optional(),
 });
 
 // Backoffice: List abstracts

@@ -93,9 +93,7 @@ export interface Abstract {
 export interface AbstractCategoryItem {
   id: number;
   eventId: number;
-  slug: string;
   name: string;
-  displayOrder: number;
   isActive: boolean;
   createdAt: string;
 }

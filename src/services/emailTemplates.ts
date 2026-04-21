@@ -379,17 +379,23 @@ export async function sendEventAbstractSubmissionEmail(
   lastName: string,
   trackingId: string,
   abstractTitle: string,
-  ctx: EventEmailContext
+  ctx: EventEmailContext,
+  presentationType?: string,
 ): Promise<void> {
-  const plainText = `
-Thank you for submitting the abstract for the poster or oral presentation at the ${ctx.eventName}. ${introLine(ctx)}
+  const typeLabel = presentationType === "oral" ? "Oral Presentation" : presentationType === "poster" ? "Poster Presentation" : "Presentation";
 
-We have already received your abstract and will notify you of the result of the abstract acceptance within 2 weeks after abstract submission.
+  const plainText = `
+Dear ${firstName} ${lastName},
+
+Thank you for submitting your abstract for ${typeLabel} at the ${ctx.eventName}. ${introLine(ctx)}
+
+We have received your abstract and will notify you of the acceptance result within 2 weeks after the submission deadline.
 
 Tracking ID: ${trackingId}
 Abstract Title: ${abstractTitle}
+Presentation Type: ${typeLabel}
 
-If you have any questions, please get in touch with pr@pharmacycouncil.org
+If you have any questions, please contact pr@pharmacycouncil.org
 
 ${signature(ctx)}
   `.trim();
@@ -559,7 +565,7 @@ Dear ${firstName} ${lastName},
 
 Thank you for your registration for the ${ctx.eventName}. ${introLine(ctx)}
 
-For the student registration fee, we have to check the documents to verify that they are students. This will take 3-5 days. After finishing checking the document, we will email you again for the registration confirmation.
+For the student registration fee, we have to check the documents to verify that they are students. This will take 5-7 business days. After finishing checking the document, we will email you again for the registration confirmation.
 
 ${signature(ctx)}
   `.trim();
@@ -627,7 +633,7 @@ Dear ${firstName} ${lastName},
 
 Thank you for your registration for the ${ctx.eventName}. ${introLine(ctx)}
 
-For the student registration fee, we have to check the documents to verify that they are students. Your document has some concerns, so could you please send us another document within 2 days? This will take 3-5 days. After finishing checking the document, we will email you again for the registration confirmation.
+For the student registration fee, we have to check the documents to verify that they are students. Your document has some concerns, so could you please send us another document within 2 days? This will take 5-7 business days. After finishing checking the document, we will email you again for the registration confirmation.
 ${reasonText}
 ${signature(ctx)}
   `.trim();
@@ -656,7 +662,7 @@ Dear ${firstName} ${lastName},
 
 Thank you for resubmitting your verification document for the ${ctx.eventName}. ${introLine(ctx)}
 
-We have received your new document and will review it within 3-5 business days. After finishing checking the document, we will email you again for the registration confirmation.
+We have received your new document and will review it within 5-7 business days. After finishing checking the document, we will email you again for the registration confirmation.
 
 ${signature(ctx)}
   `.trim();

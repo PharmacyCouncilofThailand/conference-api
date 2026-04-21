@@ -4,15 +4,15 @@ import { db } from "../../../database/index.js";
 import {
   abstracts,
   abstractCoAuthors,
+  abstractCategories,
+  events,
 } from "../../../database/schema.js";
 import {
   uploadToGoogleDrive,
-  getCategoryFolderName,
-  getPresentationTypeFolderName,
-  AbstractCategory,
-  PresentationType,
 } from "../../../services/googleDrive.js";
 import { eq, and, sql } from "drizzle-orm";
+import { buildEventEmailContext, getDefaultEventEmailContext, type EventEmailRow } from "../../../services/emailTemplates.types.js";
+import { sendEventAbstractSubmissionEmail, sendEventCoAuthorNotificationEmail } from "../../../services/emailTemplates.js";
 
 // Allowed file types for abstract documents
 const ALLOWED_MIME_TYPES = ["application/pdf"];
@@ -94,7 +94,7 @@ export default async function (fastify: FastifyInstance) {
           if (fileBuffer.length > MAX_FILE_SIZE) {
             return reply.status(400).send({
               success: false,
-              error: "File too large. Maximum size is 10MB.",
+              error: "File too large. Maximum size is 30MB.",
             });
           }
         } else if (part.type === "field") {
@@ -138,7 +138,6 @@ export default async function (fastify: FastifyInstance) {
         lastName,
         email,
         affiliation,
-        country,
         phone,
         title,
         category,
@@ -150,7 +149,7 @@ export default async function (fastify: FastifyInstance) {
         results,
         conclusion,
         coAuthors,
-        eventId,
+        eventCode,
       } = result.data;
 
       // Validate word count
@@ -176,25 +175,89 @@ export default async function (fastify: FastifyInstance) {
         });
       }
 
-      // Upload file to Google Drive (BLOCKING - Keep this to ensure file safety)
-      // Files are organized into: ABSTRACT/{Presentation Type}/{Category}
+      // ── Resolve event by eventCode ──────────────────────────────────────
+      let finalEventId = DEFAULT_EVENT_ID;
+      let resolvedEventCode = eventCode || "";
+
+      let eventEmailRow: EventEmailRow | null = null;
+
+      if (eventCode) {
+        const [eventRow] = await db
+          .select({
+            id: events.id,
+            eventCode: events.eventCode,
+            eventName: events.eventName,
+            shortName: events.shortName,
+            startDate: events.startDate,
+            endDate: events.endDate,
+            location: events.location,
+            websiteUrl: events.websiteUrl,
+          })
+          .from(events)
+          .where(eq(events.eventCode, eventCode))
+          .limit(1);
+
+        if (!eventRow) {
+          return reply.status(400).send({
+            success: false,
+            error: `Invalid event code: ${eventCode}`,
+          });
+        }
+        finalEventId = eventRow.id;
+        resolvedEventCode = eventRow.eventCode;
+        eventEmailRow = eventRow as EventEmailRow;
+      }
+
+      // ── Validate category name against abstract_categories table ─────────
+      const categoryDisplayName = category;
+
+      if (finalEventId) {
+        const [catRow] = await db
+          .select({ id: abstractCategories.id })
+          .from(abstractCategories)
+          .where(
+            and(
+              eq(abstractCategories.eventId, finalEventId),
+              eq(abstractCategories.name, category),
+              eq(abstractCategories.isActive, true),
+            )
+          )
+          .limit(1);
+
+        if (!catRow) {
+          return reply.status(400).send({
+            success: false,
+            error: `Invalid category "${category}" for this event`,
+          });
+        }
+      }
+
+      // ── Upload file to Google Drive ─────────────────────────────────────
+      // Folder structure: Root → EventCode → Type (Oral/Poster) → Category name
       let fullPaperUrl: string;
       try {
-        const presentationFolderName = getPresentationTypeFolderName(
-          presentationType as PresentationType,
-        );
-        const categoryFolderName = getCategoryFolderName(
-          category as AbstractCategory,
-        );
+        const typeFolderName = presentationType === "oral" ? "Oral" : "Poster";
+
+        // Build sanitised filename: {eventCode}_{type}_abstract_{title}.pdf
+        const sanitizedTitle = title
+          .replace(/[^a-zA-Z0-9\s\u0E00-\u0E7F]/g, "")
+          .replace(/\s+/g, "_")
+          .substring(0, 80);
+        const docFileName = resolvedEventCode
+          ? `${resolvedEventCode}_${presentationType}_abstract_${sanitizedTitle}.pdf`
+          : `abstract_${sanitizedTitle}.pdf`;
+
+        // Build subfolder path
+        const subfolders: string[] = resolvedEventCode
+          ? [resolvedEventCode, typeFolderName, categoryDisplayName]
+          : [typeFolderName, categoryDisplayName];
+
         fullPaperUrl = await uploadToGoogleDrive(
           fileBuffer,
-          fileName,
+          docFileName,
           mimeType,
           "abstracts",
-          presentationFolderName, // First subfolder: "Poster presentation" or "Oral presentation"
-          categoryFolderName, // Nested subfolder: "1. Clinical Pharmacy", etc.
-          presentationType as PresentationType, // For direct ENV lookup (fast path)
-          category as AbstractCategory, // For direct ENV lookup (fast path)
+          subfolders,
         );
       } catch (error) {
         fastify.log.error({ err: error }, "Google Drive upload failed");
@@ -203,8 +266,6 @@ export default async function (fastify: FastifyInstance) {
           error: "Failed to upload abstract file. Please try again.",
         });
       }
-
-      const finalEventId = eventId || DEFAULT_EVENT_ID;
 
       // Prepare abstract data (userId from JWT token)
       const abstractData: any = {
@@ -229,16 +290,21 @@ export default async function (fastify: FastifyInstance) {
         .values(abstractData)
         .returning();
 
-      // Generate tracking ID based on presentation type
-      const prefix = process.env.TRACKING_ID_PREFIX || "CONF";
+      // Generate tracking ID based on event + presentation type
+      const prefix = resolvedEventCode || process.env.TRACKING_ID_PREFIX || "CONF";
       const padLength = parseInt(process.env.TRACKING_ID_PAD_LENGTH || "3", 10);
       const typePrefix = presentationType === "oral" ? "O" : "P";
       
-      // Count existing abstracts of same presentation type to get running number
+      // Count existing abstracts of same presentation type within the same event
       const countResult = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(abstracts)
-        .where(eq(abstracts.presentationType, presentationType as "oral" | "poster"));
+        .where(
+          and(
+            eq(abstracts.eventId, finalEventId),
+            eq(abstracts.presentationType, presentationType as "oral" | "poster"),
+          )
+        );
       
       const runningNumber = (countResult[0]?.count || 0);
       const trackingId = `${prefix}-${typePrefix}${String(runningNumber).padStart(padLength, "0")}`;
@@ -269,16 +335,20 @@ export default async function (fastify: FastifyInstance) {
       // -----------------------------------------------------------------------
       const runEmailTasksInBackground = async () => {
         try {
-          const { sendAbstractSubmissionEmail, sendCoAuthorNotificationEmail } =
-            await import("../../../services/emailService.js");
+          // Build event email context
+          const ctx = eventEmailRow
+            ? buildEventEmailContext(eventEmailRow)
+            : getDefaultEventEmailContext();
 
           // 1. Send to Main Author
-          await sendAbstractSubmissionEmail(
+          await sendEventAbstractSubmissionEmail(
             email,
             firstName,
             lastName,
             trackingId,
             title,
+            ctx,
+            presentationType,
           );
 
           fastify.log.info(
@@ -293,13 +363,14 @@ export default async function (fastify: FastifyInstance) {
               await delay(800);
 
               try {
-                await sendCoAuthorNotificationEmail(
+                await sendEventCoAuthorNotificationEmail(
                   coAuthor.email,
                   coAuthor.firstName,
                   coAuthor.lastName,
                   mainAuthorName,
                   trackingId,
                   title,
+                  ctx,
                 );
                 fastify.log.info(
                   `Background: Co-author notification sent to ${coAuthor.email}`,

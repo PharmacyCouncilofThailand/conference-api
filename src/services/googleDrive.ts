@@ -164,22 +164,24 @@ async function getOrCreateFolder(parentFolderId: string, folderName: string): Pr
 }
 
 /**
- * Upload a file to Google Drive and return shareable link
- * @param folderType - Which folder to upload to (student_docs or abstracts)
- * @param subfolder - Optional subfolder path (e.g., "Poster presentation" for abstracts)
- * @param nestedSubfolder - Optional nested subfolder inside subfolder (e.g., "1. Clinical Pharmacy")
- * @param presentationType - Optional presentation type for direct ENV lookup (faster)
- * @param category - Optional category for direct ENV lookup (faster)
+ * Upload a file to Google Drive and return shareable link.
+ *
+ * Supports two calling styles:
+ *   1. Legacy (string params):  uploadToGoogleDrive(buf, name, mime, "student_docs", "subfolder", "nested")
+ *   2. Array-based (recommended): uploadToGoogleDrive(buf, name, mime, "abstracts", ["PRIS-2026", "Oral", "Clinical Pharmacy"])
+ *
+ * @param folderType  - Root folder type (mapped to ENV variable)
+ * @param subfolders  - A single string, an array of folder names, or undefined.
+ *                      Each element is created inside its parent if it doesn't exist.
+ * @param nestedSubfolder - (Legacy) second-level subfolder string
  */
 export async function uploadToGoogleDrive(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
   folderType: UploadFolderType = "student_docs",
-  subfolder?: string,
+  subfolders?: string | string[],
   nestedSubfolder?: string,
-  presentationType?: PresentationType,
-  category?: AbstractCategory
 ): Promise<string> {
   const drive = getDriveClient();
 
@@ -190,39 +192,26 @@ export async function uploadToGoogleDrive(
     throw new Error(`${envKey} environment variable not set`);
   }
 
-  // For abstracts: Try to get direct subfolder ID from ENV (faster - skips folder lookup)
-  if (folderType === "abstracts" && presentationType && category) {
-    const directFolderId = getDirectSubfolderFromEnv(presentationType, category);
-    if (directFolderId) {
-      // Use direct folder ID from ENV (fast path - no API calls)
-      folderId = directFolderId;
-    } else {
-      // Fallback: use folder lookup (slower but automatic)
-      if (subfolder) {
-        folderId = await getOrCreateFolder(folderId, subfolder);
-      }
-      if (nestedSubfolder) {
-        folderId = await getOrCreateFolder(folderId, nestedSubfolder);
-      }
-    }
-  } else {
-    // Non-abstract uploads: use folder lookup as before
-    if (subfolder) {
-      folderId = await getOrCreateFolder(folderId, subfolder);
-    }
+  // Resolve subfolders — normalise to array
+  const folderPath: string[] = [];
+  if (Array.isArray(subfolders)) {
+    folderPath.push(...subfolders);
+  } else if (typeof subfolders === "string") {
+    folderPath.push(subfolders);
     if (nestedSubfolder) {
-      folderId = await getOrCreateFolder(folderId, nestedSubfolder);
+      folderPath.push(nestedSubfolder);
     }
   }
 
-  // Generate unique filename with timestamp
-  const timestamp = Date.now();
-  const uniqueFileName = `${timestamp}_${fileName}`;
+  // Walk down the folder tree, creating any missing folders
+  for (const folder of folderPath) {
+    folderId = await getOrCreateFolder(folderId, folder);
+  }
 
   // Upload file
   const response = await drive.files.create({
     requestBody: {
-      name: uniqueFileName,
+      name: fileName,
       parents: [folderId],
     },
     media: {

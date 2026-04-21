@@ -114,6 +114,7 @@ export const users = pgTable("users", {
   rejectionReason: text("rejection_reason"),
   resubmissionCount: integer("resubmission_count").notNull().default(0),
   studentLevel: studentLevelEnum("student_level"),
+  registeredFromEvent: varchar("registered_from_event", { length: 50 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -513,9 +514,7 @@ export const abstractCategories = pgTable("abstract_categories", {
   eventId: integer("event_id")
     .notNull()
     .references(() => events.id, { onDelete: "cascade" }),
-  slug: varchar("slug", { length: 100 }).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
-  displayOrder: integer("display_order").default(0),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

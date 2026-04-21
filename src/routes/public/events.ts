@@ -8,6 +8,7 @@ import {
   ticketSessions,
   registrations,
   users,
+  abstractCategories,
 } from "../../database/schema.js";
 import { eq, desc, min, asc, sql, and, inArray } from "drizzle-orm";
 
@@ -134,6 +135,47 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
     } catch (error) {
       fastify.log.error(error);
       return reply.status(500).send({ error: "Failed to fetch university stats" });
+    }
+  });
+
+  // Get abstract categories for an event (by ID or eventCode)
+  fastify.get("/:id/abstract-categories", async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    try {
+      const isNumeric = /^\d+$/.test(id);
+
+      const [event] = await db
+        .select({ id: events.id, eventCode: events.eventCode })
+        .from(events)
+        .where(isNumeric ? eq(events.id, parseInt(id, 10)) : eq(events.eventCode, id))
+        .limit(1);
+
+      if (!event) {
+        return reply.status(404).send({ error: "Event not found" });
+      }
+
+      const categories = await db
+        .select({
+          id: abstractCategories.id,
+          name: abstractCategories.name,
+        })
+        .from(abstractCategories)
+        .where(
+          and(
+            eq(abstractCategories.eventId, event.id),
+            eq(abstractCategories.isActive, true),
+          )
+        )
+        .orderBy(asc(abstractCategories.name));
+
+      return reply.send({
+        eventCode: event.eventCode,
+        categories,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: "Failed to fetch abstract categories" });
     }
   });
 

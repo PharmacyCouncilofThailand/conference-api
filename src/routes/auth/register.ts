@@ -190,10 +190,18 @@ export async function authRoutes(fastify: FastifyInstance) {
       let verificationDocUrl: string | null = null;
       if (fileBuffer) {
         try {
+          // Build filename using user's name instead of original filename
+          const fileExt = fileName.includes('.') ? fileName.substring(fileName.lastIndexOf('.')) : '';
+          const docFileName = eventCode
+            ? `${eventCode}_std_${firstName}_${lastName}${fileExt}`
+            : `std_${firstName}_${lastName}${fileExt}`;
+
           verificationDocUrl = await uploadToGoogleDrive(
             fileBuffer,
-            fileName,
-            mimeType
+            docFileName,
+            mimeType,
+            "student_docs",
+            eventCode || undefined, // subfolder = eventCode (auto-created if not exists)
           );
         } catch (error) {
           fastify.log.error({ err: error }, "Google Drive upload failed");
@@ -236,6 +244,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           verificationDocUrl,
           status: initialStatus,
           studentLevel: studentLevel,
+          registeredFromEvent: eventCode || null,
         })
         .returning();
 

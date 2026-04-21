@@ -158,6 +158,7 @@ import backofficeTicketsRoutes from "./routes/backoffice/tickets.js";
 import backofficeSessionsRoutes from "./routes/backoffice/sessions.js";
 import backofficePromoCodesRoutes from "./routes/backoffice/promoCodes.js";
 import backofficeMembersRoutes from "./routes/backoffice/members.js";
+import backofficeAbstractCategoriesRoutes from "./routes/backoffice/abstractCategories.js";
 import publicSpeakersRoutes from "./routes/public/speakers.js";
 import publicEventsRoutes from "./routes/public/events.js";
 import abstractSubmitRoutes from "./routes/public/abstracts/submit.js";
@@ -240,6 +241,7 @@ fastify.register(async (protectedRoutes) => {
   protectedRoutes.register(backofficeSessionsRoutes, { prefix: "/sessions" });
   protectedRoutes.register(backofficePromoCodesRoutes, { prefix: "/promo-codes" });
   protectedRoutes.register(backofficeMembersRoutes, { prefix: "/members" });
+  protectedRoutes.register(backofficeAbstractCategoriesRoutes, { prefix: "/abstract-categories" });
 }, { prefix: "/api/backoffice" });
 
 // ============================================================================
