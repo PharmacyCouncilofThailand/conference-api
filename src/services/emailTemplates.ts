@@ -159,6 +159,17 @@ async function sendNipaMailHtml(
 // Shared helpers
 // ============================================
 
+/** Standard return shape for content builders (used by render endpoint for preview) */
+export interface EventEmailContent {
+  subject: string;
+  html: string;
+}
+
+/** Convert plain text email to HTML by replacing newlines with <br> */
+function textToHtml(text: string): string {
+  return text.replace(/\n/g, "<br>\n");
+}
+
 /** Build email signature block */
 function signature(_ctx: EventEmailContext): string {
   return `Sincerely,\nThe Pharmacy Council of Thailand`;
@@ -173,15 +184,14 @@ function introLine(ctx: EventEmailContext): string {
 // 1. EVENT REGISTRATION EMAIL (Generic version of sendManualRegistrationEmail)
 // ============================================
 
-export async function sendEventRegistrationEmail(
-  email: string,
+export function buildEventRegistrationEmailContent(
   firstName: string,
   lastName: string,
   regCode: string,
   ticketName: string,
   sessions: { sessionName: string; startTime: Date; endTime: Date }[],
   ctx: EventEmailContext
-): Promise<void> {
+): EventEmailContent {
   const sessionLines =
     sessions.length > 0
       ? sessions
@@ -230,18 +240,37 @@ See you soon at ${ctx.shortName}.
 ${signature(ctx)}
   `.trim();
 
-  let htmlContent = plainText.replace(/\n/g, "<br>\n");
+  let html = textToHtml(plainText);
 
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(regCode)}`;
   const qrHtml = `<br><div style="text-align:center;margin:20px 0;"><img src="${qrUrl}" alt="QR Code: ${regCode}" width="200" height="200" style="display:block;margin:0 auto;" /><p style="font-size:13px;color:#6b7280;margin-top:8px;">Scan this QR code at the registration desk for fast check-in</p></div>`;
 
-  htmlContent = htmlContent.replace(
+  html = html.replace(
     `Registration Code: ${regCode}`,
     `Registration Code: <strong>${regCode}</strong>${qrHtml}`
   );
 
+  return {
+    subject: `Registration Confirmed - ${ctx.shortName}`,
+    html,
+  };
+}
+
+export async function sendEventRegistrationEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  regCode: string,
+  ticketName: string,
+  sessions: { sessionName: string; startTime: Date; endTime: Date }[],
+  ctx: EventEmailContext
+): Promise<void> {
+  const { subject, html } = buildEventRegistrationEmailContent(
+    firstName, lastName, regCode, ticketName, sessions, ctx
+  );
+
   try {
-    await sendNipaMailHtml(email, `Registration Confirmed - ${ctx.shortName}`, htmlContent);
+    await sendNipaMailHtml(email, subject, html);
     console.log(`[Generic] Registration email sent to ${email} [${regCode}]`);
   } catch (error) {
     console.error("[Generic] Error sending registration email:", error);
@@ -265,15 +294,14 @@ interface TaxInvoiceEmailInfo {
   taxFullAddress: string | null;
 }
 
-export async function sendEventPaymentReceiptEmail(
-  email: string,
+export function buildEventPaymentReceiptEmailContent(
   firstName: string,
   lastName: string,
   orderNumber: string,
   paidAt: Date,
   paymentChannel: string,
   items: ReceiptEmailItem[],
-  subtotal: number,
+  _subtotal: number,
   fee: number,
   total: number,
   currency: string,
@@ -281,7 +309,7 @@ export async function sendEventPaymentReceiptEmail(
   ctx: EventEmailContext,
   taxInvoice?: TaxInvoiceEmailInfo,
   regCode?: string
-): Promise<void> {
+): EventEmailContent {
   const currencySymbol = currency === "THB" ? "\u0E3F" : "$";
   const methodLabel =
     paymentChannel === "promptpay" ? "PromptPay (QR)" : "Credit/Debit Card";
@@ -345,23 +373,51 @@ See you soon at ${ctx.shortName}.
 ${signature(ctx)}
   `.trim();
 
-  let htmlContent = plainText.replace(/\n/g, "<br>\n");
+  let html = textToHtml(plainText);
 
-  htmlContent = htmlContent.replace(
+  html = html.replace(
     `Download your receipt (PDF): ${receiptDownloadUrl}`,
     `Download your receipt (PDF): <a href="${receiptDownloadUrl}" style="color: #1a73e8; font-weight: bold; text-decoration: underline;">Download Here</a>`
   );
 
   if (qrUrl && regCode) {
     const qrHtml = `<br><div style="text-align:center;margin:20px 0;"><img src="${qrUrl}" alt="QR Code: ${regCode}" width="200" height="200" style="display:block;margin:0 auto;" /></div>`;
-    htmlContent = htmlContent.replace(
+    html = html.replace(
       `Registration Code: ${regCode}`,
       `Registration Code: <strong>${regCode}</strong>${qrHtml}`
     );
   }
 
+  return {
+    subject: `Payment Receipt - ${orderNumber} | ${ctx.shortName}`,
+    html,
+  };
+}
+
+export async function sendEventPaymentReceiptEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  orderNumber: string,
+  paidAt: Date,
+  paymentChannel: string,
+  items: ReceiptEmailItem[],
+  subtotal: number,
+  fee: number,
+  total: number,
+  currency: string,
+  receiptDownloadUrl: string,
+  ctx: EventEmailContext,
+  taxInvoice?: TaxInvoiceEmailInfo,
+  regCode?: string
+): Promise<void> {
+  const { subject, html } = buildEventPaymentReceiptEmailContent(
+    firstName, lastName, orderNumber, paidAt, paymentChannel, items,
+    subtotal, fee, total, currency, receiptDownloadUrl, ctx, taxInvoice, regCode,
+  );
+
   try {
-    await sendNipaMailHtml(email, `Payment Receipt - ${orderNumber} | ${ctx.shortName}`, htmlContent);
+    await sendNipaMailHtml(email, subject, html);
     console.log(`[Generic] Payment receipt email sent to ${email} for order ${orderNumber}`);
   } catch (error) {
     console.error("[Generic] Error sending payment receipt email:", error);
@@ -373,15 +429,14 @@ ${signature(ctx)}
 // 3. ABSTRACT SUBMISSION EMAIL
 // ============================================
 
-export async function sendEventAbstractSubmissionEmail(
-  email: string,
+export function buildEventAbstractSubmissionEmailContent(
   firstName: string,
   lastName: string,
   trackingId: string,
   abstractTitle: string,
   ctx: EventEmailContext,
   presentationType?: string,
-): Promise<void> {
+): EventEmailContent {
   const typeLabel = presentationType === "oral" ? "Oral Presentation" : presentationType === "poster" ? "Poster Presentation" : "Presentation";
 
   const plainText = `
@@ -400,8 +455,45 @@ If you have any questions, please contact pr@pharmacycouncil.org
 ${signature(ctx)}
   `.trim();
 
+  return {
+    subject: `Abstract Submission Received - ${ctx.shortName}`,
+    html: textToHtml(plainText),
+  };
+}
+
+export async function sendEventAbstractSubmissionEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  trackingId: string,
+  abstractTitle: string,
+  ctx: EventEmailContext,
+  presentationType?: string,
+): Promise<void> {
+  const { subject } = buildEventAbstractSubmissionEmailContent(
+    firstName, lastName, trackingId, abstractTitle, ctx, presentationType
+  );
+
+  // Reconstruct the plain-text version (NipaMail text endpoint already converts \n -> <br>)
+  const typeLabel = presentationType === "oral" ? "Oral Presentation" : presentationType === "poster" ? "Poster Presentation" : "Presentation";
+  const plainText = `
+Dear ${firstName} ${lastName},
+
+Thank you for submitting your abstract for ${typeLabel} at the ${ctx.eventName}. ${introLine(ctx)}
+
+We have received your abstract and will notify you of the acceptance result within 2 weeks after the submission deadline.
+
+Tracking ID: ${trackingId}
+Abstract Title: ${abstractTitle}
+Presentation Type: ${typeLabel}
+
+If you have any questions, please contact pr@pharmacycouncil.org
+
+${signature(ctx)}
+  `.trim();
+
   try {
-    await sendNipaMailEmail(email, `Abstract Submission Received - ${ctx.shortName}`, plainText);
+    await sendNipaMailEmail(email, subject, plainText);
     console.log(`[Generic] Abstract submission email sent to ${email}`);
   } catch (error) {
     console.error("[Generic] Error sending abstract submission email:", error);
@@ -413,16 +505,15 @@ ${signature(ctx)}
 // 4. CO-AUTHOR NOTIFICATION EMAIL
 // ============================================
 
-export async function sendEventCoAuthorNotificationEmail(
-  email: string,
+function buildCoAuthorPlainText(
   firstName: string,
   lastName: string,
   mainAuthorName: string,
   trackingId: string,
   abstractTitle: string,
   ctx: EventEmailContext
-): Promise<void> {
-  const plainText = `
+): string {
+  return `
 Dear ${firstName} ${lastName},
 
 We would like to notify you that your co-authored abstract, titled "${abstractTitle}", has been submitted to the ${ctx.eventName}. ${introLine(ctx)}
@@ -432,6 +523,33 @@ Submitted by: ${mainAuthorName}
 
 ${signature(ctx)}
   `.trim();
+}
+
+export function buildEventCoAuthorNotificationEmailContent(
+  firstName: string,
+  lastName: string,
+  mainAuthorName: string,
+  trackingId: string,
+  abstractTitle: string,
+  ctx: EventEmailContext
+): EventEmailContent {
+  const plainText = buildCoAuthorPlainText(firstName, lastName, mainAuthorName, trackingId, abstractTitle, ctx);
+  return {
+    subject: `Co-Author Notification - ${ctx.shortName} Abstract`,
+    html: textToHtml(plainText),
+  };
+}
+
+export async function sendEventCoAuthorNotificationEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  mainAuthorName: string,
+  trackingId: string,
+  abstractTitle: string,
+  ctx: EventEmailContext
+): Promise<void> {
+  const plainText = buildCoAuthorPlainText(firstName, lastName, mainAuthorName, trackingId, abstractTitle, ctx);
 
   try {
     await sendNipaMailEmail(email, `Co-Author Notification - ${ctx.shortName} Abstract`, plainText);
@@ -446,20 +564,19 @@ ${signature(ctx)}
 // 5. ABSTRACT ACCEPTED EMAIL (poster + oral unified)
 // ============================================
 
-export async function sendEventAbstractAcceptedEmail(
-  email: string,
+function buildAbstractAcceptedPlainText(
   firstName: string,
   lastName: string,
   abstractTitle: string,
   presentationType: "poster" | "oral",
   ctx: EventEmailContext,
   comment?: string
-): Promise<void> {
+): string {
   const typeLabel = presentationType === "poster" ? "POSTER PRESENTATION" : "ORAL PRESENTATION";
   const articlePrefix = presentationType === "poster" ? "a" : "an";
   const commentText = comment ? `\nComment: ${comment}\n` : "";
 
-  const plainText = `
+  return `
 Dear ${firstName} ${lastName},
 
 Congratulations! Your abstract, titled "${abstractTitle}", is ACCEPTED as ${articlePrefix} ${typeLabel} at the ${ctx.eventName}. ${introLine(ctx)}
@@ -470,6 +587,33 @@ We look forward to your presentation. If you have any questions, please contact 
 
 ${signature(ctx)}
   `.trim();
+}
+
+export function buildEventAbstractAcceptedEmailContent(
+  firstName: string,
+  lastName: string,
+  abstractTitle: string,
+  presentationType: "poster" | "oral",
+  ctx: EventEmailContext,
+  comment?: string
+): EventEmailContent {
+  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment);
+  return {
+    subject: `Congratulations! Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`,
+    html: textToHtml(plainText),
+  };
+}
+
+export async function sendEventAbstractAcceptedEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  abstractTitle: string,
+  presentationType: "poster" | "oral",
+  ctx: EventEmailContext,
+  comment?: string
+): Promise<void> {
+  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment);
 
   try {
     await sendNipaMailEmail(
@@ -488,17 +632,15 @@ ${signature(ctx)}
 // 6. ABSTRACT REJECTED EMAIL
 // ============================================
 
-export async function sendEventAbstractRejectedEmail(
-  email: string,
+function buildAbstractRejectedPlainText(
   firstName: string,
   lastName: string,
   abstractTitle: string,
   ctx: EventEmailContext,
   comment?: string
-): Promise<void> {
+): string {
   const commentText = comment ? `\nComment: ${comment}\n` : "";
-
-  const plainText = `
+  return `
 Dear ${firstName} ${lastName},
 
 Thank you very much for submitting your abstract for poster or oral presentation at the ${ctx.eventName}. Unfortunately, there are many high-quality abstracts, but we still have limited availability for poster or oral presentations.
@@ -509,6 +651,31 @@ Thank you so much again for your submission. Looking forward to your abstract at
 
 ${signature(ctx)}
   `.trim();
+}
+
+export function buildEventAbstractRejectedEmailContent(
+  firstName: string,
+  lastName: string,
+  abstractTitle: string,
+  ctx: EventEmailContext,
+  comment?: string
+): EventEmailContent {
+  const plainText = buildAbstractRejectedPlainText(firstName, lastName, abstractTitle, ctx, comment);
+  return {
+    subject: `Abstract Submission Update - ${ctx.shortName}`,
+    html: textToHtml(plainText),
+  };
+}
+
+export async function sendEventAbstractRejectedEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  abstractTitle: string,
+  ctx: EventEmailContext,
+  comment?: string
+): Promise<void> {
+  const plainText = buildAbstractRejectedPlainText(firstName, lastName, abstractTitle, ctx, comment);
 
   try {
     await sendNipaMailEmail(email, `Abstract Submission Update - ${ctx.shortName}`, plainText);
@@ -523,26 +690,47 @@ ${signature(ctx)}
 // 7. SIGNUP NOTIFICATION EMAIL (non-student auto-approved)
 // ============================================
 
+// Signup is platform-level (account creation), not tied to any specific event,
+// so the email uses a generic "Conference Hub" brand and omits dates/venue.
+const SIGNUP_SUBJECT = "Welcome to Conference Hub - Registration Successful";
+
+function buildSignupPlainText(firstName: string, lastName: string, ctx: EventEmailContext): string {
+  return `
+Dear ${firstName} ${lastName},
+
+Welcome to Conference Hub.
+
+Thank you for creating your account with the Pharmacy Council of Thailand. Your account is now ready, and you can browse upcoming conferences, register for events, and submit abstracts at any time.
+
+We look forward to seeing you at our upcoming events.
+
+If you have any questions, please feel free to contact us at pr@pharmacycouncil.org.
+
+${signature(ctx)}
+  `.trim();
+}
+
+export function buildEventSignupNotificationEmailContent(
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext
+): EventEmailContent {
+  return {
+    subject: SIGNUP_SUBJECT,
+    html: textToHtml(buildSignupPlainText(firstName, lastName, ctx)),
+  };
+}
+
 export async function sendEventSignupNotificationEmail(
   email: string,
   firstName: string,
   lastName: string,
   ctx: EventEmailContext
 ): Promise<void> {
-  const plainText = `
-Dear ${firstName} ${lastName},
-
-Thank you for your registration via the website for the ${ctx.eventName}. ${introLine(ctx)}
-
-For more information and details about the conference, go to ${ctx.websiteUrl}
-
-See you soon at ${ctx.shortName}.
-
-${signature(ctx)}
-  `.trim();
+  const plainText = buildSignupPlainText(firstName, lastName, ctx);
 
   try {
-    await sendNipaMailEmail(email, `Registration Successful - Welcome to ${ctx.shortName}`, plainText);
+    await sendNipaMailEmail(email, SIGNUP_SUBJECT, plainText);
     console.log(`[Generic] Signup notification email sent to ${email}`);
   } catch (error) {
     console.error("[Generic] Error sending signup notification email:", error);
@@ -554,24 +742,47 @@ ${signature(ctx)}
 // 8. PENDING APPROVAL EMAIL (student document verification)
 // ============================================
 
+// Pending approval is also platform-level (sent at student signup before event registration).
+const PENDING_APPROVAL_SUBJECT =
+  "Welcome to Conference Hub - Document Verification Pending";
+
+function buildPendingApprovalPlainText(firstName: string, lastName: string, ctx: EventEmailContext): string {
+  return `
+Dear ${firstName} ${lastName},
+
+Welcome to Conference Hub.
+
+Thank you for creating your student account with the Pharmacy Council of Thailand. To confirm your eligibility for student rates, our team is currently reviewing the documents you have submitted.
+
+The verification process typically takes 5-7 business days. We will notify you by email as soon as the review is complete.
+
+If you have any questions, please feel free to contact us at pr@pharmacycouncil.org.
+
+${signature(ctx)}
+  `.trim();
+}
+
+export function buildEventPendingApprovalEmailContent(
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext
+): EventEmailContent {
+  return {
+    subject: PENDING_APPROVAL_SUBJECT,
+    html: textToHtml(buildPendingApprovalPlainText(firstName, lastName, ctx)),
+  };
+}
+
 export async function sendEventPendingApprovalEmail(
   email: string,
   firstName: string,
   lastName: string,
   ctx: EventEmailContext
 ): Promise<void> {
-  const plainText = `
-Dear ${firstName} ${lastName},
-
-Thank you for your registration for the ${ctx.eventName}. ${introLine(ctx)}
-
-For the student registration fee, we have to check the documents to verify that they are students. This will take 5-7 business days. After finishing checking the document, we will email you again for the registration confirmation.
-
-${signature(ctx)}
-  `.trim();
+  const plainText = buildPendingApprovalPlainText(firstName, lastName, ctx);
 
   try {
-    await sendNipaMailEmail(email, `Registration Received - Document Verification Pending | ${ctx.shortName}`, plainText);
+    await sendNipaMailEmail(email, PENDING_APPROVAL_SUBJECT, plainText);
     console.log(`[Generic] Pending approval email sent to ${email}`);
   } catch (error) {
     console.error("[Generic] Error sending pending approval email:", error);
