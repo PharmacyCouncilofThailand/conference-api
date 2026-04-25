@@ -29,7 +29,10 @@ export interface EventEmailRow {
 
 /**
  * Format date range เป็น human-readable string
- * e.g. "July 9-11, 2026" (same month) or "June 30 - July 2, 2026" (cross month)
+ * - Same day with time: "May 17, 2026 (9:00 AM - 5:00 PM)"
+ * - Same day no time:   "May 17, 2026"
+ * - Same month:         "July 9-11, 2026"
+ * - Cross month:        "June 30 - July 2, 2026"
  */
 function formatDateRange(start: Date, end: Date): string {
   const opts: Intl.DateTimeFormatOptions = {
@@ -41,12 +44,29 @@ function formatDateRange(start: Date, end: Date): string {
     year: "numeric",
     timeZone: "Asia/Bangkok",
   };
+  const timeOpts: Intl.DateTimeFormatOptions = {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Bangkok",
+  };
 
   const startMonth = start.toLocaleDateString("en-US", { month: "long", timeZone: "Asia/Bangkok" });
   const endMonth = end.toLocaleDateString("en-US", { month: "long", timeZone: "Asia/Bangkok" });
   const startDay = start.toLocaleDateString("en-US", { day: "numeric", timeZone: "Asia/Bangkok" });
   const endDay = end.toLocaleDateString("en-US", { day: "numeric", timeZone: "Asia/Bangkok" });
   const year = end.toLocaleDateString("en-US", yearOpts);
+
+  // Same day: collapse to a single date and append time range when meaningful
+  if (startMonth === endMonth && startDay === endDay) {
+    const startTime = start.toLocaleTimeString("en-US", timeOpts);
+    const endTime = end.toLocaleTimeString("en-US", timeOpts);
+    if (startTime === endTime) {
+      // No meaningful time range (e.g. both midnight) → date only
+      return `${startMonth} ${startDay}, ${year}`;
+    }
+    return `${startMonth} ${startDay}, ${year} (${startTime} - ${endTime})`;
+  }
 
   if (startMonth === endMonth) {
     // Same month: "July 9-11, 2026"
