@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
-import { users, passwordResetTokens } from "../../database/schema.js";
+import { users, passwordResetTokens, events } from "../../database/schema.js";
 import { forgotPasswordSchema } from "../../schemas/auth.schema.js";
 import { eq } from "drizzle-orm";
 import crypto from "crypto";
@@ -19,7 +19,7 @@ export default async function (fastify: FastifyInstance) {
       });
     }
 
-    const { email, recaptchaToken } = result.data;
+    const { email, recaptchaToken, eventCode } = result.data;
 
     // Verify reCAPTCHA if enabled
     if (isRecaptchaEnabled()) {
@@ -67,8 +67,21 @@ export default async function (fastify: FastifyInstance) {
         expiresAt,
       });
 
-      // 5. Send email with reset link
-      await sendPasswordResetEmail(email, user.firstName, token);
+      // 5. Resolve frontend base URL from event.websiteUrl (if eventCode provided)
+      let frontendBaseUrl: string | undefined;
+      if (eventCode) {
+        const eventList = await db
+          .select({ websiteUrl: events.websiteUrl })
+          .from(events)
+          .where(eq(events.eventCode, eventCode))
+          .limit(1);
+        if (eventList.length > 0 && eventList[0].websiteUrl) {
+          frontendBaseUrl = eventList[0].websiteUrl;
+        }
+      }
+
+      // 6. Send email with reset link
+      await sendPasswordResetEmail(email, user.firstName, token, frontendBaseUrl);
 
       return reply.send({
         success: true,

@@ -118,16 +118,29 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
     "/check",
     { preHandler: [fastify.authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const { eventId } = request.query as { eventId?: string };
-
-      if (!eventId || !/^\d+$/.test(eventId)) {
-        return reply.status(400).send({
-          success: false,
-          error: "eventId is required and must be numeric",
-        });
-      }
+      const { eventId, eventCode } = request.query as { eventId?: string; eventCode?: string };
 
       try {
+        let resolvedEventId: number | null = null;
+
+        if (eventId && /^\d+$/.test(eventId)) {
+          resolvedEventId = parseInt(eventId, 10);
+        } else if (eventCode) {
+          const [evt] = await db
+            .select({ id: events.id })
+            .from(events)
+            .where(eq(events.eventCode, eventCode))
+            .limit(1);
+          if (evt) resolvedEventId = evt.id;
+        }
+
+        if (!resolvedEventId) {
+          return reply.status(400).send({
+            success: false,
+            error: "eventId (numeric) or eventCode is required",
+          });
+        }
+
         const [reg] = await db
           .select({
             id: registrations.id,
@@ -139,7 +152,7 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
           .where(
             and(
               eq(registrations.userId, request.user.id),
-              eq(registrations.eventId, parseInt(eventId, 10)),
+              eq(registrations.eventId, resolvedEventId),
               eq(registrations.status, "confirmed"),
             )
           )

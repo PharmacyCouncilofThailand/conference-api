@@ -12,10 +12,10 @@ import {
 } from "../../schemas/abstracts.schema.js";
 import { eq, desc, ilike, and, or, count, inArray } from "drizzle-orm";
 import {
-  sendAbstractAcceptedPosterEmail,
-  sendAbstractAcceptedOralEmail,
   sendAbstractRejectedEmail,
 } from "../../services/emailService.js";
+import { sendEventAbstractAcceptedEmail } from "../../services/emailTemplates.js";
+import { buildEventEmailContext } from "../../services/emailTemplates.types.js";
 
 export default async function (fastify: FastifyInstance) {
   // List Abstracts
@@ -42,25 +42,8 @@ export default async function (fastify: FastifyInstance) {
       if (user.role === "reviewer") {
         const assignedCategories = user.assignedCategories || [];
         if (assignedCategories.length > 0) {
-          // Reviewer can only see abstracts in their assigned categories
-          // Cast to enum type for TypeScript compatibility
-          type CategoryType =
-            | "clinical_pharmacy"
-            | "social_administrative"
-            | "community_pharmacy"
-            | "pharmacology_toxicology"
-            | "pharmacy_education"
-            | "digital_pharmacy";
           const validCategories = assignedCategories.filter(
-            (cat): cat is CategoryType =>
-              [
-                "clinical_pharmacy",
-                "social_administrative",
-                "community_pharmacy",
-                "pharmacology_toxicology",
-                "pharmacy_education",
-                "digital_pharmacy",
-              ].includes(cat),
+            (cat): cat is string => typeof cat === "string" && cat.trim().length > 0,
           );
           if (validCategories.length > 0) {
             conditions.push(inArray(abstracts.category, validCategories));
@@ -302,28 +285,31 @@ export default async function (fastify: FastifyInstance) {
       if (author) {
         try {
           if (status === "accepted") {
-            // Check presentationType to determine poster or oral email
-            if (updatedAbstract.presentationType === "poster") {
-              await sendAbstractAcceptedPosterEmail(
+            const [eventResult] = await db
+              .select({
+                eventName: events.eventName,
+                startDate: events.startDate,
+                endDate: events.endDate,
+                location: events.location,
+                websiteUrl: events.websiteUrl,
+                shortName: events.shortName,
+              })
+              .from(events)
+              .where(eq(events.id, updatedAbstract.eventId))
+              .limit(1);
+
+            if (eventResult && (updatedAbstract.presentationType === "poster" || updatedAbstract.presentationType === "oral")) {
+              await sendEventAbstractAcceptedEmail(
                 author.email,
                 author.firstName,
                 author.lastName,
                 updatedAbstract.title,
+                updatedAbstract.presentationType,
+                buildEventEmailContext(eventResult),
                 comment,
               );
               fastify.log.info(
-                `Abstract accepted (poster) email sent to ${author.email}`,
-              );
-            } else if (updatedAbstract.presentationType === "oral") {
-              await sendAbstractAcceptedOralEmail(
-                author.email,
-                author.firstName,
-                author.lastName,
-                updatedAbstract.title,
-                comment,
-              );
-              fastify.log.info(
-                `Abstract accepted (oral) email sent to ${author.email}`,
+                `Abstract accepted (${updatedAbstract.presentationType}) email sent to ${author.email}`,
               );
             }
           } else if (status === "rejected") {

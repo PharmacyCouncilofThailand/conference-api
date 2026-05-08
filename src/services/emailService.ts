@@ -393,11 +393,12 @@ export async function sendPaymentReceiptEmail(
 export async function sendPasswordResetEmail(
   email: string,
   firstName: string,
-  resetToken: string
+  resetToken: string,
+  frontendBaseUrl?: string
 ): Promise<void> {
-  const resetUrl = process.env.BASE_URL
-    ? `${process.env.BASE_URL}/reset-password?token=${resetToken}`
-    : `http://localhost:3000/reset-password?token=${resetToken}`;
+  // Priority: explicit frontendBaseUrl (from event.websiteUrl) > BASE_URL env > localhost
+  const baseUrl = (frontendBaseUrl || process.env.BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
+  const resetUrl = `${baseUrl}/reset-password?token=${resetToken}`;
 
   const plainText = `
 Dear ${firstName},
@@ -413,8 +414,14 @@ Sincerely,
 The Pharmacy Council of Thailand
   `.trim();
 
+  let htmlContent = plainText.replace(/\n/g, "<br>\n");
+  htmlContent = htmlContent.replace(
+    resetUrl,
+    `<a href="${resetUrl}" style="color: #1a73e8; font-weight: bold; text-decoration: underline;">Reset My Password</a>`
+  );
+
   try {
-    await sendNipaMailEmail(email, "Reset Your Password", plainText);
+    await sendNipaMailHtml(email, "Reset Your Password", htmlContent);
     console.log(`Password reset email sent to ${email}`);
   } catch (error) {
     console.error("Error sending password reset email:", error);
