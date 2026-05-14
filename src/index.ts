@@ -173,6 +173,7 @@ import driveFolderRoutes from "./routes/public/drive-folder.js";
 import driveImageRoutes from "./routes/public/drive-image.js";
 import paymentRoutes from "./routes/payments/index.js";
 import freeRegistrationRoutes from "./routes/registrations/free.js";
+import quickRegistrationRoutes from "./routes/registrations/quick.js";
 
 // ============================================================================
 // Public Routes (No Auth Required)
@@ -222,6 +223,7 @@ fastify.register(driveFolderRoutes, { prefix: "/api/drive-folder" });
 fastify.register(driveImageRoutes, { prefix: "/api/drive-image" });
 fastify.register(paymentRoutes, { prefix: "/api/payments" });
 fastify.register(freeRegistrationRoutes, { prefix: "/api/registrations" });
+fastify.register(quickRegistrationRoutes, { prefix: "/api/registrations" });
 
 // ============================================================================
 // Protected Backoffice Routes (Auth Required)

@@ -15,6 +15,7 @@ export default async function (fastify: FastifyInstance) {
           id: users.id,
           email: users.email,
           role: users.role,
+          studentLevel: users.studentLevel,
           firstName: users.firstName,
           lastName: users.lastName,
           phone: users.phone,

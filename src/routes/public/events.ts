@@ -11,6 +11,7 @@ import {
   abstractCategories,
 } from "../../database/schema.js";
 import { eq, desc, min, asc, sql, and, inArray } from "drizzle-orm";
+import { ticketAllowsRole, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
 
 export default async function publicEventsRoutes(fastify: FastifyInstance) {
   // List all published events (public, no auth required)
@@ -182,6 +183,9 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
   // Get single event by ID or code (public)
   fastify.get("/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
+    const { role, studentLevel } = request.query as { role?: string; studentLevel?: string };
+    const requestedRole = role?.trim();
+    const requestedStudentLevel = studentLevel?.trim();
 
     try {
       // Check if id is numeric (ID) or string (event code)
@@ -222,8 +226,19 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
         .from(ticketTypes)
         .where(eq(ticketTypes.eventId, event.id));
 
+      const eligibleTicketList = ticketList.filter((ticket) => {
+        if (requestedRole && !ticketAllowsRole(ticket.allowedRoles, requestedRole)) return false;
+        if (
+          (requestedRole === "student" || requestedStudentLevel) &&
+          !ticketAllowsStudentLevel(ticket.allowedStudentLevels, requestedStudentLevel)
+        ) {
+          return false;
+        }
+        return true;
+      });
+
       // Fetch ticket-session mappings for workshop tickets
-      const ticketIds = ticketList.map(t => t.id);
+      const ticketIds = eligibleTicketList.map(t => t.id);
       let ticketSessionMap: Record<number, typeof sessionList> = {};
       
       if (ticketIds.length > 0) {
@@ -248,7 +263,7 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
       }
 
       // Enrich ticket types with their sessions
-      const enrichedTicketList = ticketList.map(ticket => ({
+      const enrichedTicketList = eligibleTicketList.map(ticket => ({
         ...ticket,
         sessions: ticketSessionMap[ticket.id] || [],
       }));

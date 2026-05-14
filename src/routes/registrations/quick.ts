@@ -1,4 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import bcrypt from "bcryptjs";
+import { randomUUID } from "crypto";
 import { db } from "../../database/index.js";
 import {
   registrations,
@@ -9,9 +11,8 @@ import {
   users,
   events,
 } from "../../database/schema.js";
-import { eq, and, sql, desc, count } from "drizzle-orm";
-import { freeRegistrationSchema } from "../../schemas/freeRegistration.schema.js";
-import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
+import { eq, and, sql } from "drizzle-orm";
+import { quickRegistrationSchema } from "../../schemas/quickRegistration.schema.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -26,30 +27,23 @@ function generateRegCode(): string {
 type ResolvedTicket = { id: number; price: string; eventId: number; name: string };
 
 /**
- * Resolve a frontend package string ID to the actual DB ticketType for free tickets.
- * Only resolves primary tickets with price = 0.
+ * Find an active free primary ticket for the event.
+ *
+ * NOTE: This intentionally does NOT filter by `allowed_roles`. The quick-register
+ * channel is operator-controlled (link-only) and is meant for general-public
+ * walk-ups even when the event's only free ticket is configured for another
+ * role (e.g. "pharmacist"). The user record is always created with role="general".
  */
-async function resolveFreeTicket(
-  packageId: string,
-  eventId: number,
-  studentLevel?: string | null,
-): Promise<ResolvedTicket | null> {
+async function resolveFreePrimaryTicket(eventId: number): Promise<ResolvedTicket | null> {
   const allTickets = await db
     .select({
       id: ticketTypes.id,
       price: ticketTypes.price,
-      currency: ticketTypes.currency,
-      category: ticketTypes.category,
-      groupName: ticketTypes.groupName,
-      allowedRoles: ticketTypes.allowedRoles,
-      allowedStudentLevels: ticketTypes.allowedStudentLevels,
-      quota: ticketTypes.quota,
-      soldCount: ticketTypes.soldCount,
-      eventId: ticketTypes.eventId,
       isActive: ticketTypes.isActive,
       displayOrder: ticketTypes.displayOrder,
       saleStartDate: ticketTypes.saleStartDate,
       saleEndDate: ticketTypes.saleEndDate,
+      eventId: ticketTypes.eventId,
       name: ticketTypes.name,
     })
     .from(ticketTypes)
@@ -61,8 +55,9 @@ async function resolveFreeTicket(
     );
 
   const now = new Date();
-  const active = allTickets.filter((t) => {
+  const matched = allTickets.filter((t) => {
     if (t.isActive === false) return false;
+    if (Number(t.price) !== 0) return false;
     const saleStart = t.saleStartDate ? new Date(t.saleStartDate) : null;
     const saleEnd = t.saleEndDate ? new Date(t.saleEndDate) : null;
     if (saleStart && now < saleStart) return false;
@@ -70,145 +65,53 @@ async function resolveFreeTicket(
     return true;
   });
 
-  // Match by role pattern in allowedRoles (same as payment route)
-  const roleMap: Record<string, string[]> = {
-    student: ["student"],
-    pharmacist: ["pharmacist"],
-    medical_professional: ["medical_professional"],
-    general: ["general"],
-  };
-  const roles = roleMap[packageId];
-  if (!roles) return null;
-
-  const matched = active.filter((t) => {
-    if (!t.allowedRoles) return false;
-    const roleMatches = roles.some((r) => allowedListIncludes(t.allowedRoles, r));
-    if (!roleMatches) return false;
-
-    // Restricted student-level tickets require an exact user studentLevel match.
-    if (packageId === "student" && !ticketAllowsStudentLevel(t.allowedStudentLevels, studentLevel)) {
-      return false;
-    }
-    return true;
-  });
-
   if (matched.length === 0) return null;
   matched.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-
-  const ticket = matched[0];
-
-  // Only allow if price is 0
-  if (Number(ticket.price) !== 0) return null;
-
-  return { id: ticket.id, price: ticket.price, eventId: ticket.eventId, name: ticket.name };
+  const t = matched[0];
+  return { id: t.id, price: t.price, eventId: t.eventId, name: t.name };
 }
 
 // ─────────────────────────────────────────────────────
 // Route
 // ─────────────────────────────────────────────────────
 
-export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
+export default async function quickRegistrationRoutes(fastify: FastifyInstance) {
   /**
-   * GET /registrations/check?eventId=X
+   * POST /api/registrations/quick
    *
-   * Check if the current user is registered for a given event.
-   * Checks the registrations table directly (covers both free and paid).
-   */
-  fastify.get(
-    "/check",
-    { preHandler: [fastify.authenticate] },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const { eventId, eventCode } = request.query as { eventId?: string; eventCode?: string };
-
-      try {
-        let resolvedEventId: number | null = null;
-
-        if (eventId && /^\d+$/.test(eventId)) {
-          resolvedEventId = parseInt(eventId, 10);
-        } else if (eventCode) {
-          const [evt] = await db
-            .select({ id: events.id })
-            .from(events)
-            .where(eq(events.eventCode, eventCode))
-            .limit(1);
-          if (evt) resolvedEventId = evt.id;
-        }
-
-        if (!resolvedEventId) {
-          return reply.status(400).send({
-            success: false,
-            error: "eventId (numeric) or eventCode is required",
-          });
-        }
-
-        const [reg] = await db
-          .select({
-            id: registrations.id,
-            regCode: registrations.regCode,
-            status: registrations.status,
-            ticketTypeId: registrations.ticketTypeId,
-          })
-          .from(registrations)
-          .where(
-            and(
-              eq(registrations.userId, request.user.id),
-              eq(registrations.eventId, resolvedEventId),
-              eq(registrations.status, "confirmed"),
-            )
-          )
-          .limit(1);
-
-        return reply.send({
-          success: true,
-          isRegistered: !!reg,
-          regCode: reg?.regCode || null,
-        });
-      } catch (error) {
-        fastify.log.error(error);
-        return reply.status(500).send({
-          success: false,
-          error: "Failed to check registration",
-        });
-      }
-    }
-  );
-
-  /**
-   * POST /registrations/free
+   * Public, no-auth quick registration:
+   * - Caller submits { firstName, lastName, email, eventCode }
+   * - Creates a new user with role=general (random password) and registers
+   *   them on the event's free general ticket.
+   * - Returns regCode (used as QR payload).
    *
-   * Register for a free event — no orders, no payments, no checkout.
-   * Creates registration + registration_sessions directly.
+   * Errors:
+   * - 400 invalid input / event not published / no free ticket / sale window
+   * - 404 event not found
+   * - 409 email already registered as a user
    */
   fastify.post(
-    "/free",
-    { preHandler: [fastify.authenticate] },
+    "/quick",
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const parsed = freeRegistrationSchema.safeParse(request.body);
+      const parsed = quickRegistrationSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
           success: false,
+          code: "VALIDATION_ERROR",
           error: "Invalid input",
           details: parsed.error.flatten(),
         });
       }
 
-      const { eventId, packageId } = parsed.data;
-      const userId = request.user.id;
-
-      fastify.log.info(
-        `[FREE-REG] userId=${userId}, eventId=${eventId}, packageId=${packageId}`
-      );
+      const { firstName, lastName, email, eventCode, attendeeType } = parsed.data;
 
       try {
-        // Get user's studentLevel for student ticket matching
-        const [userData] = await db.select({ studentLevel: users.studentLevel }).from(users).where(eq(users.id, userId)).limit(1);
-        const userStudentLevel = userData?.studentLevel || null;
-
-        // 1. Verify event exists and is published
+        // 1. Resolve event
         const [event] = await db
           .select({
             id: events.id,
             eventName: events.eventName,
+            eventCode: events.eventCode,
             status: events.status,
             startDate: events.startDate,
             endDate: events.endDate,
@@ -217,7 +120,7 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
             shortName: events.shortName,
           })
           .from(events)
-          .where(eq(events.id, eventId))
+          .where(eq(events.eventCode, eventCode))
           .limit(1);
 
         if (!event) {
@@ -236,17 +139,32 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // 2. Resolve the free ticket
-        const ticket = await resolveFreeTicket(packageId, eventId, userStudentLevel);
+        // 2. Reject if email already exists (per product decision)
+        const [existingUser] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.email, email))
+          .limit(1);
+
+        if (existingUser) {
+          return reply.status(409).send({
+            success: false,
+            code: "EMAIL_ALREADY_REGISTERED",
+            error: "Email already registered. Please sign in instead.",
+          });
+        }
+
+        // 3. Resolve free primary ticket for this event (role-agnostic)
+        const ticket = await resolveFreePrimaryTicket(event.id);
         if (!ticket) {
           return reply.status(400).send({
             success: false,
             code: "NOT_FREE_TICKET",
-            error: "No free ticket found for this package. Use the checkout flow for paid tickets.",
+            error: "No free ticket available for this event",
           });
         }
 
-        // 3. Check ticket availability
+        // 4. Re-check ticket availability (sale window + quota)
         const [currentTicket] = await db
           .select({
             quota: ticketTypes.quota,
@@ -275,7 +193,6 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
               saleStartDate: saleStart.toISOString(),
             });
           }
-
           if (saleEnd && now > saleEnd) {
             return reply.status(400).send({
               success: false,
@@ -283,7 +200,6 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
               error: "Registration period has ended",
             });
           }
-
           if (currentTicket.quota > 0 && currentTicket.soldCount >= currentTicket.quota) {
             return reply.status(400).send({
               success: false,
@@ -293,64 +209,43 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
           }
         }
 
-        // 4. Duplicate check — user already registered for this event
-        const [existingReg] = await db
-          .select({ id: registrations.id, regCode: registrations.regCode })
-          .from(registrations)
-          .where(
-            and(
-              eq(registrations.userId, userId),
-              eq(registrations.eventId, eventId),
-              eq(registrations.status, "confirmed"),
-            )
-          )
-          .limit(1);
+        // 5. Create user + registration + sessions in transaction
+        const passwordHash = await bcrypt.hash(randomUUID(), 12);
 
-        if (existingReg) {
-          return reply.status(409).send({
-            success: false,
-            code: "ALREADY_REGISTERED",
-            error: "You are already registered for this event",
-            regCode: existingReg.regCode,
-          });
-        }
-
-        // 5. Get user info
-        const [user] = await db
-          .select({
-            email: users.email,
-            firstName: users.firstName,
-            lastName: users.lastName,
-          })
-          .from(users)
-          .where(eq(users.id, userId))
-          .limit(1);
-
-        if (!user) {
-          return reply.status(404).send({
-            success: false,
-            code: "USER_NOT_FOUND",
-            error: "User not found",
-          });
-        }
-
-        // 6. Create registration + sessions in transaction
         const result = await db.transaction(async (tx) => {
-          // Insert registration (no orderId — this is a free registration)
-          const regCode = generateRegCode();
-          const [newReg] = await tx.insert(registrations).values({
-            regCode,
-            eventId,
-            ticketTypeId: ticket.id,
-            userId,
-            email: user.email,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            status: "confirmed",
-            source: "free",
-          }).returning();
+          // Insert user
+          const [newUser] = await tx
+            .insert(users)
+            .values({
+              email,
+              passwordHash,
+              role: "general",
+              firstName,
+              lastName,
+              status: "active",
+              registeredFromEvent: event.eventCode,
+            })
+            .returning();
 
-          // Determine sessions to link (from ticket_sessions junction)
+          // Insert registration
+          const regCode = generateRegCode();
+          const [newReg] = await tx
+            .insert(registrations)
+            .values({
+              regCode,
+              eventId: event.id,
+              ticketTypeId: ticket.id,
+              userId: newUser.id,
+              email: newUser.email,
+              firstName: newUser.firstName,
+              lastName: newUser.lastName,
+              status: "confirmed",
+              source: "quick",
+              attendeeType,
+            })
+            .returning();
+
+          // Determine sessions to link (from ticket_sessions, fallback to main sessions)
           let sessionIdsToLink: number[] = [];
 
           const linkedSessions = await tx
@@ -360,26 +255,23 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
             .where(
               and(
                 eq(ticketSessions.ticketTypeId, ticket.id),
-                eq(sessions.eventId, eventId),
+                eq(sessions.eventId, event.id),
               )
             );
-
           sessionIdsToLink = linkedSessions.map((ls) => ls.sessionId);
 
-          // Fallback: auto-link to main sessions if no ticket_sessions rows
           if (sessionIdsToLink.length === 0) {
             const mainSessions = await tx
               .select({ id: sessions.id })
               .from(sessions)
               .where(
                 and(
-                  eq(sessions.eventId, eventId),
+                  eq(sessions.eventId, event.id),
                   eq(sessions.isMainSession, true),
                 )
               );
             sessionIdsToLink = mainSessions.map((s) => s.id);
 
-            // Backfill ticket_sessions so future lookups work
             if (sessionIdsToLink.length > 0) {
               await tx.insert(ticketSessions).values(
                 sessionIdsToLink.map((sid) => ({
@@ -387,38 +279,36 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
                   sessionId: sid,
                 }))
               );
-              fastify.log.info(
-                `[FREE-REG] Backfilled ticket_sessions for ticket ${ticket.id} → ${sessionIdsToLink.length} main sessions`
-              );
             }
           }
 
-          // Insert registration_sessions
           for (const sid of sessionIdsToLink) {
             await tx.insert(registrationSessions).values({
               registrationId: newReg.id,
               sessionId: sid,
               ticketTypeId: ticket.id,
-              source: "free",
+              source: "quick",
             });
           }
 
-          // Update soldCount
           await tx
             .update(ticketTypes)
-            .set({
-              soldCount: sql`${ticketTypes.soldCount} + 1`,
-            })
+            .set({ soldCount: sql`${ticketTypes.soldCount} + 1` })
             .where(eq(ticketTypes.id, ticket.id));
 
           fastify.log.info(
-            `[FREE-REG] Created registration ${newReg.id} (regCode=${regCode}) + ${sessionIdsToLink.length} session links for user ${userId}`
+            `[QUICK-REG] Created user ${newUser.id} + registration ${newReg.id} (regCode=${regCode}, attendeeType=${attendeeType}) for ${email} on event ${event.eventCode}`
           );
 
-          return { regCode, registrationId: newReg.id, sessionIds: sessionIdsToLink };
+          return {
+            regCode,
+            registrationId: newReg.id,
+            userId: newUser.id,
+            sessionIds: sessionIdsToLink,
+          };
         });
 
-        // 7. Send confirmation email (non-blocking)
+        // 6. Send confirmation email (non-blocking)
         setImmediate(async () => {
           try {
             const sessionDetails =
@@ -443,9 +333,9 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
                 "../../services/emailService.js"
               );
               await sendManualRegistrationEmail(
-                user.email,
-                user.firstName,
-                user.lastName,
+                email,
+                firstName,
+                lastName,
                 result.regCode,
                 event.eventName,
                 ticket.name,
@@ -460,9 +350,9 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
               );
               const eventCtx = buildEventEmailContext(event);
               await sendEventRegistrationEmail(
-                user.email,
-                user.firstName,
-                user.lastName,
+                email,
+                firstName,
+                lastName,
                 result.regCode,
                 ticket.name,
                 sessionDetails,
@@ -470,31 +360,35 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
               );
             }
 
-            fastify.log.info(
-              `[FREE-REG] Confirmation email sent to ${user.email}`
-            );
+            fastify.log.info(`[QUICK-REG] Confirmation email sent to ${email}`);
           } catch (emailErr) {
             fastify.log.error(
               { err: emailErr },
-              "[FREE-REG] Failed to send confirmation email"
+              "[QUICK-REG] Failed to send confirmation email"
             );
           }
         });
 
-        // 8. Return success
+        // 7. Success
         return reply.status(201).send({
           success: true,
           data: {
             regCode: result.regCode,
             eventName: event.eventName,
+            eventCode: event.eventCode,
             ticketName: ticket.name,
+            firstName,
+            lastName,
+            email,
+            attendeeType,
           },
         });
       } catch (error) {
         fastify.log.error(error);
         return reply.status(500).send({
           success: false,
-          error: "Failed to process free registration",
+          code: "INTERNAL_ERROR",
+          error: "Failed to process quick registration",
         });
       }
     }

@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
 import { sessions, events, ticketTypes, registrations, registrationSessions, ticketSessions, eventSpeakers, speakers } from "../../database/schema.js";
 import { eq, desc, sql, and, count, inArray } from "drizzle-orm";
+import { ticketAllowsRole, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
 
 function parseAllowedRoles(raw: string | null): string[] | null {
     if (!raw) return null;
@@ -34,6 +35,10 @@ export default async function publicWorkshopsRoutes(fastify: FastifyInstance) {
     // Get all published workshop sessions (public, no auth required)
     // Workshops are sessions belonging to events with category containing 'workshop'
     fastify.get("", async (request, reply) => {
+        const { role, studentLevel } = request.query as { role?: string; studentLevel?: string };
+        const requestedRole = role?.trim();
+        const requestedStudentLevel = studentLevel?.trim();
+
         try {
             // Get all published events that are workshop-type
             const workshopEvents = await db
@@ -129,7 +134,8 @@ export default async function publicWorkshopsRoutes(fastify: FastifyInstance) {
                         price: ticketTypes.price,
                         saleStartDate: ticketTypes.saleStartDate,
                         currency: ticketTypes.currency,
-                        allowedRoles: ticketTypes.allowedRoles
+                        allowedRoles: ticketTypes.allowedRoles,
+                        allowedStudentLevels: ticketTypes.allowedStudentLevels
                     })
                     .from(ticketSessions)
                     .innerJoin(ticketTypes, eq(ticketSessions.ticketTypeId, ticketTypes.id))
@@ -146,7 +152,8 @@ export default async function publicWorkshopsRoutes(fastify: FastifyInstance) {
                         price: ticketTypes.price,
                         saleStartDate: ticketTypes.saleStartDate,
                         currency: ticketTypes.currency,
-                        allowedRoles: ticketTypes.allowedRoles
+                        allowedRoles: ticketTypes.allowedRoles,
+                        allowedStudentLevels: ticketTypes.allowedStudentLevels
                     })
                     .from(ticketTypes)
                     .where(inArray(ticketTypes.sessionId, sessionIds))
@@ -186,14 +193,26 @@ export default async function publicWorkshopsRoutes(fastify: FastifyInstance) {
                 const sessionTickets = sessionTicketsMap.get(session.id) || [];
 
                 // Format tickets for frontend
-                const availableTickets = sessionTickets.map(t => ({
-                    id: t.ticketTypeId,
-                    name: t.name,
-                    price: t.price,
-                    currency: t.currency,
-                    allowedRoles: parseAllowedRoles(t.allowedRoles),
-                    saleStartDate: t.saleStartDate
-                }));
+                const availableTickets = sessionTickets
+                    .filter((t) => {
+                        if (requestedRole && !ticketAllowsRole(t.allowedRoles, requestedRole)) return false;
+                        if (
+                            (requestedRole === "student" || requestedStudentLevel) &&
+                            !ticketAllowsStudentLevel(t.allowedStudentLevels, requestedStudentLevel)
+                        ) {
+                            return false;
+                        }
+                        return true;
+                    })
+                    .map(t => ({
+                        id: t.ticketTypeId,
+                        name: t.name,
+                        price: t.price,
+                        currency: t.currency,
+                        allowedRoles: parseAllowedRoles(t.allowedRoles),
+                        allowedStudentLevels: parseAllowedRoles(t.allowedStudentLevels),
+                        saleStartDate: t.saleStartDate
+                    }));
 
                 const isFull = session.maxCapacity ? enrolledCount >= session.maxCapacity : false;
                 const saleStartDate = saleDateMap.get(session.id); // Get earliest sale date

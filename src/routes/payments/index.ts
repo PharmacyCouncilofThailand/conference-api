@@ -50,6 +50,7 @@ import {
 import { generateReceiptToken, verifyReceiptToken } from "../../utils/receiptToken.js";
 import { generateReceiptPdf } from "../../services/receiptPdf.js";
 import { sendPaymentReceiptEmail } from "../../services/emailService.js";
+import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
 import { validatePromoCode, reservePromoUsage, settlePromoUsageSuccess, cancelPromoUsage } from "../../utils/promoEngine.js";
 
 // ─────────────────────────────────────────────────────
@@ -417,14 +418,13 @@ async function resolveTicketId(
 
     const matched = active.filter((t) => {
       if (!t.allowedRoles) return false;
-      const roleMatches = roles.some((r) => t.allowedRoles!.includes(r));
+      const roleMatches = roles.some((r) => allowedListIncludes(t.allowedRoles, r));
       if (!roleMatches) return false;
 
-      // For student tickets, also check studentLevel if specified
-      if (packageId === "student" && t.allowedStudentLevels && studentLevel) {
-        return t.allowedStudentLevels.includes(studentLevel);
+      // Restricted student-level tickets require an exact user studentLevel match.
+      if (packageId === "student" && !ticketAllowsStudentLevel(t.allowedStudentLevels, studentLevel)) {
+        return false;
       }
-      // If no allowedStudentLevels specified on ticket, allow all student levels
       return true;
     });
 

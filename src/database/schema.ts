@@ -69,6 +69,7 @@ export const abstractStatusEnum = pgEnum("abstract_status", [
   "pending",
   "accepted",
   "rejected",
+  "revision",
 ]);
 export const speakerTypeEnum = pgEnum("speaker_type", [
   "keynote",
@@ -419,6 +420,7 @@ export const registrations = pgTable("registrations", {
   dietaryRequirements: varchar("dietary_requirements", { length: 255 }),
   status: registrationStatusEnum("status").notNull().default("confirmed"),
   source: varchar("source", { length: 20 }).notNull().default("purchase"),
+  attendeeType: varchar("attendee_type", { length: 20 }), // e.g. 'parent', 'student' — used by quick-register flow
   addedBy: integer("added_by").references(() => backofficeUsers.id),
   addedNote: text("added_note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -566,6 +568,19 @@ export const abstracts = pgTable("abstracts", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const abstractFiles = pgTable("abstract_files", {
+  id: serial("id").primaryKey(),
+  abstractId: integer("abstract_id")
+    .notNull()
+    .references(() => abstracts.id, { onDelete: "cascade" }),
+  fileName: varchar("file_name", { length: 255 }).notNull(),
+  fileUrl: varchar("file_url", { length: 500 }).notNull(),
+  fileType: varchar("file_type", { length: 100 }),
+  fileSize: integer("file_size"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const abstractCoAuthors = pgTable("abstract_co_authors", {
   id: serial("id").primaryKey(),
   abstractId: integer("abstract_id")
@@ -590,6 +605,31 @@ export const abstractReviews = pgTable("abstract_reviews", {
   status: abstractStatusEnum("status").notNull(),
   comment: text("comment"),
   reviewedAt: timestamp("reviewed_at").notNull().defaultNow(),
+});
+
+export const abstractRevisionRequests = pgTable("abstract_revision_requests", {
+  id: serial("id").primaryKey(),
+  abstractId: integer("abstract_id")
+    .notNull()
+    .references(() => abstracts.id, { onDelete: "cascade" }),
+  requestedBy: integer("requested_by").references(() => backofficeUsers.id),
+  topic: varchar("topic", { length: 50 }).notNull(),
+  comment: text("comment").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("open"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  resubmittedAt: timestamp("resubmitted_at"),
+});
+
+export const abstractRevisionRequestFiles = pgTable("abstract_revision_request_files", {
+  id: serial("id").primaryKey(),
+  revisionRequestId: integer("revision_request_id")
+    .notNull()
+    .references(() => abstractRevisionRequests.id, { onDelete: "cascade" }),
+  fileName: varchar("file_name", { length: 255 }).notNull(),
+  fileUrl: varchar("file_url", { length: 500 }).notNull(),
+  fileType: varchar("file_type", { length: 100 }),
+  fileSize: integer("file_size"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // --------------------------------------------------------------------------
@@ -634,6 +674,12 @@ export type NewSpeaker = typeof speakers.$inferInsert;
 
 export type Abstract = typeof abstracts.$inferSelect;
 export type NewAbstract = typeof abstracts.$inferInsert;
+export type AbstractFile = typeof abstractFiles.$inferSelect;
+export type NewAbstractFile = typeof abstractFiles.$inferInsert;
+export type AbstractRevisionRequest = typeof abstractRevisionRequests.$inferSelect;
+export type NewAbstractRevisionRequest = typeof abstractRevisionRequests.$inferInsert;
+export type AbstractRevisionRequestFile = typeof abstractRevisionRequestFiles.$inferSelect;
+export type NewAbstractRevisionRequestFile = typeof abstractRevisionRequestFiles.$inferInsert;
 
 export type BackofficeUser = typeof backofficeUsers.$inferSelect;
 export type NewBackofficeUser = typeof backofficeUsers.$inferInsert;

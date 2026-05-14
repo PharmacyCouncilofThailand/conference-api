@@ -1,5 +1,19 @@
 import { z } from 'zod';
 
+export const abstractStatusSchema = z.enum(['pending', 'accepted', 'rejected', 'revision']);
+
+export const abstractRevisionTopicSchema = z.enum([
+    'title',
+    'keywords',
+    'background',
+    'objective',
+    'methods',
+    'results',
+    'conclusion',
+    'documents',
+    'other',
+]);
+
 // Co-Author validation schema
 export const coAuthorSchema = z.object({
     firstName: z.string().min(1, 'First name is required'),
@@ -26,16 +40,30 @@ export const abstractSubmissionSchema = z.object({
     keywords: z.string().min(1, 'Keywords are required'),
 
     // Abstract Content (word count validation will be done separately)
-    background: z.string().min(50, 'Background must be at least 50 characters'),
-    objective: z.string().min(20, 'Objectives must be at least 20 characters'),
-    methods: z.string().min(50, 'Methods must be at least 50 characters'),
-    results: z.string().min(50, 'Results must be at least 50 characters'),
-    conclusion: z.string().min(50, 'Conclusion must be at least 50 characters'),
+    background: z.string().min(1, 'Background is required'),
+    objective: z.string().min(1, 'Objective is required'),
+    methods: z.string().min(1, 'Methods are required'),
+    results: z.string().min(1, 'Results are required'),
+    conclusion: z.string().min(1, 'Conclusion is required'),
 
     // Co-Authors (optional, will be parsed from JSON string in multipart)
     coAuthors: z.array(coAuthorSchema).optional().default([]),
 
     // Event Code (e.g. "PRIS-2026")
+    eventCode: z.string().optional(),
+});
+
+export const abstractResubmissionSchema = z.object({
+    title: z.string().min(10, 'Title must be at least 10 characters').max(500, 'Title too long'),
+    category: z.string().min(1, 'Category is required'),
+    presentationType: z.enum(['oral', 'poster']),
+    keywords: z.string().min(1, 'Keywords are required'),
+    background: z.string().min(1, 'Background is required'),
+    objective: z.string().min(1, 'Objective is required'),
+    methods: z.string().min(1, 'Methods are required'),
+    results: z.string().min(1, 'Results are required'),
+    conclusion: z.string().min(1, 'Conclusion is required'),
+    coAuthors: z.array(coAuthorSchema).optional().default([]),
     eventCode: z.string().optional(),
 });
 
@@ -45,7 +73,7 @@ export const abstractListSchema = z.object({
     limit: z.coerce.number().min(1).max(1000).default(10),
     search: z.string().optional(),
     eventId: z.coerce.number().optional(),
-    status: z.enum(['pending', 'accepted', 'rejected']).optional(),
+    status: abstractStatusSchema.optional(),
     category: z.string().optional(), // Dynamic category from abstract_categories table
     presentationType: z.enum(['oral', 'poster']).optional(),
 });
@@ -54,4 +82,9 @@ export const abstractListSchema = z.object({
 export const updateAbstractStatusSchema = z.object({
     status: z.enum(['pending', 'accepted', 'rejected']),
     comment: z.string().optional(), // For review comment
+});
+
+export const requestAbstractRevisionSchema = z.object({
+    topic: abstractRevisionTopicSchema,
+    comment: z.string().trim().max(1000, 'Revision details must be 1000 characters or fewer').optional().default(''),
 });

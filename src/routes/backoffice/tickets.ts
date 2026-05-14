@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
 import { ticketTypes, events, staffEventAssignments, ticketSessions } from "../../database/schema.js";
-import { eq, desc, ilike, and, or, count, inArray, sql } from "drizzle-orm";
+import { eq, desc, ilike, and, or, count, inArray, sql, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 const ticketQuerySchema = z.object({
@@ -11,6 +11,7 @@ const ticketQuerySchema = z.object({
     eventId: z.coerce.number().optional(),
     category: z.enum(['primary', 'addon']).optional(),
     role: z.string().optional(),
+    studentLevel: z.enum(['postgraduate', 'undergraduate']).optional(),
 });
 
 export default async function (fastify: FastifyInstance) {
@@ -21,7 +22,7 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { page, limit, search, eventId, category, role } = queryResult.data;
+        const { page, limit, search, eventId, category, role, studentLevel } = queryResult.data;
         const offset = (page - 1) * limit;
 
         // Get user from request (set by auth middleware)
@@ -69,6 +70,25 @@ export default async function (fastify: FastifyInstance) {
                     sql`${ticketTypes.allowedRoles} LIKE ${'%,' + role + ',%'}`,
                     sql`${ticketTypes.allowedRoles} LIKE ${'%,' + role}`,
                     sql`${ticketTypes.allowedRoles} LIKE ${`%"${role}"%`}`
+                ) as any
+            );
+            if (studentLevel && !role) conditions.push(
+                or(
+                    eq(ticketTypes.allowedRoles, 'student'),
+                    sql`${ticketTypes.allowedRoles} LIKE ${'student,%'}`,
+                    sql`${ticketTypes.allowedRoles} LIKE ${'%,student,%'}`,
+                    sql`${ticketTypes.allowedRoles} LIKE ${'%,student'}`,
+                    sql`${ticketTypes.allowedRoles} LIKE ${`%"student"%`}`
+                ) as any
+            );
+            if (studentLevel) conditions.push(
+                or(
+                    isNull(ticketTypes.allowedStudentLevels),
+                    eq(ticketTypes.allowedStudentLevels, studentLevel),
+                    sql`${ticketTypes.allowedStudentLevels} LIKE ${studentLevel + ',%'}`,
+                    sql`${ticketTypes.allowedStudentLevels} LIKE ${'%,' + studentLevel + ',%'}`,
+                    sql`${ticketTypes.allowedStudentLevels} LIKE ${'%,' + studentLevel}`,
+                    sql`${ticketTypes.allowedStudentLevels} LIKE ${`%"${studentLevel}"%`}`
                 ) as any
             );
 

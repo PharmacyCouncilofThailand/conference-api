@@ -291,6 +291,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           firstName: newUser.firstName,
           lastName: newUser.lastName,
           role: newUser.role,
+          studentLevel: newUser.studentLevel,
           status: newUser.status,
           institution: newUser.institution,
           university: newUser.university,

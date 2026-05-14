@@ -687,6 +687,95 @@ export async function sendEventAbstractRejectedEmail(
 }
 
 // ============================================
+// 6B. ABSTRACT REVISION REQUESTED EMAIL
+// ============================================
+
+function buildAbstractRevisionRequestedPlainText(
+  firstName: string,
+  lastName: string,
+  abstractTitle: string,
+  topic: string,
+  comment: string,
+  ctx: EventEmailContext,
+  attachmentUrls: string[] = []
+): string {
+  const attachmentsText =
+    attachmentUrls.length > 0
+      ? `\nReviewer attachment(s):\n${attachmentUrls.map((url, index) => `${index + 1}. ${url}`).join("\n")}\n`
+      : "";
+
+  return `
+Dear ${firstName} ${lastName},
+
+Thank you for submitting your abstract to ${ctx.eventName}. The review team requests a revision before the abstract can proceed.
+
+Abstract Title: ${abstractTitle}
+Section to revise: ${topic}
+
+Revision details:
+${comment}
+${attachmentsText}
+Please sign in to your profile, update the abstract, and resubmit it for review.
+
+${signature(ctx)}
+  `.trim();
+}
+
+export function buildEventAbstractRevisionRequestedEmailContent(
+  firstName: string,
+  lastName: string,
+  abstractTitle: string,
+  topic: string,
+  comment: string,
+  ctx: EventEmailContext,
+  attachmentUrls: string[] = []
+): EventEmailContent {
+  const plainText = buildAbstractRevisionRequestedPlainText(
+    firstName,
+    lastName,
+    abstractTitle,
+    topic,
+    comment,
+    ctx,
+    attachmentUrls,
+  );
+
+  return {
+    subject: `Abstract Revision Requested - ${ctx.shortName}`,
+    html: textToHtml(plainText),
+  };
+}
+
+export async function sendEventAbstractRevisionRequestedEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  abstractTitle: string,
+  topic: string,
+  comment: string,
+  ctx: EventEmailContext,
+  attachmentUrls: string[] = []
+): Promise<void> {
+  const plainText = buildAbstractRevisionRequestedPlainText(
+    firstName,
+    lastName,
+    abstractTitle,
+    topic,
+    comment,
+    ctx,
+    attachmentUrls,
+  );
+
+  try {
+    await sendNipaMailEmail(email, `Abstract Revision Requested - ${ctx.shortName}`, plainText);
+    console.log(`[Generic] Abstract revision requested email sent to ${email}`);
+  } catch (error) {
+    console.error("[Generic] Error sending abstract revision requested email:", error);
+    throw error;
+  }
+}
+
+// ============================================
 // 7. SIGNUP NOTIFICATION EMAIL (non-student auto-approved)
 // ============================================
 

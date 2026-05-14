@@ -2,20 +2,95 @@ import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
 import {
   abstracts,
+  abstractFiles,
   abstractCoAuthors,
+  abstractRevisionRequestFiles,
+  abstractRevisionRequests,
   events,
   users,
 } from "../../database/schema.js";
 import {
   abstractListSchema,
+  requestAbstractRevisionSchema,
   updateAbstractStatusSchema,
 } from "../../schemas/abstracts.schema.js";
 import { eq, desc, ilike, and, or, count, inArray } from "drizzle-orm";
 import {
   sendAbstractRejectedEmail,
 } from "../../services/emailService.js";
-import { sendEventAbstractAcceptedEmail } from "../../services/emailTemplates.js";
-import { buildEventEmailContext } from "../../services/emailTemplates.types.js";
+import {
+  sendEventAbstractAcceptedEmail,
+  sendEventAbstractRevisionRequestedEmail,
+} from "../../services/emailTemplates.js";
+import {
+  buildEventEmailContext,
+  getDefaultEventEmailContext,
+} from "../../services/emailTemplates.types.js";
+import {
+  deleteFromGoogleDrive,
+  extractFileIdFromUrl,
+  uploadToGoogleDrive,
+} from "../../services/googleDrive.js";
+
+const REVISION_ATTACHMENT_FIELD_NAMES = new Set([
+  "file",
+  "attachment",
+  "revisionFile",
+]);
+
+const REVISION_ATTACHMENT_MIME_TYPES = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "image/jpeg",
+  "image/png",
+];
+
+const MAX_REVISION_ATTACHMENT_SIZE = 30 * 1024 * 1024;
+
+type ParsedRevisionAttachment = {
+  buffer: Buffer;
+  originalFileName: string;
+  mimeType: string;
+  size: number;
+};
+
+type UploadedRevisionAttachment = ParsedRevisionAttachment & {
+  fileUrl: string;
+  storedFileName: string;
+};
+
+function sanitizeFileSegment(value: string, fallback: string, maxLength: number): string {
+  const sanitized = value
+    .replace(/[^a-zA-Z0-9\s\u0E00-\u0E7F._-]/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[_ .-]+|[_ .-]+$/g, "")
+    .substring(0, maxLength);
+
+  return sanitized || fallback;
+}
+
+function getFileExtension(fileName: string): string {
+  const lastDot = fileName.lastIndexOf(".");
+  return lastDot >= 0 ? fileName.substring(lastDot).toLowerCase() : "";
+}
+
+async function cleanupRevisionAttachment(
+  attachment: UploadedRevisionAttachment | null,
+  logger: FastifyInstance["log"],
+) {
+  if (!attachment) return;
+
+  const fileId = extractFileIdFromUrl(attachment.fileUrl);
+  if (!fileId) return;
+
+  try {
+    await deleteFromGoogleDrive(fileId);
+  } catch (error) {
+    logger.warn({ err: error, fileUrl: attachment.fileUrl }, "Failed to clean up revision attachment");
+  }
+}
 
 export default async function (fastify: FastifyInstance) {
   // List Abstracts
@@ -160,11 +235,43 @@ export default async function (fastify: FastifyInstance) {
               .from(abstractCoAuthors)
               .where(inArray(abstractCoAuthors.abstractId, abstractIds))
           : [];
+      const filesList =
+        abstractIds.length > 0
+          ? await db
+              .select()
+              .from(abstractFiles)
+              .where(inArray(abstractFiles.abstractId, abstractIds))
+          : [];
+      const revisionRequestsList =
+        abstractIds.length > 0
+          ? await db
+              .select()
+              .from(abstractRevisionRequests)
+              .where(inArray(abstractRevisionRequests.abstractId, abstractIds))
+          : [];
+      const revisionRequestIds = revisionRequestsList.map((request) => request.id);
+      const revisionRequestFilesList =
+        revisionRequestIds.length > 0
+          ? await db
+              .select()
+              .from(abstractRevisionRequestFiles)
+              .where(inArray(abstractRevisionRequestFiles.revisionRequestId, revisionRequestIds))
+          : [];
 
       // Merge co-authors with abstracts
       const abstractsWithCoAuthors = abstractList.map((abs) => ({
         ...abs,
         coAuthors: coAuthorsList.filter((ca) => ca.abstractId === abs.id),
+        files: filesList
+          .filter((file) => file.abstractId === abs.id)
+          .sort((a, b) => a.sortOrder - b.sortOrder),
+        latestRevisionRequest: revisionRequestsList
+          .filter((request) => request.abstractId === abs.id)
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .map((request) => ({
+            ...request,
+            files: revisionRequestFilesList.filter((file) => file.revisionRequestId === request.id),
+          }))[0] || null,
       }));
 
       return reply.send({
@@ -230,16 +337,256 @@ export default async function (fastify: FastifyInstance) {
         .select()
         .from(abstractCoAuthors)
         .where(eq(abstractCoAuthors.abstractId, parseInt(id)));
+      const files = await db
+        .select()
+        .from(abstractFiles)
+        .where(eq(abstractFiles.abstractId, parseInt(id)));
+      const revisionRequests = await db
+        .select()
+        .from(abstractRevisionRequests)
+        .where(eq(abstractRevisionRequests.abstractId, parseInt(id)))
+        .orderBy(desc(abstractRevisionRequests.createdAt));
+      const revisionRequestIds = revisionRequests.map((request) => request.id);
+      const revisionRequestFiles =
+        revisionRequestIds.length > 0
+          ? await db
+              .select()
+              .from(abstractRevisionRequestFiles)
+              .where(inArray(abstractRevisionRequestFiles.revisionRequestId, revisionRequestIds))
+          : [];
+      const revisionRequestsWithFiles = revisionRequests.map((request) => ({
+        ...request,
+        files: revisionRequestFiles.filter((file) => file.revisionRequestId === request.id),
+      }));
 
       return reply.send({
         abstract: {
           ...abstractData,
           coAuthors,
+          files: files.sort((a, b) => a.sortOrder - b.sortOrder),
+          latestRevisionRequest: revisionRequestsWithFiles[0] || null,
+          revisionRequests: revisionRequestsWithFiles,
         },
       });
     } catch (error) {
       fastify.log.error(error);
       return reply.status(500).send({ error: "Failed to fetch abstract" });
+    }
+  });
+
+  // Request Abstract Revision
+  fastify.post("/:id/revision", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const abstractId = parseInt(id, 10);
+
+    if (Number.isNaN(abstractId)) {
+      return reply.status(400).send({ error: "Invalid abstract id" });
+    }
+
+    try {
+      const formFields: Record<string, string> = {};
+      let parsedAttachment: ParsedRevisionAttachment | null = null;
+
+      for await (const part of request.parts()) {
+        if (part.type === "file") {
+          if (!REVISION_ATTACHMENT_FIELD_NAMES.has(part.fieldname)) {
+            return reply.status(400).send({
+              error: `Unexpected file field "${part.fieldname}". Use revisionFile for reviewer attachments.`,
+            });
+          }
+
+          if (parsedAttachment) {
+            return reply.status(400).send({ error: "Only one revision attachment is allowed." });
+          }
+
+          if (!REVISION_ATTACHMENT_MIME_TYPES.includes(part.mimetype)) {
+            return reply.status(400).send({
+              error: "Invalid attachment type. Allowed: PDF, DOC, DOCX, JPG, PNG.",
+            });
+          }
+
+          const chunks: Buffer[] = [];
+          for await (const chunk of part.file) {
+            chunks.push(chunk);
+          }
+
+          const fileBuffer = Buffer.concat(chunks);
+          if (fileBuffer.length > MAX_REVISION_ATTACHMENT_SIZE) {
+            return reply.status(400).send({
+              error: "Attachment too large. Maximum size is 30MB.",
+            });
+          }
+
+          parsedAttachment = {
+            buffer: fileBuffer,
+            originalFileName: part.filename || "revision-attachment",
+            mimeType: part.mimetype,
+            size: fileBuffer.length,
+          };
+        } else if (part.type === "field") {
+          formFields[part.fieldname] = String(part.value ?? "");
+        }
+      }
+
+      const parsed = requestAbstractRevisionSchema.safeParse(formFields);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: parsed.error.errors[0].message,
+          details: parsed.error.errors,
+        });
+      }
+
+      const [targetAbstract] = await db
+        .select({
+          id: abstracts.id,
+          trackingId: abstracts.trackingId,
+          title: abstracts.title,
+          status: abstracts.status,
+          eventId: abstracts.eventId,
+          authorFirstName: users.firstName,
+          authorLastName: users.lastName,
+          authorEmail: users.email,
+          eventName: events.eventName,
+          startDate: events.startDate,
+          endDate: events.endDate,
+          location: events.location,
+          websiteUrl: events.websiteUrl,
+          shortName: events.shortName,
+        })
+        .from(abstracts)
+        .leftJoin(users, eq(abstracts.userId, users.id))
+        .leftJoin(events, eq(abstracts.eventId, events.id))
+        .where(eq(abstracts.id, abstractId))
+        .limit(1);
+
+      if (!targetAbstract) {
+        return reply.status(404).send({ error: "Abstract not found" });
+      }
+
+      if (targetAbstract.status !== "pending") {
+        return reply.status(400).send({
+          error: "Only pending abstracts can be sent for revision.",
+        });
+      }
+
+      let uploadedAttachment: UploadedRevisionAttachment | null = null;
+      if (parsedAttachment) {
+        try {
+          const sequence = Date.now();
+          const sanitizedTitle = sanitizeFileSegment(targetAbstract.title, "abstract", 60);
+          const sanitizedOriginalName = sanitizeFileSegment(
+            parsedAttachment.originalFileName.replace(/\.[^.]+$/, ""),
+            "revision_attachment",
+            60,
+          );
+          const extension = getFileExtension(parsedAttachment.originalFileName);
+          const storedFileName = `${targetAbstract.trackingId || `ABS-${abstractId}`}_revision_${sequence}_${sanitizedTitle}_${sanitizedOriginalName}${extension}`;
+
+          const fileUrl = await uploadToGoogleDrive(
+            parsedAttachment.buffer,
+            storedFileName,
+            parsedAttachment.mimeType,
+            "abstracts",
+            ["revision-requests", String(targetAbstract.eventId)],
+          );
+
+          uploadedAttachment = {
+            ...parsedAttachment,
+            fileUrl,
+            storedFileName,
+          };
+        } catch (error) {
+          fastify.log.error({ err: error }, "Revision attachment upload failed");
+          return reply.status(500).send({
+            error: "Failed to upload revision attachment. Please try again.",
+          });
+        }
+      }
+
+      const { revisionRequest, revisionFiles } = await db
+        .transaction(async (tx) => {
+          await tx
+            .update(abstracts)
+            .set({ status: "revision" })
+            .where(eq(abstracts.id, abstractId));
+
+          const [createdRevisionRequest] = await tx
+            .insert(abstractRevisionRequests)
+            .values({
+              abstractId,
+              requestedBy: request.user.id,
+              topic: parsed.data.topic,
+              comment: parsed.data.comment,
+              status: "open",
+            })
+            .returning();
+
+          const insertedFiles = uploadedAttachment
+            ? await tx
+                .insert(abstractRevisionRequestFiles)
+                .values({
+                  revisionRequestId: createdRevisionRequest.id,
+                  fileName: uploadedAttachment.originalFileName,
+                  fileUrl: uploadedAttachment.fileUrl,
+                  fileType: uploadedAttachment.mimeType,
+                  fileSize: uploadedAttachment.size,
+                })
+                .returning()
+            : [];
+
+          return {
+            revisionRequest: createdRevisionRequest,
+            revisionFiles: insertedFiles,
+          };
+        })
+        .catch(async (error) => {
+          await cleanupRevisionAttachment(uploadedAttachment, fastify.log);
+          throw error;
+        });
+
+      if (targetAbstract.authorEmail && targetAbstract.authorFirstName && targetAbstract.authorLastName) {
+        try {
+          const emailContext =
+            targetAbstract.startDate && targetAbstract.endDate
+              ? buildEventEmailContext({
+                  eventName: targetAbstract.eventName || "Conference",
+                  startDate: targetAbstract.startDate,
+                  endDate: targetAbstract.endDate,
+                  location: targetAbstract.location,
+                  websiteUrl: targetAbstract.websiteUrl,
+                  shortName: targetAbstract.shortName,
+                })
+              : getDefaultEventEmailContext();
+
+          await sendEventAbstractRevisionRequestedEmail(
+            targetAbstract.authorEmail,
+            targetAbstract.authorFirstName,
+            targetAbstract.authorLastName,
+            targetAbstract.title,
+            parsed.data.topic,
+            parsed.data.comment,
+            emailContext,
+            revisionFiles.map((file) => file.fileUrl),
+          );
+        } catch (emailError) {
+          fastify.log.error({ err: emailError }, "Failed to send abstract revision email");
+        }
+      }
+
+      return reply.send({
+        success: true,
+        abstract: {
+          id: abstractId,
+          status: "revision",
+        },
+        revisionRequest: {
+          ...revisionRequest,
+          files: revisionFiles,
+        },
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: "Failed to request abstract revision" });
     }
   });
 

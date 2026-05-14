@@ -1,11 +1,13 @@
 import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
 import { ticketTypes, events, ticketSessions, sessions, registrations, registrationSessions } from "../../database/schema.js";
-import { eq, and, or, isNull, gt, sql, inArray, count } from "drizzle-orm";
+import { eq, and, inArray, count } from "drizzle-orm";
+import { ticketAllowsRole, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
 
 // Query params interface
 interface TicketQuery {
     role?: string;
+    studentLevel?: string;
 }
 
 // Ticket group interface
@@ -41,6 +43,7 @@ interface TicketWithAvailability {
     badgeText: string | null;
     displayOrder: number;
     allowedRoles: string | null;
+    allowedStudentLevels: string | null;
     quota: number;
     soldCount: number;
     isAvailable: boolean;
@@ -53,7 +56,9 @@ export default async function publicTicketsRoutes(fastify: FastifyInstance) {
     // List all public tickets for published events
     fastify.get("", async (request, reply) => {
         try {
-            const { role } = request.query as TicketQuery;
+            const { role, studentLevel } = request.query as TicketQuery;
+            const requestedRole = role?.trim();
+            const requestedStudentLevel = studentLevel?.trim();
             const now = new Date();
 
             // Build conditions
@@ -61,21 +66,6 @@ export default async function publicTicketsRoutes(fastify: FastifyInstance) {
                 eq(events.status, "published"),
                 eq(ticketTypes.isActive, true),
             ];
-
-            // Filter by role if provided
-            // DB stores allowedRoles as CSV ('pharmacist,student') or JSON ('["pharmacist"]')
-            if (role) {
-                conditions.push(
-                    or(
-                        isNull(ticketTypes.allowedRoles),
-                        eq(ticketTypes.allowedRoles, role),
-                        sql`${ticketTypes.allowedRoles} LIKE ${role + ',%'}`,
-                        sql`${ticketTypes.allowedRoles} LIKE ${'%,' + role + ',%'}`,
-                        sql`${ticketTypes.allowedRoles} LIKE ${'%,' + role}`,
-                        sql`${ticketTypes.allowedRoles} LIKE ${`%"${role}"%`}`
-                    ) as any
-                );
-            }
 
             const tickets = await db
                 .select({
@@ -124,8 +114,19 @@ export default async function publicTicketsRoutes(fastify: FastifyInstance) {
                 };
             });
 
-            // ✅ Phase 1: Filter out tickets that have ended (past saleEndDate)
-            const filteredTickets = formattedTickets.filter(t => {
+            const eligibleTickets = formattedTickets.filter((ticket) => {
+                if (requestedRole && !ticketAllowsRole(ticket.allowedRoles, requestedRole)) return false;
+                if (
+                    (requestedRole === "student" || requestedStudentLevel) &&
+                    !ticketAllowsStudentLevel(ticket.allowedStudentLevels, requestedStudentLevel)
+                ) {
+                    return false;
+                }
+                return true;
+            });
+
+            // Phase 1: Filter out tickets that have ended (past saleEndDate)
+            const filteredTickets = eligibleTickets.filter(t => {
                 const saleEnd = t.saleEndDate ? new Date(t.saleEndDate) : null;
                 const isEnded = saleEnd ? now > saleEnd : false;
                 return !isEnded; // Keep only tickets that haven't ended

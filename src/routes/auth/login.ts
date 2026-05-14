@@ -126,6 +126,7 @@ export default async function (fastify: FastifyInstance) {
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
+          studentLevel: user.studentLevel,
           country: user.country,
           delegateType,
           isThai: isThai,
