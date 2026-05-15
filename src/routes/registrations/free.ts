@@ -12,6 +12,7 @@ import {
 import { eq, and, sql, desc, count } from "drizzle-orm";
 import { freeRegistrationSchema } from "../../schemas/freeRegistration.schema.js";
 import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
+import { resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -200,9 +201,18 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
       );
 
       try {
-        // Get user's studentLevel for student ticket matching
-        const [userData] = await db.select({ studentLevel: users.studentLevel }).from(users).where(eq(users.id, userId)).limit(1);
-        const userStudentLevel = userData?.studentLevel || null;
+        let effectiveStudentLevel: string | null = null;
+        if (packageId === "student") {
+          const eligibility = await resolveStudentPackageEligibility(userId, eventId);
+          if (!eligibility.allowed) {
+            return reply.status(403).send({
+              success: false,
+              code: eligibility.code,
+              error: eligibility.error,
+            });
+          }
+          effectiveStudentLevel = eligibility.effectiveStudentLevel;
+        }
 
         // 1. Verify event exists and is published
         const [event] = await db
@@ -237,7 +247,7 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
         }
 
         // 2. Resolve the free ticket
-        const ticket = await resolveFreeTicket(packageId, eventId, userStudentLevel);
+        const ticket = await resolveFreeTicket(packageId, eventId, effectiveStudentLevel);
         if (!ticket) {
           return reply.status(400).send({
             success: false,

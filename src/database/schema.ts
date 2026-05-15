@@ -238,6 +238,29 @@ export const staffEventAssignments = pgTable("staff_event_assignments", {
   assignedAt: timestamp("assigned_at").notNull().defaultNow(),
 });
 
+export const eventStudentEligibilityRequests = pgTable("event_student_eligibility_requests", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  studentLevel: studentLevelEnum("student_level").notNull().default("postgraduate"),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  documentFileName: varchar("document_file_name", { length: 255 }).notNull(),
+  documentFileUrl: varchar("document_file_url", { length: 500 }).notNull(),
+  documentFileType: varchar("document_file_type", { length: 100 }),
+  documentFileSize: integer("document_file_size"),
+  rejectionReason: text("rejection_reason"),
+  reviewNote: text("review_note"),
+  reviewedBy: integer("reviewed_by").references(() => backofficeUsers.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewed_at"),
+  resubmissionCount: integer("resubmission_count").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const eventImages = pgTable("event_images", {
   id: serial("id").primaryKey(),
   eventId: integer("event_id")
@@ -705,6 +728,9 @@ export type NewPromoCodeUsage = typeof promoCodeUsages.$inferInsert;
 export type AbstractCategory = typeof abstractCategories.$inferSelect;
 export type NewAbstractCategory = typeof abstractCategories.$inferInsert;
 
+export type EventStudentEligibilityRequest = typeof eventStudentEligibilityRequests.$inferSelect;
+export type NewEventStudentEligibilityRequest = typeof eventStudentEligibilityRequests.$inferInsert;
+
 // --------------------------------------------------------------------------
 // 8. RELATIONS
 // --------------------------------------------------------------------------
@@ -764,6 +790,22 @@ export const eventsRelations = relations(events, ({ many }) => ({
   sessions: many(sessions),
   eventSpeakers: many(eventSpeakers),
   ticketTypes: many(ticketTypes),
+  studentEligibilityRequests: many(eventStudentEligibilityRequests),
+}));
+
+export const eventStudentEligibilityRequestsRelations = relations(eventStudentEligibilityRequests, ({ one }) => ({
+  event: one(events, {
+    fields: [eventStudentEligibilityRequests.eventId],
+    references: [events.id],
+  }),
+  user: one(users, {
+    fields: [eventStudentEligibilityRequests.userId],
+    references: [users.id],
+  }),
+  reviewer: one(backofficeUsers, {
+    fields: [eventStudentEligibilityRequests.reviewedBy],
+    references: [backofficeUsers.id],
+  }),
 }));
 
 export const sessionsRelations = relations(sessions, ({ one, many }) => ({

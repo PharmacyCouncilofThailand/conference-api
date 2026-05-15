@@ -51,6 +51,7 @@ import { generateReceiptToken, verifyReceiptToken } from "../../utils/receiptTok
 import { generateReceiptPdf } from "../../services/receiptPdf.js";
 import { sendPaymentReceiptEmail } from "../../services/emailService.js";
 import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
+import { resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
 import { validatePromoCode, reservePromoUsage, settlePromoUsageSuccess, cancelPromoUsage } from "../../utils/promoEngine.js";
 
 // ─────────────────────────────────────────────────────
@@ -1453,14 +1454,30 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
       const isAddonOnly = !packageId || packageId === "";
 
       try {
-        // Get user's studentLevel for student ticket matching
-        const [userData] = await db.select({ studentLevel: users.studentLevel }).from(users).where(eq(users.id, userId)).limit(1);
-        const userStudentLevel = userData?.studentLevel || null;
+        let effectiveStudentLevel: string | null = null;
+        if (!isAddonOnly && packageId === "student") {
+          const eligibility = await resolveStudentPackageEligibility(userId, eventId);
+          if (!eligibility.allowed) {
+            return reply.status(403).send({
+              success: false,
+              code: eligibility.code,
+              error: eligibility.error,
+            });
+          }
+          effectiveStudentLevel = eligibility.effectiveStudentLevel;
+        }
 
         // Resolve primary ticket
         let primaryTicket: ResolvedTicket | null = null;
         if (!isAddonOnly) {
-          primaryTicket = await resolveTicketId(packageId, eventId, currency, "primary", userStudentLevel);
+          primaryTicket = await resolveTicketId(packageId, eventId, currency, "primary", effectiveStudentLevel);
+          if (!primaryTicket) {
+            return reply.status(404).send({
+              success: false,
+              code: "EVENT_TICKET_MISMATCH",
+              error: `No ${currency} ticket found for package "${packageId}" in event ${eventId}`,
+            });
+          }
         }
 
         // Resolve add-ons
@@ -1595,9 +1612,18 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
       );
 
       try {
-        // Get user's studentLevel for student ticket matching
-        const [userData] = await db.select({ studentLevel: users.studentLevel }).from(users).where(eq(users.id, userId)).limit(1);
-        const userStudentLevel = userData?.studentLevel || null;
+        let effectiveStudentLevel: string | null = null;
+        if (!isAddonOnly && packageId === "student") {
+          const eligibility = await resolveStudentPackageEligibility(userId, eventId);
+          if (!eligibility.allowed) {
+            return reply.status(403).send({
+              success: false,
+              code: eligibility.code,
+              error: eligibility.error,
+            });
+          }
+          effectiveStudentLevel = eligibility.effectiveStudentLevel;
+        }
 
         // ── Duplicate / addon-only guard ─────────────────────
         const purchaseSnapshot = await getPaidPurchaseSnapshot(userId, eventId);
@@ -1673,7 +1699,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         // ── Resolve primary ticket (if not addon-only) ──────
         let primaryTicket: ResolvedTicket | null = null;
         if (!isAddonOnly) {
-          primaryTicket = await resolveTicketId(packageId, eventId, currency, "primary", userStudentLevel);
+          primaryTicket = await resolveTicketId(packageId, eventId, currency, "primary", effectiveStudentLevel);
           if (!primaryTicket) {
             return reply.status(404).send({
               success: false,

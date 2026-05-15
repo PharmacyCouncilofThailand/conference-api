@@ -975,3 +975,161 @@ ${signature(ctx)}
     throw error;
   }
 }
+
+// ============================================
+// 12. EVENT POSTGRADUATE STUDENT ELIGIBILITY EMAILS
+// ============================================
+
+export function buildEventStudentEligibilitySubmittedEmailContent(
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext,
+  isResubmission = false
+): EventEmailContent {
+  const actionText = isResubmission ? "resubmitting" : "submitting";
+  const documentText = isResubmission ? "updated document" : "document";
+  const plainText = `
+Dear ${firstName} ${lastName},
+
+Thank you for ${actionText} your ${documentText} for postgraduate student-rate eligibility for ${ctx.eventName}. ${introLine(ctx)}
+
+We have received your document and will review it within 5-7 business days. We will notify you by email as soon as the review is complete.
+
+If you have any questions, please contact us at pr@pharmacycouncil.org.
+
+${signature(ctx)}
+  `.trim();
+
+  return {
+    subject: `Postgraduate Student-Rate Request Received | ${ctx.shortName}`,
+    html: textToHtml(plainText),
+  };
+}
+
+export async function sendEventStudentEligibilitySubmittedEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext,
+  isResubmission = false
+): Promise<void> {
+  const { subject, html } = buildEventStudentEligibilitySubmittedEmailContent(
+    firstName,
+    lastName,
+    ctx,
+    isResubmission,
+  );
+
+  try {
+    await sendNipaMailHtml(email, subject, html);
+    console.log(`[Generic] Student eligibility pending email sent to ${email}`);
+  } catch (error) {
+    console.error("[Generic] Error sending student eligibility pending email:", error);
+    throw error;
+  }
+}
+
+export function buildEventStudentEligibilityApprovedEmailContent(
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext,
+  comment?: string
+): EventEmailContent {
+  const commentText = comment ? `\nComment: ${comment}\n` : "";
+  const loginUrl = ctx.websiteUrl + "/login";
+  const plainText = `
+Dear ${firstName} ${lastName},
+
+Your postgraduate student-rate eligibility for ${ctx.eventName} has been approved.
+
+You can now register for this event using the postgraduate student-rate ticket while signed in with this pharmacist account.
+${commentText}
+Login to your account: ${loginUrl}
+
+${signature(ctx)}
+  `.trim();
+
+  return {
+    subject: `Postgraduate Student-Rate Approved | ${ctx.shortName}`,
+    html: textToHtml(plainText),
+  };
+}
+
+export async function sendEventStudentEligibilityApprovedEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext,
+  comment?: string
+): Promise<void> {
+  const { subject, html } = buildEventStudentEligibilityApprovedEmailContent(
+    firstName,
+    lastName,
+    ctx,
+    comment,
+  );
+
+  try {
+    await sendNipaMailHtml(email, subject, html);
+    console.log(`[Generic] Student eligibility approved email sent to ${email}`);
+  } catch (error) {
+    console.error("[Generic] Error sending student eligibility approved email:", error);
+    throw error;
+  }
+}
+
+export function buildEventStudentEligibilityRejectedEmailContent(
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext,
+  rejectionReason: string,
+  comment?: string
+): EventEmailContent {
+  const commentText = comment ? `\nComment: ${comment}\n` : "";
+  const loginUrl = ctx.websiteUrl + "/login";
+  const plainText = `
+Dear ${firstName} ${lastName},
+
+Thank you for submitting your document for postgraduate student-rate eligibility for ${ctx.eventName}.
+
+Your request requires attention before it can be approved.
+
+Reason: ${rejectionReason}
+${commentText}
+Please sign in to your profile and submit an updated document. The next review may take 5-7 business days after resubmission.
+
+Login to your account: ${loginUrl}
+
+${signature(ctx)}
+  `.trim();
+
+  return {
+    subject: `Postgraduate Student-Rate Request Requires Attention | ${ctx.shortName}`,
+    html: textToHtml(plainText),
+  };
+}
+
+export async function sendEventStudentEligibilityRejectedEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext,
+  rejectionReason: string,
+  comment?: string
+): Promise<void> {
+  const { subject, html } = buildEventStudentEligibilityRejectedEmailContent(
+    firstName,
+    lastName,
+    ctx,
+    rejectionReason,
+    comment,
+  );
+
+  try {
+    await sendNipaMailHtml(email, subject, html);
+    console.log(`[Generic] Student eligibility rejected email sent to ${email}`);
+  } catch (error) {
+    console.error("[Generic] Error sending student eligibility rejected email:", error);
+    throw error;
+  }
+}
