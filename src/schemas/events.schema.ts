@@ -4,6 +4,7 @@ import { z } from "zod";
 export const createEventSchema = z.object({
     eventCode: z.string().min(1).max(50),
     eventName: z.string().min(1).max(255),
+    shortName: z.preprocess((val) => val === "" ? undefined : val, z.string().max(100).optional()),
     description: z.string().optional(),
     eventType: z.enum(["single_room", "multi_session"]),
     location: z.string().max(255).optional(),

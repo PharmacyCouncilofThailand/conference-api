@@ -880,6 +880,73 @@ export async function sendEventPendingApprovalEmail(
 }
 
 // ============================================
+// 8b. EVENT REMINDER EMAIL (upcoming event reminder for confirmed registrants)
+// ============================================
+
+function buildEventReminderPlainText(
+  firstName: string,
+  lastName: string,
+  regCode: string,
+  ctx: EventEmailContext
+): string {
+  return `
+เรียน คุณ${firstName} ${lastName}
+
+ใกล้ถึงวันงาน ${ctx.eventName} แล้ว ทางทีมงานขอส่งอีเมลฉบับนี้เพื่อแจ้งเตือนล่วงหน้าครับ
+
+รายละเอียดงาน
+- วันที่: ${ctx.dates}
+- สถานที่: ${ctx.venue}
+- รหัสลงทะเบียนของท่าน: ${regCode}
+
+สิ่งที่ควรเตรียมในวันงาน
+1. Ticket พร้อมรหัสลงทะเบียน (หรือ QR code) เพื่อใช้เช็คอินหน้างาน
+2. กรุณามาถึงสถานที่จัดงานล่วงหน้าอย่างน้อย 30 นาทีก่อนเริ่มเซสชันแรก
+3. ตรวจสอบกำหนดการและข่าวสารล่าสุดได้ที่ ${ctx.websiteUrl}
+
+หากท่านใดต้องการชวนเพื่อนหรือเพื่อนร่วมงานเข้าร่วม ยังสามารถลงทะเบียนล่วงหน้าผ่านเว็บไซต์ ${ctx.websiteUrl} ได้จนถึงวันงาน หรือจะลงทะเบียนหน้างาน (Walk-in) ในวันจัดงานก็ได้เช่นกัน
+
+หากมีข้อสงสัยเพิ่มเติม สามารถติดต่อได้ที่ pr@pharmacycouncil.org
+
+แล้วพบกันในงานนะครับ
+
+ขอแสดงความนับถือ
+สภาเภสัชกรรม (The Pharmacy Council of Thailand)
+  `.trim();
+}
+
+export function buildEventReminderEmailContent(
+  firstName: string,
+  lastName: string,
+  regCode: string,
+  ctx: EventEmailContext
+): EventEmailContent {
+  return {
+    subject: `แจ้งเตือน: ใกล้ถึงวันงาน ${ctx.shortName} แล้ว (${ctx.dates})`,
+    html: textToHtml(buildEventReminderPlainText(firstName, lastName, regCode, ctx)),
+  };
+}
+
+export async function sendEventReminderEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  regCode: string,
+  ctx: EventEmailContext
+): Promise<void> {
+  const { subject } = buildEventReminderEmailContent(firstName, lastName, regCode, ctx);
+  const plainText = buildEventReminderPlainText(firstName, lastName, regCode, ctx);
+
+  try {
+    await sendNipaMailEmail(email, subject, plainText);
+    console.log(`[Generic] Event reminder email sent to ${email}`);
+  } catch (error) {
+    console.error("[Generic] Error sending event reminder email:", error);
+    throw error;
+  }
+}
+
+// ============================================
 // 9. VERIFICATION APPROVED EMAIL
 // ============================================
 

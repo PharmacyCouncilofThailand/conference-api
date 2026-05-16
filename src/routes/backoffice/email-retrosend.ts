@@ -37,14 +37,12 @@ import {
   sessions,
   abstracts,
   abstractCoAuthors,
-  events,
 } from "../../database/schema.js";
 import {
-  buildEventEmailContext,
   getDefaultEventEmailContext,
   type EventEmailContext,
-  type EventEmailRow,
 } from "../../services/emailTemplates.types.js";
+import { resolveEventEmailContext } from "../../services/eventEmailContext.js";
 import {
   sendEventPaymentReceiptEmail,
   sendEventSignupNotificationEmail,
@@ -112,26 +110,8 @@ function sortOrderItemsPrimaryFirst<T extends { type: string }>(items: T[]): T[]
   });
 }
 
-/** Resolve event email context. If eventId is null, use default context. */
-async function resolveEventContext(eventId: number | null): Promise<EventEmailContext> {
-  if (!eventId) return getDefaultEventEmailContext();
+const resolveEventContext = resolveEventEmailContext;
 
-  const [row] = await db
-    .select({
-      eventName: events.eventName,
-      startDate: events.startDate,
-      endDate: events.endDate,
-      location: events.location,
-      websiteUrl: events.websiteUrl,
-      shortName: events.shortName,
-    })
-    .from(events)
-    .where(eq(events.id, eventId))
-    .limit(1);
-
-  if (!row) return getDefaultEventEmailContext();
-  return buildEventEmailContext(row as EventEmailRow);
-}
 
 /**
  * Determine whether a user role auto-approves at signup (gets welcome email

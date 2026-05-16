@@ -281,6 +281,7 @@ export default async function (fastify: FastifyInstance) {
         .values({
           eventCode: data.eventCode,
           eventName: data.eventName,
+          shortName: data.shortName,
           description: data.description,
           eventType: data.eventType,
           location: data.location,
