@@ -2,9 +2,10 @@ import { z } from 'zod';
 
 export const checkinListSchema = z.object({
     page: z.coerce.number().min(1).default(1),
-    limit: z.coerce.number().min(1).max(100).default(50),
+    limit: z.coerce.number().min(1).max(5000).default(50),
     eventId: z.coerce.number().optional(),
     sessionId: z.coerce.number().optional(),
+    university: z.string().optional(),
     search: z.string().optional(), // Search by user name or reg code
 });
 

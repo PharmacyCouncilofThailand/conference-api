@@ -7,6 +7,7 @@ import {
     backofficeUsers,
     events,
     ticketTypes,
+    users,
 } from "../../database/schema.js";
 import { checkinListSchema, createCheckinSchema, checkinStatsSchema, undoCheckinSchema } from "../../schemas/checkins.schema.js";
 import { eq, desc, ilike, and, or, count, isNotNull, isNull, sql } from "drizzle-orm";
@@ -19,13 +20,14 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { page, limit, search, eventId, sessionId } = queryResult.data;
+        const { page, limit, search, eventId, sessionId, university } = queryResult.data;
         const offset = (page - 1) * limit;
 
         try {
             const conditions: any[] = [isNotNull(registrationSessions.checkedInAt)];
             if (eventId) conditions.push(eq(registrations.eventId, eventId));
             if (sessionId) conditions.push(eq(registrationSessions.sessionId, sessionId));
+            if (university) conditions.push(eq(users.university, university));
             if (search) {
                 conditions.push(
                     or(
@@ -38,11 +40,12 @@ export default async function (fastify: FastifyInstance) {
 
             const whereClause = and(...conditions);
 
-            // Count total
+            // Count total (join users when filtering by university)
             const [{ totalCount }] = await db
                 .select({ totalCount: count() })
                 .from(registrationSessions)
                 .innerJoin(registrations, eq(registrationSessions.registrationId, registrations.id))
+                .leftJoin(users, eq(registrations.userId, users.id))
                 .where(whereClause);
 
             // Fetch data
@@ -54,6 +57,8 @@ export default async function (fastify: FastifyInstance) {
                     firstName: registrations.firstName,
                     lastName: registrations.lastName,
                     email: registrations.email,
+                    university: users.university,
+                    institution: users.institution,
                     ticketName: ticketTypes.name,
                     sessionName: sessions.sessionName,
                     eventName: events.eventName,
@@ -64,6 +69,7 @@ export default async function (fastify: FastifyInstance) {
                 })
                 .from(registrationSessions)
                 .innerJoin(registrations, eq(registrationSessions.registrationId, registrations.id))
+                .leftJoin(users, eq(registrations.userId, users.id))
                 .leftJoin(ticketTypes, eq(registrationSessions.ticketTypeId, ticketTypes.id))
                 .leftJoin(sessions, eq(registrationSessions.sessionId, sessions.id))
                 .leftJoin(events, eq(registrations.eventId, events.id))
@@ -85,6 +91,36 @@ export default async function (fastify: FastifyInstance) {
         } catch (error) {
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to fetch check-ins" });
+        }
+    });
+
+    // Distinct universities of registrants for an event (for filter dropdown)
+    fastify.get("/universities", async (request, reply) => {
+        const query = request.query as { eventId?: string };
+        const eventId = Number(query.eventId);
+        if (!Number.isInteger(eventId) || eventId <= 0) {
+            return reply.status(400).send({ error: "eventId is required" });
+        }
+
+        try {
+            const rows = await db
+                .selectDistinct({ university: users.university })
+                .from(registrations)
+                .innerJoin(users, eq(registrations.userId, users.id))
+                .where(and(
+                    eq(registrations.eventId, eventId),
+                    isNotNull(users.university),
+                ))
+                .orderBy(users.university);
+
+            const universities = rows
+                .map((r) => r.university)
+                .filter((u): u is string => !!u && u.trim().length > 0);
+
+            return reply.send({ universities });
+        } catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({ error: "Failed to fetch universities" });
         }
     });
 
