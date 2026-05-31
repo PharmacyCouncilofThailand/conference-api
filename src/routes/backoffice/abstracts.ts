@@ -23,6 +23,12 @@ import {
   sendEventAbstractRevisionRequestedEmail,
 } from "../../services/emailTemplates.js";
 import {
+  buildConfirmationUrl,
+  getConfirmDeadlineDays,
+  issueConfirmationToken,
+  supersedeActiveTokens,
+} from "../../services/abstractConfirmation.js";
+import {
   buildEventEmailContext,
   getDefaultEventEmailContext,
 } from "../../services/emailTemplates.types.js";
@@ -204,6 +210,10 @@ export default async function (fastify: FastifyInstance) {
           conclusion: abstracts.conclusion,
           status: abstracts.status,
           fullPaperUrl: abstracts.fullPaperUrl,
+          approvedAt: abstracts.approvedAt,
+          rejectedAt: abstracts.rejectedAt,
+          confirmedAt: abstracts.confirmedAt,
+          reviewComment: abstracts.reviewComment,
           createdAt: abstracts.createdAt,
           author: {
             firstName: users.firstName,
@@ -309,6 +319,10 @@ export default async function (fastify: FastifyInstance) {
           conclusion: abstracts.conclusion,
           status: abstracts.status,
           fullPaperUrl: abstracts.fullPaperUrl,
+          approvedAt: abstracts.approvedAt,
+          rejectedAt: abstracts.rejectedAt,
+          confirmedAt: abstracts.confirmedAt,
+          reviewComment: abstracts.reviewComment,
           createdAt: abstracts.createdAt,
           author: {
             firstName: users.firstName,
@@ -604,14 +618,36 @@ export default async function (fastify: FastifyInstance) {
     const { status, comment } = result.data;
 
     try {
+      const reviewerId = request.user?.id ?? null;
+      const now = new Date();
+      const updatePatch: Record<string, unknown> = { status };
+      if (status === "accepted") {
+        updatePatch.approvedAt = now;
+        updatePatch.reviewedBy = reviewerId;
+        updatePatch.reviewComment = comment ?? null;
+      } else if (status === "rejected") {
+        updatePatch.rejectedAt = now;
+        updatePatch.reviewedBy = reviewerId;
+        updatePatch.reviewComment = comment ?? null;
+      }
+
       const [updatedAbstract] = await db
         .update(abstracts)
-        .set({ status })
+        .set(updatePatch)
         .where(eq(abstracts.id, parseInt(id)))
         .returning();
 
       if (!updatedAbstract)
         return reply.status(404).send({ error: "Abstract not found" });
+
+      // On reject: invalidate any pending confirmation tokens.
+      if (status === "rejected") {
+        try {
+          await supersedeActiveTokens(updatedAbstract.id);
+        } catch (e) {
+          fastify.log.warn({ err: e }, "Failed to supersede confirmation tokens on reject");
+        }
+      }
 
       // Get author information for email (skip if no userId)
       let author = null;
@@ -646,6 +682,18 @@ export default async function (fastify: FastifyInstance) {
               .limit(1);
 
             if (eventResult && (updatedAbstract.presentationType === "poster" || updatedAbstract.presentationType === "oral")) {
+              // Supersede any previous tokens, then issue a new one for this approval.
+              try {
+                await supersedeActiveTokens(updatedAbstract.id);
+              } catch (e) {
+                fastify.log.warn({ err: e }, "Failed to supersede previous confirmation tokens");
+              }
+              const issued = await issueConfirmationToken(updatedAbstract.id);
+              const confirmUrl = buildConfirmationUrl(
+                issued.rawToken,
+                "en",
+                eventResult.websiteUrl ?? undefined,
+              );
               await sendEventAbstractAcceptedEmail(
                 author.email,
                 author.firstName,
@@ -654,9 +702,10 @@ export default async function (fastify: FastifyInstance) {
                 updatedAbstract.presentationType,
                 buildEventEmailContext(eventResult),
                 comment,
+                { confirmUrl, deadline: issued.expiresAt },
               );
               fastify.log.info(
-                `Abstract accepted (${updatedAbstract.presentationType}) email sent to ${author.email}`,
+                `Abstract accepted+confirmation email sent to ${author.email} (deadline=${issued.expiresAt.toISOString()}, ${getConfirmDeadlineDays()} days)`,
               );
             }
           } else if (status === "rejected") {
@@ -681,6 +730,135 @@ export default async function (fastify: FastifyInstance) {
     } catch (error) {
       fastify.log.error(error);
       return reply.status(500).send({ error: "Failed to update abstract" });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Resend approval-confirmation email (admin only)
+  // Supersedes any active token, issues a fresh one, re-sends the email.
+  // -------------------------------------------------------------------------
+  fastify.post("/:id/resend-confirmation", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const abstractId = parseInt(id, 10);
+    if (Number.isNaN(abstractId)) return reply.status(400).send({ error: "Invalid abstract id" });
+
+    try {
+      const [abs] = await db
+        .select({
+          id: abstracts.id,
+          title: abstracts.title,
+          trackingId: abstracts.trackingId,
+          status: abstracts.status,
+          confirmedAt: abstracts.confirmedAt,
+          presentationType: abstracts.presentationType,
+          eventId: abstracts.eventId,
+          userId: abstracts.userId,
+          reviewComment: abstracts.reviewComment,
+        })
+        .from(abstracts)
+        .where(eq(abstracts.id, abstractId))
+        .limit(1);
+
+      if (!abs) return reply.status(404).send({ error: "Abstract not found" });
+      if (abs.status !== "accepted") {
+        return reply.status(400).send({ error: "Only accepted abstracts can have a confirmation email." });
+      }
+      if (abs.confirmedAt) {
+        return reply.status(409).send({ error: "Abstract is already confirmed." });
+      }
+      if (!abs.userId) {
+        return reply.status(400).send({ error: "Abstract has no associated user." });
+      }
+
+      const [author] = await db
+        .select({ firstName: users.firstName, lastName: users.lastName, email: users.email })
+        .from(users)
+        .where(eq(users.id, abs.userId))
+        .limit(1);
+      if (!author) return reply.status(400).send({ error: "Author not found." });
+
+      const [event] = await db
+        .select({
+          eventName: events.eventName,
+          startDate: events.startDate,
+          endDate: events.endDate,
+          location: events.location,
+          websiteUrl: events.websiteUrl,
+          shortName: events.shortName,
+        })
+        .from(events)
+        .where(eq(events.id, abs.eventId))
+        .limit(1);
+      if (!event) return reply.status(400).send({ error: "Event not found." });
+
+      await supersedeActiveTokens(abs.id);
+      const issued = await issueConfirmationToken(abs.id);
+      const confirmUrl = buildConfirmationUrl(
+        issued.rawToken,
+        "en",
+        event.websiteUrl ?? undefined,
+      );
+
+      await sendEventAbstractAcceptedEmail(
+        author.email,
+        author.firstName,
+        author.lastName,
+        abs.title,
+        abs.presentationType,
+        buildEventEmailContext(event),
+        abs.reviewComment ?? undefined,
+        { confirmUrl, deadline: issued.expiresAt },
+      );
+
+      return reply.send({
+        success: true,
+        deadline: issued.expiresAt.toISOString(),
+        deadlineDays: getConfirmDeadlineDays(),
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: "Failed to resend confirmation email" });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Manual confirm (admin override). Used when the author confirmed via
+  // another channel (phone/email) and the admin records it in the system.
+  // -------------------------------------------------------------------------
+  fastify.post("/:id/manual-confirm", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const abstractId = parseInt(id, 10);
+    if (Number.isNaN(abstractId)) return reply.status(400).send({ error: "Invalid abstract id" });
+
+    try {
+      const [abs] = await db
+        .select({ id: abstracts.id, status: abstracts.status, confirmedAt: abstracts.confirmedAt })
+        .from(abstracts)
+        .where(eq(abstracts.id, abstractId))
+        .limit(1);
+
+      if (!abs) return reply.status(404).send({ error: "Abstract not found" });
+      if (abs.status !== "accepted") {
+        return reply.status(400).send({ error: "Only accepted abstracts can be confirmed." });
+      }
+      if (abs.confirmedAt) {
+        return reply.send({ success: true, abstractId: abs.id, confirmedAt: abs.confirmedAt, alreadyConfirmed: true });
+      }
+
+      const now = new Date();
+      const [updated] = await db
+        .update(abstracts)
+        .set({ confirmedAt: now })
+        .where(eq(abstracts.id, abs.id))
+        .returning({ id: abstracts.id, confirmedAt: abstracts.confirmedAt });
+
+      // Mark active tokens as used so the email link cannot be re-used.
+      await supersedeActiveTokens(abs.id);
+
+      return reply.send({ success: true, abstractId: updated.id, confirmedAt: updated.confirmedAt });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: "Failed to manually confirm abstract" });
     }
   });
 }

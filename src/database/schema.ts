@@ -588,6 +588,25 @@ export const abstracts = pgTable("abstracts", {
   conclusion: text("conclusion").notNull(),
   fullPaperUrl: varchar("full_paper_url", { length: 500 }),
   status: abstractStatusEnum("status").notNull().default("pending"),
+  approvedAt: timestamp("approved_at"),
+  rejectedAt: timestamp("rejected_at"),
+  confirmedAt: timestamp("confirmed_at"),
+  reviewComment: text("review_comment"),
+  reviewedBy: integer("reviewed_by").references(() => backofficeUsers.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Token rows for the approval-confirmation flow.
+// Raw token is sent only via email; only the SHA-256 hash is stored here.
+export const abstractConfirmations = pgTable("abstract_confirmations", {
+  id: serial("id").primaryKey(),
+  abstractId: integer("abstract_id")
+    .notNull()
+    .references(() => abstracts.id, { onDelete: "cascade" }),
+  tokenHash: varchar("token_hash", { length: 128 }).notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  sentAt: timestamp("sent_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -697,6 +716,8 @@ export type NewSpeaker = typeof speakers.$inferInsert;
 
 export type Abstract = typeof abstracts.$inferSelect;
 export type NewAbstract = typeof abstracts.$inferInsert;
+export type AbstractConfirmation = typeof abstractConfirmations.$inferSelect;
+export type NewAbstractConfirmation = typeof abstractConfirmations.$inferInsert;
 export type AbstractFile = typeof abstractFiles.$inferSelect;
 export type NewAbstractFile = typeof abstractFiles.$inferInsert;
 export type AbstractRevisionRequest = typeof abstractRevisionRequests.$inferSelect;

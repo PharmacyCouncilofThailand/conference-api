@@ -564,17 +564,49 @@ export async function sendEventCoAuthorNotificationEmail(
 // 5. ABSTRACT ACCEPTED EMAIL (poster + oral unified)
 // ============================================
 
+export interface AbstractAcceptedConfirmation {
+  confirmUrl: string;
+  deadline: Date;
+}
+
+function buildConfirmationBlock(confirmation?: AbstractAcceptedConfirmation): string {
+  if (!confirmation) return "";
+  const deadlineEn = confirmation.deadline.toLocaleString("en-US", {
+    dateStyle: "long",
+    timeStyle: "short",
+    timeZone: "Asia/Bangkok",
+  });
+  const deadlineTh = confirmation.deadline.toLocaleString("th-TH", {
+    dateStyle: "long",
+    timeStyle: "short",
+    timeZone: "Asia/Bangkok",
+  });
+  return `
+=== ACTION REQUIRED / กรุณายืนยันการเข้าร่วม ===
+
+Please CONFIRM your participation by ${deadlineEn} via the link below.
+If you do not confirm by the deadline, your presentation slot may be released.
+
+กรุณายืนยันการเข้าร่วมและการนำเสนอภายในวันที่ ${deadlineTh} โดยคลิกลิงก์ด้านล่าง
+หากท่านไม่ได้ยืนยันภายในกำหนด ที่นั่งการนำเสนอของท่านอาจถูกยกเลิก
+
+Confirm here / ยืนยันที่นี่: ${confirmation.confirmUrl}
+`;
+}
+
 function buildAbstractAcceptedPlainText(
   firstName: string,
   lastName: string,
   abstractTitle: string,
   presentationType: "poster" | "oral",
   ctx: EventEmailContext,
-  comment?: string
+  comment?: string,
+  confirmation?: AbstractAcceptedConfirmation,
 ): string {
   const typeLabel = presentationType === "poster" ? "POSTER PRESENTATION" : "ORAL PRESENTATION";
   const articlePrefix = presentationType === "poster" ? "a" : "an";
   const commentText = comment ? `\nComment: ${comment}\n` : "";
+  const confirmationBlock = buildConfirmationBlock(confirmation);
 
   return `
 Dear ${firstName} ${lastName},
@@ -582,7 +614,7 @@ Dear ${firstName} ${lastName},
 Congratulations! Your abstract, titled "${abstractTitle}", is ACCEPTED as ${articlePrefix} ${typeLabel} at the ${ctx.eventName}. ${introLine(ctx)}
 ${commentText}
 All ${presentationType} presenters must be registered for the meeting in order to present${presentationType === "poster" ? " their poster" : ""}. For registration information and details go to ${ctx.websiteUrl}
-
+${confirmationBlock}
 We look forward to your presentation. If you have any questions, please contact pr@pharmacycouncil.org
 
 ${signature(ctx)}
@@ -595,9 +627,10 @@ export function buildEventAbstractAcceptedEmailContent(
   abstractTitle: string,
   presentationType: "poster" | "oral",
   ctx: EventEmailContext,
-  comment?: string
+  comment?: string,
+  confirmation?: AbstractAcceptedConfirmation,
 ): EventEmailContent {
-  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment);
+  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment, confirmation);
   return {
     subject: `Congratulations! Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`,
     html: textToHtml(plainText),
@@ -611,17 +644,17 @@ export async function sendEventAbstractAcceptedEmail(
   abstractTitle: string,
   presentationType: "poster" | "oral",
   ctx: EventEmailContext,
-  comment?: string
+  comment?: string,
+  confirmation?: AbstractAcceptedConfirmation,
 ): Promise<void> {
-  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment);
+  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment, confirmation);
+  const subject = confirmation
+    ? `[Action Required] Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`
+    : `Congratulations! Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`;
 
   try {
-    await sendNipaMailEmail(
-      email,
-      `Congratulations! Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`,
-      plainText
-    );
-    console.log(`[Generic] Abstract accepted (${presentationType}) email sent to ${email}`);
+    await sendNipaMailEmail(email, subject, plainText);
+    console.log(`[Generic] Abstract accepted (${presentationType}) email sent to ${email}${confirmation ? " with confirmation link" : ""}`);
   } catch (error) {
     console.error(`[Generic] Error sending abstract accepted (${presentationType}) email:`, error);
     throw error;
