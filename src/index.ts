@@ -162,8 +162,10 @@ import backofficeAbstractCategoriesRoutes from "./routes/backoffice/abstractCate
 import backofficeEmailRetrosendRoutes from "./routes/backoffice/email-retrosend.js";
 import backofficeEmailManualRoutes from "./routes/backoffice/email-manual.js";
 import backofficeStudentEligibilityRequestsRoutes from "./routes/backoffice/studentEligibilityRequests.js";
+import backofficeSponsorRoutes from "./routes/backoffice/sponsors.js";
 import publicSpeakersRoutes from "./routes/public/speakers.js";
 import publicEventsRoutes from "./routes/public/events.js";
+import publicSponsorRoutes from "./routes/public/sponsors.js";
 import publicStudentEligibilityRoutes from "./routes/public/studentEligibility.js";
 import abstractSubmitRoutes from "./routes/public/abstracts/submit.js";
 import abstractConfirmRoutes from "./routes/public/abstracts/confirm.js";
@@ -215,6 +217,7 @@ fastify.register(backofficeLoginRoutes, { prefix: "/backoffice" });
 
 // Public API routes
 fastify.register(publicEventsRoutes, { prefix: "/api/events" });
+fastify.register(publicSponsorRoutes, { prefix: "/api/events" });
 fastify.register(publicStudentEligibilityRoutes, { prefix: "/api/events" });
 fastify.register(publicSpeakersRoutes, { prefix: "/api/speakers" });
 fastify.register(abstractSubmitRoutes, { prefix: "/api/abstracts" });
@@ -254,6 +257,7 @@ fastify.register(async (protectedRoutes) => {
   protectedRoutes.register(backofficeEmailRetrosendRoutes, { prefix: "/email-retrosend" });
   protectedRoutes.register(backofficeEmailManualRoutes, { prefix: "/email-manual" });
   protectedRoutes.register(backofficeStudentEligibilityRequestsRoutes, { prefix: "/student-eligibility-requests" });
+  protectedRoutes.register(backofficeSponsorRoutes);
 }, { prefix: "/api/backoffice" });
 
 // ============================================================================

@@ -25,7 +25,14 @@ function getDriveClient() {
 }
 
 // Folder type mapping
-export type UploadFolderType = "student_docs" | "abstracts" | "speakers" | "venue_images" | "event_images" | "event_documents";
+export type UploadFolderType =
+  | "student_docs"
+  | "abstracts"
+  | "speakers"
+  | "venue_images"
+  | "event_images"
+  | "event_documents"
+  | "sponsors";
 
 const FOLDER_ENV_MAP: Record<UploadFolderType, string> = {
   student_docs: "GOOGLE_DRIVE_FOLDER_STUDENT_DOCS",
@@ -34,6 +41,7 @@ const FOLDER_ENV_MAP: Record<UploadFolderType, string> = {
   venue_images: "GOOGLE_DRIVE_FOLDER_VENUE_IMAGES",
   event_images: "GOOGLE_DRIVE_FOLDER_EVENT_IMAGES",
   event_documents: "GOOGLE_DRIVE_FOLDER_EVENT_DOCUMENTS",
+  sponsors: "GOOGLE_DRIVE_SPONSOR_ROOT_FOLDER",
 };
 
 // Abstract category type (matches database enum)
@@ -375,6 +383,99 @@ export async function uploadEventMedia(
   } else {
     return `https://drive.google.com/file/d/${fileId}/view`;
   }
+}
+
+// ============================================================================
+// SPONSOR UPLOADS (per-event folder structure)
+// ============================================================================
+
+export type SponsorUploadKind =
+  | "organizer_logo"
+  | "past_sponsor_logo"
+  | "previous_year_impression"
+  | "brochure"
+  | "other"
+  | "payment_slip"
+  | "logo";
+
+const SPONSOR_UPLOAD_FOLDER_NAMES: Record<SponsorUploadKind, string[]> = {
+  organizer_logo: ["page", "organizer-logo"],
+  past_sponsor_logo: ["page", "past-sponsors"],
+  previous_year_impression: ["page", "previous-year-impressions"],
+  brochure: ["page", "documents"],
+  other: ["page", "other"],
+  payment_slip: ["applications"],
+  logo: ["applications"],
+};
+
+export async function uploadSponsorFile(
+  fileBuffer: Buffer,
+  originalFileName: string,
+  mimeType: string,
+  eventCode: string,
+  uploadKind: SponsorUploadKind,
+  options?: { applicationNo?: string; sortOrder?: number },
+): Promise<string> {
+  const drive = getDriveClient();
+
+  const rootFolderId = process.env.GOOGLE_DRIVE_SPONSOR_ROOT_FOLDER;
+  if (!rootFolderId) {
+    throw new Error("GOOGLE_DRIVE_SPONSOR_ROOT_FOLDER environment variable not set");
+  }
+
+  let folderId = await getOrCreateFolder(rootFolderId, sanitizeFileName(eventCode));
+  const basePath = SPONSOR_UPLOAD_FOLDER_NAMES[uploadKind] || SPONSOR_UPLOAD_FOLDER_NAMES.other;
+  const folderPath = [...basePath];
+
+  if ((uploadKind === "payment_slip" || uploadKind === "logo") && options?.applicationNo) {
+    folderPath.push(sanitizeFileName(options.applicationNo));
+    folderPath.push(uploadKind === "payment_slip" ? "payment-slip" : "logo");
+  }
+
+  for (const folder of folderPath) {
+    folderId = await getOrCreateFolder(folderId, folder);
+  }
+
+  const ext = getFileExtension(originalFileName);
+  const safeEventCode = sanitizeFileName(eventCode);
+  const safeOriginalName = sanitizeFileName(originalFileName.replace(ext, ""));
+  const prefix = uploadKind === "logo" ? "sponsor_logo" : uploadKind;
+  const orderPart = options?.sortOrder != null ? `_${options.sortOrder}` : "";
+  const fileName = `${prefix}${orderPart}_${safeEventCode}_${Date.now()}_${safeOriginalName}${ext}`;
+
+  const response = await drive.files.create({
+    requestBody: {
+      name: fileName,
+      parents: [folderId],
+    },
+    media: {
+      mimeType,
+      body: Readable.from(fileBuffer),
+    },
+    fields: "id, webViewLink",
+  });
+
+  const fileId = response.data.id;
+  if (!fileId) {
+    throw new Error("Failed to upload sponsor file to Google Drive");
+  }
+
+  await drive.permissions.create({
+    fileId,
+    requestBody: {
+      role: "reader",
+      type: "anyone",
+    },
+  });
+
+  const apiBase = (process.env.API_BASE_URL || "http://localhost:3002").replace(/\/$/, "");
+  const isMedia = mimeType.startsWith("image/") || mimeType.startsWith("video/");
+
+  if (isMedia) {
+    return `${apiBase}/api/files/${fileId}`;
+  }
+
+  return `https://drive.google.com/file/d/${fileId}/view`;
 }
 
 /**

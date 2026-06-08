@@ -92,6 +92,29 @@ export const sessionTypeEnum = pgEnum("session_type", [
   "break",
   "other",
 ]);
+export const sponsorPackageTypeEnum = pgEnum("sponsor_package_type", [
+  "booth",
+  "symposium",
+  "bundle",
+]);
+export const sponsorMediaTypeEnum = pgEnum("sponsor_media_type", [
+  "past_sponsor_logo",
+  "previous_year_impression",
+  "brochure",
+  "other",
+]);
+export const sponsorApplicationStatusEnum = pgEnum("sponsor_application_status", [
+  "submitted",
+  "under_review",
+  "approved",
+  "rejected",
+  "cancelled",
+]);
+export const sponsorPaymentStatusEnum = pgEnum("sponsor_payment_status", [
+  "pending_review",
+  "verified",
+  "rejected",
+]);
 
 // --------------------------------------------------------------------------
 // 2. USER MANAGEMENT
@@ -269,6 +292,183 @@ export const eventImages = pgTable("event_images", {
   imageUrl: varchar("image_url", { length: 500 }).notNull(),
   caption: varchar("caption", { length: 255 }),
   imageType: varchar("image_type", { length: 50 }).notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// --------------------------------------------------------------------------
+// 3A. SPONSORSHIP
+// --------------------------------------------------------------------------
+export const sponsorEventProfiles = pgTable("sponsor_event_profiles", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" })
+    .unique(),
+  aboutTitle: varchar("about_title", { length: 255 }),
+  aboutDescription: text("about_description"),
+  organizerLogoUrl: varchar("organizer_logo_url", { length: 2000 }),
+  brochureUrl: varchar("brochure_url", { length: 2000 }),
+  registrationOpenAt: timestamp("registration_open_at"),
+  registrationCloseAt: timestamp("registration_close_at"),
+  isPublished: boolean("is_published").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const sponsorStats = pgTable("sponsor_stats", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  valueText: varchar("value_text", { length: 50 }).notNull(),
+  label: varchar("label", { length: 255 }).notNull(),
+  description: text("description"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const sponsorPackages = pgTable("sponsor_packages", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  packageType: sponsorPackageTypeEnum("package_type").notNull(),
+  code: varchar("code", { length: 50 }).notNull(),
+  optionLabel: varchar("option_label", { length: 100 }),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  price: decimal("price", { precision: 10, scale: 2 }).notNull().default("0"),
+  currency: varchar("currency", { length: 3 }).notNull().default("THB"),
+  quota: integer("quota").notNull().default(0),
+  badgeText: varchar("badge_text", { length: 100 }),
+  themeKey: varchar("theme_key", { length: 50 }),
+  isRecommended: boolean("is_recommended").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const sponsorPackageFeatures = pgTable("sponsor_package_features", {
+  id: serial("id").primaryKey(),
+  packageId: integer("package_id")
+    .notNull()
+    .references(() => sponsorPackages.id, { onDelete: "cascade" }),
+  featureText: varchar("feature_text", { length: 500 }).notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const sponsorPackageComponents = pgTable("sponsor_package_components", {
+  id: serial("id").primaryKey(),
+  bundlePackageId: integer("bundle_package_id")
+    .notNull()
+    .references(() => sponsorPackages.id, { onDelete: "cascade" }),
+  componentPackageId: integer("component_package_id")
+    .notNull()
+    .references(() => sponsorPackages.id, { onDelete: "cascade" }),
+  componentRole: varchar("component_role", { length: 50 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const sponsorBenefits = pgTable("sponsor_benefits", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  iconKey: varchar("icon_key", { length: 50 }),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const sponsorMediaAssets = pgTable("sponsor_media_assets", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  mediaType: sponsorMediaTypeEnum("media_type").notNull(),
+  title: varchar("title", { length: 255 }),
+  caption: varchar("caption", { length: 500 }),
+  fileUrl: varchar("file_url", { length: 2000 }).notNull(),
+  fileName: varchar("file_name", { length: 255 }),
+  mimeType: varchar("mime_type", { length: 100 }),
+  fileSize: integer("file_size"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const sponsorTimelineItems = pgTable("sponsor_timeline_items", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  periodLabel: varchar("period_label", { length: 100 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  isHighlight: boolean("is_highlight").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const sponsorApplications = pgTable("sponsor_applications", {
+  id: serial("id").primaryKey(),
+  applicationNo: varchar("application_no", { length: 50 }).notNull().unique(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  companyName: varchar("company_name", { length: 255 }).notNull(),
+  contactFullName: varchar("contact_full_name", { length: 255 }).notNull(),
+  businessEmail: varchar("business_email", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 50 }).notNull(),
+  billingName: varchar("billing_name", { length: 255 }).notNull(),
+  taxId: varchar("tax_id", { length: 13 }).notNull(),
+  billingAddress: text("billing_address").notNull(),
+  paymentSlipUrl: varchar("payment_slip_url", { length: 2000 }),
+  paymentSlipFileName: varchar("payment_slip_file_name", { length: 255 }),
+  logoUrl: varchar("logo_url", { length: 2000 }),
+  logoFileName: varchar("logo_file_name", { length: 255 }),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull().default("0"),
+  currency: varchar("currency", { length: 3 }).notNull().default("THB"),
+  applicationStatus: sponsorApplicationStatusEnum("application_status")
+    .notNull()
+    .default("submitted"),
+  paymentStatus: sponsorPaymentStatusEnum("payment_status")
+    .notNull()
+    .default("pending_review"),
+  internalNote: text("internal_note"),
+  rejectionReason: text("rejection_reason"),
+  reviewedBy: integer("reviewed_by").references(() => backofficeUsers.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewed_at"),
+  confirmedAt: timestamp("confirmed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const sponsorApplicationItems = pgTable("sponsor_application_items", {
+  id: serial("id").primaryKey(),
+  applicationId: integer("application_id")
+    .notNull()
+    .references(() => sponsorApplications.id, { onDelete: "cascade" }),
+  packageId: integer("package_id").references(() => sponsorPackages.id, {
+    onDelete: "set null",
+  }),
+  packageType: sponsorPackageTypeEnum("package_type").notNull(),
+  packageNameSnapshot: varchar("package_name_snapshot", { length: 255 }).notNull(),
+  priceSnapshot: decimal("price_snapshot", { precision: 10, scale: 2 }).notNull().default("0"),
+  quantity: integer("quantity").notNull().default(1),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -752,6 +952,27 @@ export type NewAbstractCategory = typeof abstractCategories.$inferInsert;
 export type EventStudentEligibilityRequest = typeof eventStudentEligibilityRequests.$inferSelect;
 export type NewEventStudentEligibilityRequest = typeof eventStudentEligibilityRequests.$inferInsert;
 
+export type SponsorEventProfile = typeof sponsorEventProfiles.$inferSelect;
+export type NewSponsorEventProfile = typeof sponsorEventProfiles.$inferInsert;
+export type SponsorStat = typeof sponsorStats.$inferSelect;
+export type NewSponsorStat = typeof sponsorStats.$inferInsert;
+export type SponsorPackage = typeof sponsorPackages.$inferSelect;
+export type NewSponsorPackage = typeof sponsorPackages.$inferInsert;
+export type SponsorPackageFeature = typeof sponsorPackageFeatures.$inferSelect;
+export type NewSponsorPackageFeature = typeof sponsorPackageFeatures.$inferInsert;
+export type SponsorPackageComponent = typeof sponsorPackageComponents.$inferSelect;
+export type NewSponsorPackageComponent = typeof sponsorPackageComponents.$inferInsert;
+export type SponsorBenefit = typeof sponsorBenefits.$inferSelect;
+export type NewSponsorBenefit = typeof sponsorBenefits.$inferInsert;
+export type SponsorMediaAsset = typeof sponsorMediaAssets.$inferSelect;
+export type NewSponsorMediaAsset = typeof sponsorMediaAssets.$inferInsert;
+export type SponsorTimelineItem = typeof sponsorTimelineItems.$inferSelect;
+export type NewSponsorTimelineItem = typeof sponsorTimelineItems.$inferInsert;
+export type SponsorApplication = typeof sponsorApplications.$inferSelect;
+export type NewSponsorApplication = typeof sponsorApplications.$inferInsert;
+export type SponsorApplicationItem = typeof sponsorApplicationItems.$inferSelect;
+export type NewSponsorApplicationItem = typeof sponsorApplicationItems.$inferInsert;
+
 // --------------------------------------------------------------------------
 // 8. RELATIONS
 // --------------------------------------------------------------------------
@@ -812,6 +1033,12 @@ export const eventsRelations = relations(events, ({ many }) => ({
   eventSpeakers: many(eventSpeakers),
   ticketTypes: many(ticketTypes),
   studentEligibilityRequests: many(eventStudentEligibilityRequests),
+  sponsorStats: many(sponsorStats),
+  sponsorPackages: many(sponsorPackages),
+  sponsorBenefits: many(sponsorBenefits),
+  sponsorMediaAssets: many(sponsorMediaAssets),
+  sponsorTimelineItems: many(sponsorTimelineItems),
+  sponsorApplications: many(sponsorApplications),
 }));
 
 export const eventStudentEligibilityRequestsRelations = relations(eventStudentEligibilityRequests, ({ one }) => ({
@@ -860,4 +1087,97 @@ export const eventSpeakersRelations = relations(eventSpeakers, ({ one }) => ({
 export const ticketTypesRelations = relations(ticketTypes, ({ many }) => ({
   registrations: many(registrations),
   ticketSessions: many(ticketSessions),
+}));
+
+export const sponsorEventProfilesRelations = relations(sponsorEventProfiles, ({ one }) => ({
+  event: one(events, {
+    fields: [sponsorEventProfiles.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const sponsorStatsRelations = relations(sponsorStats, ({ one }) => ({
+  event: one(events, {
+    fields: [sponsorStats.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const sponsorPackagesRelations = relations(sponsorPackages, ({ one, many }) => ({
+  event: one(events, {
+    fields: [sponsorPackages.eventId],
+    references: [events.id],
+  }),
+  features: many(sponsorPackageFeatures),
+  bundleComponents: many(sponsorPackageComponents, {
+    relationName: "bundle_package_components",
+  }),
+  includedInBundles: many(sponsorPackageComponents, {
+    relationName: "component_package_components",
+  }),
+  applicationItems: many(sponsorApplicationItems),
+}));
+
+export const sponsorPackageFeaturesRelations = relations(sponsorPackageFeatures, ({ one }) => ({
+  package: one(sponsorPackages, {
+    fields: [sponsorPackageFeatures.packageId],
+    references: [sponsorPackages.id],
+  }),
+}));
+
+export const sponsorPackageComponentsRelations = relations(sponsorPackageComponents, ({ one }) => ({
+  bundlePackage: one(sponsorPackages, {
+    fields: [sponsorPackageComponents.bundlePackageId],
+    references: [sponsorPackages.id],
+    relationName: "bundle_package_components",
+  }),
+  componentPackage: one(sponsorPackages, {
+    fields: [sponsorPackageComponents.componentPackageId],
+    references: [sponsorPackages.id],
+    relationName: "component_package_components",
+  }),
+}));
+
+export const sponsorBenefitsRelations = relations(sponsorBenefits, ({ one }) => ({
+  event: one(events, {
+    fields: [sponsorBenefits.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const sponsorMediaAssetsRelations = relations(sponsorMediaAssets, ({ one }) => ({
+  event: one(events, {
+    fields: [sponsorMediaAssets.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const sponsorTimelineItemsRelations = relations(sponsorTimelineItems, ({ one }) => ({
+  event: one(events, {
+    fields: [sponsorTimelineItems.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const sponsorApplicationsRelations = relations(sponsorApplications, ({ one, many }) => ({
+  event: one(events, {
+    fields: [sponsorApplications.eventId],
+    references: [events.id],
+  }),
+  reviewer: one(backofficeUsers, {
+    fields: [sponsorApplications.reviewedBy],
+    references: [backofficeUsers.id],
+  }),
+  items: many(sponsorApplicationItems),
+}));
+
+export const sponsorApplicationItemsRelations = relations(sponsorApplicationItems, ({ one }) => ({
+  application: one(sponsorApplications, {
+    fields: [sponsorApplicationItems.applicationId],
+    references: [sponsorApplications.id],
+  }),
+  package: one(sponsorPackages, {
+    fields: [sponsorApplicationItems.packageId],
+    references: [sponsorPackages.id],
+  }),
 }));
