@@ -32,7 +32,6 @@ import {
 import {
   createKtbFormPayload,
   generateKtbOrderRef,
-  isKtbFastpayConfigured,
   isKtbPaymentCancelled,
   isKtbPaymentFailed,
   isKtbPaymentSuccess,
@@ -74,37 +73,61 @@ function generateRegCode(): string {
 const PAY_SOLUTIONS_REFNO_PROD_MIN = 300000000001;
 const PAY_SOLUTIONS_REFNO_PROD_MAX = 399999999999;
 
-async function generatePaySolutionsRefno(): Promise<string> {
-  const isProduction = process.env.NODE_ENV === "production";
+let paySolutionsRefnoSequenceReady: Promise<void> | null = null;
 
-  if (isProduction) {
-    // Production range: 300000000001 - 399999999999
-    await db.execute(sql`
-      CREATE SEQUENCE IF NOT EXISTS pay_solutions_refno_seq
-      START WITH 300000000001 INCREMENT BY 1 MINVALUE 300000000001 NO MAXVALUE CACHE 1
-    `);
+function isPostgresDuplicateObjectError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "23505"
+  );
+}
 
-    // Ensure next generated value starts at least from 300000000001
-    await db.execute(sql`
-      SELECT setval('pay_solutions_refno_seq',
-        GREATEST(last_value, 300000000000), true)
-      FROM pay_solutions_refno_seq
-    `);
-  } else {
-    // Ensure sequence exists (safe for new environments / DB resets)
-    await db.execute(sql`
-      CREATE SEQUENCE IF NOT EXISTS pay_solutions_refno_seq
-      START WITH 10001 INCREMENT BY 1 MINVALUE 10001 NO MAXVALUE CACHE 1
-    `);
+async function ensurePaySolutionsRefnoSequence(): Promise<void> {
+  if (!paySolutionsRefnoSequenceReady) {
+    paySolutionsRefnoSequenceReady = (async () => {
+      const isProduction = process.env.NODE_ENV === "production";
 
-    // Bump sequence to at least 10001 if it was created with a lower start
-    // (prevents collision with any refno <= 10000 used in Pay Solutions panel)
-    await db.execute(sql`
-      SELECT setval('pay_solutions_refno_seq',
-        GREATEST(last_value, 10001), true)
-      FROM pay_solutions_refno_seq
-    `);
+      try {
+        if (isProduction) {
+          await db.execute(sql`
+            CREATE SEQUENCE IF NOT EXISTS pay_solutions_refno_seq
+            START WITH 300000000001 INCREMENT BY 1 MINVALUE 300000000001 NO MAXVALUE CACHE 1
+          `);
+          await db.execute(sql`
+            SELECT setval('pay_solutions_refno_seq',
+              GREATEST(last_value, 300000000000), true)
+            FROM pay_solutions_refno_seq
+          `);
+        } else {
+          await db.execute(sql`
+            CREATE SEQUENCE IF NOT EXISTS pay_solutions_refno_seq
+            START WITH 10001 INCREMENT BY 1 MINVALUE 10001 NO MAXVALUE CACHE 1
+          `);
+          await db.execute(sql`
+            SELECT setval('pay_solutions_refno_seq',
+              GREATEST(last_value, 10001), true)
+            FROM pay_solutions_refno_seq
+          `);
+        }
+      } catch (error) {
+        // Concurrent create-intent calls can race on CREATE SEQUENCE.
+        if (!isPostgresDuplicateObjectError(error)) {
+          paySolutionsRefnoSequenceReady = null;
+          throw error;
+        }
+      }
+    })();
   }
+
+  await paySolutionsRefnoSequenceReady;
+}
+
+async function generatePaySolutionsRefno(): Promise<string> {
+  await ensurePaySolutionsRefnoSequence();
+
+  const isProduction = process.env.NODE_ENV === "production";
 
   const rows = await db.execute(sql`
     SELECT lpad(nextval('pay_solutions_refno_seq')::text, 12, '0') AS refno
@@ -353,11 +376,70 @@ function buildTaxInvoiceInfo(data: {
 
 /**
  * Resolve a frontend package/addon string ID + currency to the actual DB ticketType.
- * Frontend uses "student"/"professional" for packages, "workshop"/"gala" for addons.
- * Each ticket in DB has one currency, so we match by event + groupName/allowedRoles + currency.
- * For students, also checks allowedStudentLevels if specified on the ticket.
+ * Primary packages accept: ticket type ID, role slug (student/pharmacist/...),
+ * or ticket groupName/name. Addons match by groupName.
  */
 type ResolvedTicket = { id: number; price: string; eventId: number };
+
+type TicketLookupRow = {
+  id: number;
+  price: string;
+  currency: string;
+  category: string;
+  groupName: string | null;
+  name: string;
+  allowedRoles: string | null;
+  allowedStudentLevels: string | null;
+  quota: number;
+  soldCount: number;
+  eventId: number;
+  isActive: boolean | null;
+  displayOrder: number | null;
+  saleStartDate: Date | null;
+  saleEndDate: Date | null;
+};
+
+function primaryTicketMatchesStudentLevel(
+  ticket: Pick<TicketLookupRow, "allowedRoles" | "allowedStudentLevels">,
+  packageId: string,
+  studentLevel?: string | null
+): boolean {
+  if (!allowedListIncludes(ticket.allowedRoles, "student")) {
+    return true;
+  }
+
+  if (packageId === "student") {
+    return ticketAllowsStudentLevel(ticket.allowedStudentLevels, studentLevel);
+  }
+
+  return ticketAllowsStudentLevel(ticket.allowedStudentLevels, studentLevel);
+}
+
+async function primaryPackageRequiresStudentEligibility(
+  packageId: string,
+  eventId: number
+): Promise<boolean> {
+  if (packageId === "student") return true;
+
+  const parsedId = parseInt(packageId, 10);
+  if (!Number.isInteger(parsedId) || parsedId <= 0) {
+    return false;
+  }
+
+  const [ticket] = await db
+    .select({
+      category: ticketTypes.category,
+      allowedRoles: ticketTypes.allowedRoles,
+    })
+    .from(ticketTypes)
+    .where(and(eq(ticketTypes.id, parsedId), eq(ticketTypes.eventId, eventId)))
+    .limit(1);
+
+  return (
+    ticket?.category === "primary" &&
+    allowedListIncludes(ticket.allowedRoles, "student")
+  );
+}
 
 async function resolveTicketId(
   packageId: string,
@@ -366,8 +448,6 @@ async function resolveTicketId(
   category: "primary" | "addon",
   studentLevel?: string | null
 ): Promise<ResolvedTicket | null> {
-  // For primary packages, match by allowedRoles pattern
-  // For addons, match by groupName
   const allTickets = await db
     .select({
       id: ticketTypes.id,
@@ -375,6 +455,7 @@ async function resolveTicketId(
       currency: ticketTypes.currency,
       category: ticketTypes.category,
       groupName: ticketTypes.groupName,
+      name: ticketTypes.name,
       allowedRoles: ticketTypes.allowedRoles,
       allowedStudentLevels: ticketTypes.allowedStudentLevels,
       quota: ticketTypes.quota,
@@ -397,7 +478,6 @@ async function resolveTicketId(
   const now = new Date();
   const active = allTickets.filter((t) => {
     if (t.isActive === false) return false;
-    // Filter out tickets not within their sale period
     const saleStart = t.saleStartDate ? new Date(t.saleStartDate) : null;
     const saleEnd = t.saleEndDate ? new Date(t.saleEndDate) : null;
     if (saleStart && now < saleStart) return false;
@@ -405,9 +485,25 @@ async function resolveTicketId(
     return true;
   });
 
+  const pickBestMatch = (matched: TicketLookupRow[]): ResolvedTicket | null => {
+    if (matched.length === 0) return null;
+    matched.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    return { id: matched[0].id, price: matched[0].price, eventId: matched[0].eventId };
+  };
+
   if (category === "primary") {
-    // Match by role pattern in allowedRoles
-    // packageId maps to allowed roles in tickets
+    const normalizedPackageId = packageId.trim().toLowerCase();
+    const parsedTicketId = parseInt(packageId, 10);
+
+    // 1) Direct ticket type ID from checkout UI
+    if (Number.isInteger(parsedTicketId) && parsedTicketId > 0) {
+      const byId = active.find((t) => t.id === parsedTicketId);
+      if (byId && primaryTicketMatchesStudentLevel(byId, packageId, studentLevel)) {
+        return { id: byId.id, price: byId.price, eventId: byId.eventId };
+      }
+    }
+
+    // 2) Legacy role slug (student/pharmacist/...)
     const roleMap: Record<string, string[]> = {
       student: ["student"],
       pharmacist: ["pharmacist"],
@@ -415,35 +511,35 @@ async function resolveTicketId(
       general: ["general"],
     };
     const roles = roleMap[packageId];
-    if (!roles) return null;
+    if (roles) {
+      const matched = active.filter((t) => {
+        if (!t.allowedRoles) return false;
+        const roleMatches = roles.some((r) => allowedListIncludes(t.allowedRoles, r));
+        if (!roleMatches) return false;
+        return primaryTicketMatchesStudentLevel(t, packageId, studentLevel);
+      });
+      return pickBestMatch(matched);
+    }
 
-    const matched = active.filter((t) => {
-      if (!t.allowedRoles) return false;
-      const roleMatches = roles.some((r) => allowedListIncludes(t.allowedRoles, r));
-      if (!roleMatches) return false;
-
-      // Restricted student-level tickets require an exact user studentLevel match.
-      if (packageId === "student" && !ticketAllowsStudentLevel(t.allowedStudentLevels, studentLevel)) {
-        return false;
-      }
-      return true;
+    // 3) Match by groupName or ticket name shown in checkout
+    const matchedByLabel = active.filter((t) => {
+      const groupName = (t.groupName || "").trim().toLowerCase();
+      const name = (t.name || "").trim().toLowerCase();
+      const labelMatches =
+        groupName === normalizedPackageId || name === normalizedPackageId;
+      if (!labelMatches) return false;
+      return primaryTicketMatchesStudentLevel(t, packageId, studentLevel);
     });
-
-    // Pick best by displayOrder
-    if (matched.length === 0) return null;
-    matched.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-    return { id: matched[0].id, price: matched[0].price, eventId: matched[0].eventId };
-  } else {
-    // Addon: match by groupName or name-like pattern
-    const matched = active.filter((t) => {
-      const gn = (t.groupName || "").toLowerCase();
-      return gn === packageId.toLowerCase() || gn.includes(packageId.toLowerCase());
-    });
-
-    if (matched.length === 0) return null;
-    matched.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-    return { id: matched[0].id, price: matched[0].price, eventId: matched[0].eventId };
+    return pickBestMatch(matchedByLabel);
   }
+
+  // Addon: match by groupName
+  const matched = active.filter((t) => {
+    const gn = (t.groupName || "").toLowerCase();
+    return gn === packageId.toLowerCase() || gn.includes(packageId.toLowerCase());
+  });
+
+  return pickBestMatch(matched);
 }
 
 interface PurchaseSnapshot {
@@ -980,13 +1076,22 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           .where(eq(events.id, eventId))
           .limit(1);
 
+        // Always route through conference-web result page first so the user
+        // sees the payment outcome there. If the event has its own website,
+        // pass it as `returnTo` so the result page can bounce back afterwards.
         if (event?.websiteUrl) {
-          const targetUrl = event.websiteUrl.replace(/\/$/, "");
-          fastify.log.info(`[BROWSER-RETURN] Event has websiteUrl, redirecting to ${targetUrl}`);
-          return reply.code(302).redirect(`${targetUrl}/en/checkout/payment/result?refno=${encodeURIComponent(refno)}`);
+          const eventWebsiteUrl = event.websiteUrl.replace(/\/$/, "");
+          fastify.log.info(
+            `[BROWSER-RETURN] Redirecting to conference-web result with returnTo=${eventWebsiteUrl}`
+          );
+          return reply
+            .code(302)
+            .redirect(
+              `${defaultResultUrl}?refno=${encodeURIComponent(refno)}&returnTo=${encodeURIComponent(eventWebsiteUrl)}`
+            );
         }
 
-        // Default: redirect to conference-web
+        // No dedicated event website: stay on conference-web
         fastify.log.info(`[BROWSER-RETURN] Default redirect to conference-web`);
         return reply.code(302).redirect(`${defaultResultUrl}?refno=${encodeURIComponent(refno)}`);
       } catch (error) {
@@ -1455,7 +1560,11 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
 
       try {
         let effectiveStudentLevel: string | null = null;
-        if (!isAddonOnly && packageId === "student") {
+        if (
+          !isAddonOnly &&
+          (packageId === "student" ||
+            (await primaryPackageRequiresStudentEligibility(packageId, eventId)))
+        ) {
           const eligibility = await resolveStudentPackageEligibility(userId, eventId);
           if (!eligibility.allowed) {
             return reply.status(403).send({
@@ -1613,7 +1722,11 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
 
       try {
         let effectiveStudentLevel: string | null = null;
-        if (!isAddonOnly && packageId === "student") {
+        if (
+          !isAddonOnly &&
+          (packageId === "student" ||
+            (await primaryPackageRequiresStudentEligibility(packageId, eventId)))
+        ) {
           const eligibility = await resolveStudentPackageEligibility(userId, eventId);
           if (!eligibility.allowed) {
             return reply.status(403).send({
@@ -2127,15 +2240,9 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         const secureOrderDetail = descLines.join(" | ").slice(0, 255);
         const customerFullName = `${buyer.firstName || ""} ${buyer.lastName || ""}`.trim();
 
-        const sourceApp = String(request.headers["x-source-app"] || "").toLowerCase();
-        const shouldUseKtbGateway =
-          sourceApp === "conference-web" &&
-          currency === "THB" &&
-          isKtbFastpayConfigured();
-
-        if (sourceApp === "conference-web" && currency === "THB" && !shouldUseKtbGateway) {
-          fastify.log.warn("[CREATE-INTENT] KTB FASTPAY not configured, falling back to Pay Solutions");
-        }
+        // PaySolution is the only active gateway for this flow. KTB FASTPAY is
+        // intentionally disabled so every paid order goes through Pay Solutions.
+        const shouldUseKtbGateway = false;
 
         if (shouldUseKtbGateway) {
           const ktbOrderRef = generateKtbOrderRef(order.id);

@@ -33,7 +33,7 @@ const corsOrigins = process.env.CORS_ORIGIN
 
 fastify.register(cors, {
   origin: corsOrigins,
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Source-App'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Source-App', 'ngrok-skip-browser-warning'],
   credentials: true
 });
 
