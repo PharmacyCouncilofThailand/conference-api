@@ -28,16 +28,10 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install postgresql-client for health checks and Chromium for puppeteer
-# Include dependencies required by Chromium: nss, freetype, harfbuzz, ca-certificates, ttf-freefont
+# Install postgresql-client for health checks.
+# PDF receipts are generated with @react-pdf/renderer (pure JS) — no browser/Chromium needed.
 RUN apk add --no-cache \
     postgresql-client \
-    chromium \
-    nss \
-    freetype \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont \
     && rm -rf /var/cache/apk/*
 
 # Copy built files and dependencies
@@ -49,6 +43,9 @@ COPY --from=builder /app/src/database/schema.ts ./src/database/schema.ts
 
 # Install production dependencies only
 RUN npm install --legacy-peer-deps --omit=dev
+
+# Copy font files for PDF receipt generation (@react-pdf / Sarabun → Thai support)
+COPY --from=builder /app/public/Font ./public/Font
 
 # Create public directory for static files (before switching to non-root user)
 RUN mkdir -p /app/public
