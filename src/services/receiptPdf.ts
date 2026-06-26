@@ -1,5 +1,5 @@
 import React from "react";
-import { renderToStream } from "@react-pdf/renderer";
+import { renderToStream, type DocumentProps } from "@react-pdf/renderer";
 import ThaiReceiptPDF from "./receipt/ThaiReceiptPDF.js";
 import { Organization, ReceiptViewData } from "./receipt/types.js";
 
@@ -133,7 +133,10 @@ export async function generateReceiptPdf(
   data: ReceiptData
 ): Promise<NodeJS.ReadableStream> {
   const receipt = toReceiptViewData(data);
-  return renderToStream(
-    React.createElement(ThaiReceiptPDF, { receipt })
-  );
+  // ThaiReceiptPDF renders a <Document>, but TS only sees its own prop type;
+  // cast to the element shape renderToStream expects.
+  const element = React.createElement(ThaiReceiptPDF, {
+    receipt,
+  }) as React.ReactElement<DocumentProps>;
+  return renderToStream(element);
 }
