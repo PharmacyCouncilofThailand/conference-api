@@ -25,8 +25,8 @@ SELECT
   true,
   'ต้องลงทะเบียนล่วงหน้าเพื่อเข้าร่วม (รับจำกัด 300 ที่)',
   'Networking Hall',
-  TIMESTAMPTZ '2026-10-30 18:00:00+07',
-  TIMESTAMPTZ '2026-10-30 21:00:00+07',
+  TIMESTAMP '2026-10-30 11:00:00',  -- Bangkok 18:00
+  TIMESTAMP '2026-10-30 14:00:00',  -- Bangkok 21:00
   300,
   true
 FROM events e

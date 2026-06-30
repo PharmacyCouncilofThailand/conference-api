@@ -1,7 +1,7 @@
 -- =============================================================================
 -- ส่วนที่ 10: ตั๋ว Undergraduate — ฿1,250
 -- Role: student + level undergraduate
--- ขาย: 1 Jul 2026 10:00 – 30 Oct 2026 17:00 (UTC+7)
+-- ขาย: 1 Jul 2026 10:00 – 30 Oct 2026 17:00 (Bangkok) — เก็บเป็น UTC ใน DB
 -- เข้าได้เฉพาะ Main Session + Health Hack (ผูกในไฟล์ 12)
 -- =============================================================================
 
@@ -34,8 +34,8 @@ SELECT
   '["undergraduate"]',
   0,
   0,
-  TIMESTAMPTZ '2026-07-01 10:00:00+07',
-  TIMESTAMPTZ '2026-10-30 17:00:00+07',
+  TIMESTAMP '2026-07-01 03:00:00',  -- Bangkok 10:00
+  TIMESTAMP '2026-10-30 10:00:00',  -- Bangkok 17:00
   2000702,
   true,
   'Student undergraduate rate — Main Session + Health Hack only',

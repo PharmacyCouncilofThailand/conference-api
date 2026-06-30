@@ -1,7 +1,7 @@
 -- =============================================================================
 -- ส่วนที่ 6: ตั๋ว Early Bird — ฿1,250
 -- Role: pharmacist, medical_professional
--- ขาย: 1 Jul 2026 10:00 – 31 Jul 2026 23:59 (UTC+7)
+-- ขาย: 1 Jul 2026 10:00 – 31 Jul 2026 23:59 (Bangkok) — เก็บเป็น UTC ใน DB
 -- =============================================================================
 
 INSERT INTO ticket_types (
@@ -33,8 +33,8 @@ SELECT
   NULL,
   0,
   0,
-  TIMESTAMPTZ '2026-07-01 10:00:00+07',
-  TIMESTAMPTZ '2026-07-31 23:59:59+07',
+  TIMESTAMP '2026-07-01 03:00:00',  -- Bangkok 10:00
+  TIMESTAMP '2026-07-31 16:59:59',  -- Bangkok 23:59:59
   1000701,
   true,
   'Early Bird registration for pharmacists and medical professionals',

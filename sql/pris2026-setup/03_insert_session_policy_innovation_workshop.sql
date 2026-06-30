@@ -25,8 +25,8 @@ SELECT
   true,
   'ต้องลงทะเบียนล่วงหน้าเพื่อเข้าร่วม (รับจำกัด 50 ที่)',
   'Workshop Room A',
-  TIMESTAMPTZ '2026-10-29 13:00:00+07',
-  TIMESTAMPTZ '2026-10-29 17:00:00+07',
+  TIMESTAMP '2026-10-29 06:00:00',  -- Bangkok 13:00
+  TIMESTAMP '2026-10-29 10:00:00',  -- Bangkok 17:00
   50,
   true
 FROM events e

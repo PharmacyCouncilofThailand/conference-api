@@ -25,8 +25,8 @@ SELECT
   false,
   NULL,
   'Innovation Lab',
-  TIMESTAMPTZ '2026-10-29 09:00:00+07',
-  TIMESTAMPTZ '2026-10-29 12:00:00+07',
+  TIMESTAMP '2026-10-29 02:00:00',  -- Bangkok 09:00
+  TIMESTAMP '2026-10-29 05:00:00',  -- Bangkok 12:00
   0,
   true
 FROM events e

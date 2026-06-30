@@ -26,8 +26,8 @@ SELECT
   false,
   'ห้องงานหลักภายในงาน',
   'Main Stage Hall',
-  TIMESTAMPTZ '2026-10-28 09:00:00+07',
-  TIMESTAMPTZ '2026-10-30 17:00:00+07',
+  TIMESTAMP '2026-10-28 02:00:00',  -- Bangkok 09:00
+  TIMESTAMP '2026-10-30 10:00:00',  -- Bangkok 17:00
   0,
   true
 FROM events e

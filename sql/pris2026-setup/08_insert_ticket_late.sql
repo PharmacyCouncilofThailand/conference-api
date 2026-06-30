@@ -1,7 +1,7 @@
 -- =============================================================================
 -- ส่วนที่ 8: ตั๋ว Late / หน้างาน — ฿2,500
 -- Role: pharmacist, medical_professional
--- ขาย: 16 Oct 2026 00:00 – 30 Oct 2026 17:00 (UTC+7)
+-- ขาย: 16 Oct 2026 00:00 – 30 Oct 2026 17:00 (Bangkok) — เก็บเป็น UTC ใน DB
 -- ต้องมี enum ticket_priority ค่า 'late' แล้ว (migration 0023)
 -- =============================================================================
 
@@ -34,8 +34,8 @@ SELECT
   NULL,
   0,
   0,
-  TIMESTAMPTZ '2026-10-16 00:00:00+07',
-  TIMESTAMPTZ '2026-10-30 17:00:00+07',
+  TIMESTAMP '2026-10-15 17:00:00',  -- Bangkok 2026-10-16 00:00
+  TIMESTAMP '2026-10-30 10:00:00',  -- Bangkok 17:00
   4001016,
   true,
   'Late / on-site registration for pharmacists and medical professionals',

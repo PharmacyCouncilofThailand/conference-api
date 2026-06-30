@@ -24,11 +24,19 @@
 | 11 | `11_link_ticket_sessions_full_access.sql` | ผูก session กลุ่มตั๋วหลัก |
 | 12 | `12_link_ticket_sessions_undergraduate.sql` | ผูก undergraduate |
 | 13 | `13_verify_tickets_and_links.sql` | ตรวจผล |
+| 14 | `14_update_opt_in_session_descriptions.sql` | อัปเดต description opt-in (ถ้ารัน seed เก่า) |
+| 15 | `15_fix_timestamps_utc.sql` | แก้เวลาเป็น UTC (ถ้ารัน seed แบบ `+07` ไปแล้ว) |
 
 ## แก้ก่อนรัน
 
 - เปลี่ยน `'PRIS-2026'` ใน WHERE ให้ตรง `events.event_code` จริง
 - ปรับ `start_time` / `end_time` / `room` ของแต่ละ session ตามกำหนดการจริง
+
+## เวลา (timezone)
+
+- คอลัมน์ `timestamp` ใน DB เก็บเป็น **UTC** (ไม่มี offset)
+- ค่าในไฟล์ SQL เป็น UTC แล้ว — comment `-- Bangkok ...` บอกเวลาไทยอ้างอิง
+- หน้าเว็บ/API แปลงแสดงเป็น UTC+7 เอง (สอดคล้องกับ `events.start_date` เช่น `2026-10-29 02:30:00` = 09:30 ไทย)
 
 ## หมายเหตุ
 

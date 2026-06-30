@@ -1,7 +1,7 @@
 -- =============================================================================
 -- ส่วนที่ 9: ตั๋ว Postgraduate — ฿1,250
 -- Role: student + level postgraduate
--- ขาย: 1 Jul 2026 10:00 – 30 Oct 2026 17:00 (UTC+7)
+-- ขาย: 1 Jul 2026 10:00 – 30 Oct 2026 17:00 (Bangkok) — เก็บเป็น UTC ใน DB
 -- =============================================================================
 
 INSERT INTO ticket_types (
@@ -33,8 +33,8 @@ SELECT
   '["postgraduate"]',
   0,
   0,
-  TIMESTAMPTZ '2026-07-01 10:00:00+07',
-  TIMESTAMPTZ '2026-10-30 17:00:00+07',
+  TIMESTAMP '2026-07-01 03:00:00',  -- Bangkok 10:00
+  TIMESTAMP '2026-10-30 10:00:00',  -- Bangkok 17:00
   2000701,
   true,
   'Student postgraduate rate',
