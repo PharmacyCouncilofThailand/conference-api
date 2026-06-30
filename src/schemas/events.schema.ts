@@ -37,6 +37,7 @@ export const createSessionSchema = z.object({
     sessionName: z.string().min(1).max(255),
     sessionType: z.enum(["workshop", "gala_dinner", "lecture", "ceremony", "break", "other"]).optional().default("other"),
     isMainSession: z.boolean().optional().default(false),
+    requiresOptIn: z.boolean().optional().default(false),
     description: z.string().optional(),
     room: z.string().max(100).optional(),
     startTime: z.string().datetime(),
@@ -61,6 +62,8 @@ export const VALID_STUDENT_LEVELS = ["postgraduate", "undergraduate"] as const;
 export const VALID_TICKET_PRIORITIES = [
     "early_bird",
     "regular",
+    "late",
+    "onsite",
 ] as const;
 
 // Create Ticket Type Schema

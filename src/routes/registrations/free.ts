@@ -364,7 +364,10 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
           let sessionIdsToLink: number[] = [];
 
           const linkedSessions = await tx
-            .select({ sessionId: ticketSessions.sessionId })
+            .select({
+              sessionId: ticketSessions.sessionId,
+              requiresOptIn: sessions.requiresOptIn,
+            })
             .from(ticketSessions)
             .innerJoin(sessions, eq(ticketSessions.sessionId, sessions.id))
             .where(
@@ -374,7 +377,9 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
               )
             );
 
-          sessionIdsToLink = linkedSessions.map((ls) => ls.sessionId);
+          sessionIdsToLink = linkedSessions
+            .filter((ls) => !ls.requiresOptIn)
+            .map((ls) => ls.sessionId);
 
           // Fallback: auto-link to main sessions if no ticket_sessions rows
           if (sessionIdsToLink.length === 0) {

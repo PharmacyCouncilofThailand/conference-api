@@ -518,6 +518,7 @@ export default async function (fastify: FastifyInstance) {
             sessionName: data.sessionName,
             sessionType: data.sessionType,
             isMainSession: data.isMainSession ?? false,
+            requiresOptIn: data.requiresOptIn ?? false,
             description: data.description,
             room: data.room,
             startTime: new Date(data.startTime),

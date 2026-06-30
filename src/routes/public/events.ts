@@ -12,6 +12,7 @@ import {
 } from "../../database/schema.js";
 import { eq, desc, min, asc, sql, and, inArray } from "drizzle-orm";
 import { ticketAllowsRole, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
+import { enrichSessionsWithEnrollment } from "../../utils/sessionEnrollment.js";
 
 export default async function publicEventsRoutes(fastify: FastifyInstance) {
   // List all published events (public, no auth required)
@@ -262,11 +263,13 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Enrich ticket types with their sessions
+      // Enrich ticket types with their sessions (exclude opt-in-only sessions from ticket bundle list)
       const enrichedTicketList = eligibleTicketList.map(ticket => ({
         ...ticket,
-        sessions: ticketSessionMap[ticket.id] || [],
+        sessions: (ticketSessionMap[ticket.id] || []).filter((s) => !s.requiresOptIn),
       }));
+
+      const enrichedSessions = await enrichSessionsWithEnrollment(event.id, sessionList);
 
       // Count registrations for this event (confirmed only)
       const [regCount] = await db
@@ -283,7 +286,7 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
         event: {
           ...event,
           images: venueImages,
-          sessions: sessionList,
+          sessions: enrichedSessions,
           ticketTypes: enrichedTicketList,
           registeredCount: regCount?.count || 0,
         },

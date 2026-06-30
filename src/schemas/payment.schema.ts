@@ -8,6 +8,7 @@ export const createPaymentIntentSchema = z.object({
   paymentMethod: z.enum(["qr", "card"]).optional().default("card"),
   promoCode: z.string().optional(),
   workshopSessionId: z.number().int().positive().optional(),
+  optionalSessionIds: z.array(z.coerce.number().int().positive()).optional().default([]),
   needTaxInvoice: z.boolean().optional().default(false),
   taxName: z.string().trim().max(200).optional(),
   taxId: z

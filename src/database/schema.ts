@@ -47,6 +47,8 @@ export const ticketCategoryEnum = pgEnum("ticket_category", [
 export const ticketPriorityEnum = pgEnum("ticket_priority", [
   "early_bird",
   "regular",
+  "late",
+  "onsite",
 ]);
 export const orderStatusEnum = pgEnum("order_status", [
   "pending",
@@ -238,6 +240,7 @@ export const sessions = pgTable("sessions", {
   sessionName: varchar("session_name", { length: 255 }).notNull(),
   sessionType: sessionTypeEnum("session_type").default("other"),
   isMainSession: boolean("is_main_session").notNull().default(false),
+  requiresOptIn: boolean("requires_opt_in").notNull().default(false),
   description: text("description"),
   room: varchar("room", { length: 100 }),
   startTime: timestamp("start_time").notNull(),

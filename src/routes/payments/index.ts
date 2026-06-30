@@ -42,10 +42,12 @@ import {
   verifyKtbDataFeedSecurityKey,
 } from "../../services/ktbFastpay.js";
 import {
-  calculatePaySolutionsFeeExact,
   resolvePaySolutionsChannel,
-  resolvePaySolutionsFeeMethod,
 } from "../../utils/paySolutionsFee.js";
+import {
+  validateOptionalSessionSelections,
+  countSessionEnrollments,
+} from "../../utils/sessionEnrollment.js";
 import { generateReceiptToken, verifyReceiptToken } from "../../utils/receiptToken.js";
 import { generateReceiptPdf } from "../../services/receiptPdf.js";
 import { sendPaymentReceiptEmail } from "../../services/emailService.js";
@@ -265,6 +267,23 @@ function parsePostbackBody(body: unknown): Record<string, unknown> {
   }
 
   return {};
+}
+
+function parseOptionalSessionIdsFromDetails(details: unknown): number[] {
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return [];
+  }
+
+  const raw = (details as Record<string, unknown>).optionalSessionIds;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return [...new Set(
+    raw
+      .map((value) => (typeof value === "number" ? value : parseInt(String(value), 10)))
+      .filter((value) => Number.isInteger(value) && value > 0)
+  )];
 }
 
 function parseWorkshopSessionIdFromDetails(details: unknown): number | null {
@@ -701,19 +720,7 @@ async function resolveOrderEventId(tx: any, order: { id: number; eventId: number
 }
 
 async function countConfirmedWorkshopEnrollments(eventId: number, sessionId: number) {
-  const [row] = await db
-    .select({ count: count() })
-    .from(registrationSessions)
-    .innerJoin(registrations, eq(registrationSessions.registrationId, registrations.id))
-    .where(
-      and(
-        eq(registrationSessions.sessionId, sessionId),
-        eq(registrations.eventId, eventId),
-        eq(registrations.status, "confirmed")
-      )
-    );
-
-  return row?.count ?? 0;
+  return countSessionEnrollments(eventId, sessionId);
 }
 
 // ─────────────────────────────────────────────────────
@@ -850,6 +857,8 @@ async function processSuccessfulPayment(
       );
     }
 
+    const optionalSessionIdsFromPayment = parseOptionalSessionIdsFromDetails(paymentDetails);
+
     // Find primary (ticket) item to determine whether this is a full order or addon-only order
     const primaryItem = items.find(i => i.itemType === "ticket");
     const isAddonOnlyOrder = !primaryItem;
@@ -949,7 +958,10 @@ async function processSuccessfulPayment(
       } else {
         // Primary or other addon → lookup sessions from ticketSessions junction
         const linkedSessions = await tx
-          .select({ sessionId: ticketSessions.sessionId })
+          .select({
+            sessionId: ticketSessions.sessionId,
+            requiresOptIn: sessions.requiresOptIn,
+          })
           .from(ticketSessions)
           .innerJoin(sessions, eq(ticketSessions.sessionId, sessions.id))
           .where(
@@ -959,7 +971,9 @@ async function processSuccessfulPayment(
             )
           );
 
-        sessionIdsToLink = linkedSessions.map(ls => ls.sessionId);
+        sessionIdsToLink = linkedSessions
+          .filter((ls) => !ls.requiresOptIn)
+          .map((ls) => ls.sessionId);
 
         // Fallback for primary tickets: if no ticket_sessions rows, auto-link to main session(s)
         if (sessionIdsToLink.length === 0 && item.itemType === "ticket") {
@@ -983,6 +997,14 @@ async function processSuccessfulPayment(
               }))
             );
             fastify.log.info(`Backfilled ticket_sessions for primary ticket ${item.ticketTypeId} → ${sessionIdsToLink.length} main sessions`);
+          }
+        }
+
+        if (item.itemType === "ticket" && optionalSessionIdsFromPayment.length > 0) {
+          for (const sid of optionalSessionIdsFromPayment) {
+            if (!sessionIdsToLink.includes(sid)) {
+              sessionIdsToLink.push(sid);
+            }
           }
         }
       }
@@ -1632,10 +1654,6 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         }
 
         const netAmount = Math.round((subtotal - discountAmount) * 100) / 100;
-        const feeMethod = resolvePaySolutionsFeeMethod(paymentMethod, currency);
-        const feeBreakdown = netAmount > 0
-          ? calculatePaySolutionsFeeExact(netAmount, feeMethod)
-          : { fee: 0, total: 0 };
 
         return reply.send({
           success: true,
@@ -1645,10 +1663,10 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             discountType,
             discountValue,
             netAmount,
-            fee: feeBreakdown.fee,
-            total: feeBreakdown.total,
+            fee: 0,
+            total: netAmount,
             currency,
-            feeMethod,
+            feeMethod: null,
             promoValid,
             promoError,
           },
@@ -1694,6 +1712,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         paymentMethod,
         promoCode,
         workshopSessionId,
+        optionalSessionIds,
         needTaxInvoice,
         taxName,
         taxId,
@@ -1943,6 +1962,29 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           }
         }
 
+        let validatedOptionalSessionIds: number[] = [];
+        if (!isAddonOnly && primaryTicket && optionalSessionIds.length > 0) {
+          const optionalValidation = await validateOptionalSessionSelections(
+            eventId,
+            primaryTicket.id,
+            optionalSessionIds
+          );
+          if (!optionalValidation.ok) {
+            return reply.status(400).send({
+              success: false,
+              code: optionalValidation.code,
+              error: optionalValidation.error,
+            });
+          }
+          validatedOptionalSessionIds = optionalValidation.sessionIds;
+        } else if (optionalSessionIds.length > 0 && isAddonOnly) {
+          return reply.status(400).send({
+            success: false,
+            code: "OPTIONAL_SESSION_PRIMARY_REQUIRED",
+            error: "Optional sessions can only be selected with a primary ticket purchase",
+          });
+        }
+
         if (taxInvoice.needTaxInvoice) {
           if (!taxInvoice.taxId) {
             return reply.status(400).send({
@@ -2006,12 +2048,8 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           fastify.log.info(`[CREATE-INTENT] Promo "${promoCode}" applied: discount=${discountAmount}, net=${totalAmount}`);
         }
 
-        // 6. Calculate Pay Solutions fee (pass-through to buyer)
-        const feeMethod = resolvePaySolutionsFeeMethod(paymentMethod, currency);
-        const feeBreakdown = totalAmount > 0
-          ? calculatePaySolutionsFeeExact(totalAmount, feeMethod)
-          : { fee: 0, total: 0, processingFee: 0, processingVat: 0 };
-        const chargeAmount = feeBreakdown.total;
+        // 6. Charge ticket price only — no payment processing fee pass-through
+        const chargeAmount = totalAmount;
 
         // 7. Create Order record (with orderNumber + promo info)
         const orderNumber = generateOrderNumber();
@@ -2086,6 +2124,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             paymentDetails: {
               requestedMethod: "free",
               workshopSessionId: workshopSessionId || null,
+              optionalSessionIds: validatedOptionalSessionIds,
               processingFee: 0,
               processingVat: 0,
               freeReason: discountAmount > 0 ? "promo_100_percent" : "free_ticket",
@@ -2213,9 +2252,6 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         if (discountAmount > 0) {
           descLines.push(`Discount ${currency === "THB" ? "THB" : "USD"} ${discountAmount.toLocaleString()}`);
         }
-        if (feeBreakdown.fee > 0) {
-          descLines.push(`Fee ${currency === "THB" ? "THB" : "USD"} ${feeBreakdown.fee.toLocaleString()}`);
-        }
 
         const [buyer] = await db
           .select({
@@ -2274,8 +2310,9 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             paymentDetails: {
               requestedMethod: paymentMethod,
               workshopSessionId: workshopSessionId || null,
-              processingFee: feeBreakdown.processingFee,
-              processingVat: feeBreakdown.processingVat,
+              optionalSessionIds: validatedOptionalSessionIds,
+              processingFee: 0,
+              processingVat: 0,
               ktb: {
                 request: ktbPayload.fields,
                 actionUrl: ktbPayload.actionUrl,
@@ -2308,10 +2345,10 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
               discountType: promoResult.discountType || null,
               discountValue: promoResult.discountValue || null,
               netAmount: totalAmount,
-              fee: feeBreakdown.fee,
+              fee: 0,
               total: chargeAmount,
               currency,
-              feeMethod,
+              feeMethod: null,
               paymentChannel: paymentMethod === "qr" ? "qr" : "card",
             },
           });
@@ -2362,8 +2399,9 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           paymentDetails: {
             requestedMethod: paymentMethod,
             workshopSessionId: workshopSessionId || null,
-            processingFee: feeBreakdown.processingFee,
-            processingVat: feeBreakdown.processingVat,
+            optionalSessionIds: validatedOptionalSessionIds,
+            processingFee: 0,
+            processingVat: 0,
             formSubmitActionUrl: formSubmitPayload.actionUrl,
             formSubmitFields: formSubmitPayload.fields,
           },
@@ -2391,10 +2429,10 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             discountType: promoResult.discountType || null,
             discountValue: promoResult.discountValue || null,
             netAmount: totalAmount,
-            fee: feeBreakdown.fee,
+            fee: 0,
             total: chargeAmount,
             currency,
-            feeMethod,
+            feeMethod: null,
             paymentChannel: paySolutionsChannel,
           },
         });
