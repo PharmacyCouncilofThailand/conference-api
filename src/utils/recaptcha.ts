@@ -1,6 +1,11 @@
 /**
  * Cloudflare Turnstile Verification Utility
  * (Replaces Google reCAPTCHA v2 — works in China and worldwide)
+ *
+ * Supports multiple secret keys:
+ * - TURNSTILE_SECRET_KEY: conference-web / default widget
+ * - TURNSTILE_SECRET_KEY_PRIS: Pris2026 widget (separate Cloudflare account)
+ * - RECAPTCHA_SECRET_KEY: legacy fallback
  */
 
 interface TurnstileResponse {
@@ -12,47 +17,65 @@ interface TurnstileResponse {
   cdata?: string;
 }
 
-/**
- * Get the Turnstile secret key from environment.
- * Supports TURNSTILE_SECRET_KEY (preferred) with RECAPTCHA_SECRET_KEY as fallback.
- */
-function getSecretKey(): string | undefined {
-  return process.env.TURNSTILE_SECRET_KEY || process.env.RECAPTCHA_SECRET_KEY;
+function getSecretKeys(): string[] {
+  const keys = [
+    process.env.TURNSTILE_SECRET_KEY,
+    process.env.TURNSTILE_SECRET_KEY_PRIS,
+    process.env.RECAPTCHA_SECRET_KEY,
+  ]
+    .map((value) => value?.trim())
+    .filter((value): value is string => !!value);
+
+  return [...new Set(keys)];
+}
+
+async function verifyWithSecret(
+  secretKey: string,
+  token: string
+): Promise<{ success: boolean; errorCodes?: string[] }> {
+  const response = await fetch(
+    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: `secret=${encodeURIComponent(secretKey)}&response=${encodeURIComponent(token)}`,
+    }
+  );
+
+  const data = (await response.json()) as TurnstileResponse;
+  return {
+    success: data.success,
+    errorCodes: data["error-codes"],
+  };
 }
 
 /**
- * Verify Cloudflare Turnstile token
- * @param token - The Turnstile token from client
- * @returns true if verification passes, false otherwise
+ * Verify Cloudflare Turnstile token.
+ * Tries each configured secret until one succeeds (supports multiple frontends/widgets).
  */
 export async function verifyRecaptcha(token: string): Promise<boolean> {
-  const secretKey = getSecretKey();
+  const secretKeys = getSecretKeys();
 
-  // If no secret key configured, skip verification (for development)
-  if (!secretKey) {
+  if (secretKeys.length === 0) {
     console.warn("TURNSTILE_SECRET_KEY not configured - skipping verification");
     return true;
   }
 
   try {
-    const response = await fetch(
-      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: `secret=${encodeURIComponent(secretKey)}&response=${encodeURIComponent(token)}`,
+    let lastErrorCodes: string[] | undefined;
+
+    for (const secretKey of secretKeys) {
+      const result = await verifyWithSecret(secretKey, token);
+      if (result.success) {
+        return true;
       }
-    );
-
-    const data = (await response.json()) as TurnstileResponse;
-
-    if (!data.success) {
-      console.warn("Turnstile verification failed:", data["error-codes"]);
+      lastErrorCodes = result.errorCodes;
     }
 
-    return data.success;
+    console.warn("Turnstile verification failed:", lastErrorCodes);
+    return false;
   } catch (error) {
     console.error("Turnstile verification error:", error);
     return false;
@@ -63,5 +86,5 @@ export async function verifyRecaptcha(token: string): Promise<boolean> {
  * Check if CAPTCHA verification is enabled
  */
 export function isRecaptchaEnabled(): boolean {
-  return !!getSecretKey();
+  return getSecretKeys().length > 0;
 }
