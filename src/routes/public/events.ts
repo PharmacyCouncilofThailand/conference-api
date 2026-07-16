@@ -263,13 +263,20 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Enrich ticket types with their sessions (exclude opt-in-only sessions from ticket bundle list)
-      const enrichedTicketList = eligibleTicketList.map(ticket => ({
-        ...ticket,
-        sessions: (ticketSessionMap[ticket.id] || []).filter((s) => !s.requiresOptIn),
-      }));
-
       const enrichedSessions = await enrichSessionsWithEnrollment(event.id, sessionList);
+      const enrichedSessionById = new Map(enrichedSessions.map((session) => [session.id, session]));
+
+      // Enrich ticket types with both included sessions and optional opt-in sessions.
+      const enrichedTicketList = eligibleTicketList.map(ticket => {
+        const linkedSessions = (ticketSessionMap[ticket.id] || [])
+          .map((session) => enrichedSessionById.get(session.id) ?? session);
+
+        return {
+          ...ticket,
+          sessions: linkedSessions.filter((s) => !s.requiresOptIn),
+          optionalSessions: linkedSessions.filter((s) => s.requiresOptIn),
+        };
+      });
 
       // Count registrations for this event (confirmed only)
       const [regCount] = await db

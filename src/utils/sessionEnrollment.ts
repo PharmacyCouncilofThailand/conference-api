@@ -4,6 +4,7 @@ import {
   registrations,
   registrationSessions,
   ticketTypes,
+  ticketSessions,
 } from "../database/schema.js";
 import { and, count, eq, inArray } from "drizzle-orm";
 import { parseAllowedList } from "./ticketEligibility.js";
@@ -91,7 +92,14 @@ export async function validateOptionalSessionSelections(
       sessionName: sessions.sessionName,
     })
     .from(sessions)
-    .where(and(eq(sessions.eventId, eventId), inArray(sessions.id, uniqueIds)));
+    .innerJoin(ticketSessions, eq(ticketSessions.sessionId, sessions.id))
+    .where(
+      and(
+        eq(sessions.eventId, eventId),
+        eq(ticketSessions.ticketTypeId, primaryTicketId),
+        inArray(sessions.id, uniqueIds)
+      )
+    );
 
   if (sessionRows.length !== uniqueIds.length) {
     return { ok: false, error: "One or more selected sessions are invalid", code: "INVALID_SESSION" };
