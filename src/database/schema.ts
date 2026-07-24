@@ -860,7 +860,7 @@ export const abstractRevisionRequests = pgTable("abstract_revision_requests", {
     .notNull()
     .references(() => abstracts.id, { onDelete: "cascade" }),
   requestedBy: integer("requested_by").references(() => backofficeUsers.id),
-  topic: varchar("topic", { length: 50 }).notNull(),
+  topic: varchar("topic", { length: 255 }).notNull(),
   comment: text("comment").notNull(),
   status: varchar("status", { length: 20 }).notNull().default("open"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
