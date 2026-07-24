@@ -35,7 +35,8 @@ export const abstractSubmissionSchema = z.object({
 
     // Abstract Details
     title: z.string().min(10, 'Title must be at least 10 characters').max(500, 'Title too long'),
-    category: z.string().min(1, 'Category is required'), // Dynamic category from abstract_categories table
+    categoryId: z.coerce.number().int().positive().optional(),
+    category: z.string().optional(), // Fallback category string or name from abstract_categories table
     presentationType: z.enum(['oral', 'poster']),
     keywords: z.string().min(1, 'Keywords are required'),
 
@@ -55,7 +56,8 @@ export const abstractSubmissionSchema = z.object({
 
 export const abstractResubmissionSchema = z.object({
     title: z.string().min(10, 'Title must be at least 10 characters').max(500, 'Title too long'),
-    category: z.string().min(1, 'Category is required'),
+    categoryId: z.coerce.number().int().positive().optional(),
+    category: z.string().optional(),
     presentationType: z.enum(['oral', 'poster']),
     keywords: z.string().min(1, 'Keywords are required'),
     background: z.string().min(1, 'Background is required'),
@@ -74,6 +76,7 @@ export const abstractListSchema = z.object({
     search: z.string().optional(),
     eventId: z.coerce.number().optional(),
     status: abstractStatusSchema.optional(),
+    categoryId: z.coerce.number().optional(),
     category: z.string().optional(), // Dynamic category from abstract_categories table
     presentationType: z.enum(['oral', 'poster']).optional(),
 });
@@ -85,6 +88,6 @@ export const updateAbstractStatusSchema = z.object({
 });
 
 export const requestAbstractRevisionSchema = z.object({
-    topic: abstractRevisionTopicSchema,
+    topic: z.string().trim().min(1, 'Revision topic is required').max(255, 'Revision topic must be 255 characters or fewer'),
     comment: z.string().trim().max(1000, 'Revision details must be 1000 characters or fewer').optional().default(''),
 });

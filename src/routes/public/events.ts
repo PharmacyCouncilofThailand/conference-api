@@ -169,7 +169,7 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
             eq(abstractCategories.isActive, true),
           )
         )
-        .orderBy(asc(abstractCategories.name));
+        .orderBy(asc(abstractCategories.id));
 
       return reply.send({
         eventCode: event.eventCode,

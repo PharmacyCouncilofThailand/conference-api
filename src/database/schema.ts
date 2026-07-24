@@ -781,7 +781,8 @@ export const abstracts = pgTable("abstracts", {
     .notNull()
     .references(() => events.id),
   title: varchar("title", { length: 500 }).notNull(),
-  category: varchar("category", { length: 100 }).notNull(),
+  categoryId: integer("category_id").references(() => abstractCategories.id),
+  category: varchar("category", { length: 100 }),
   presentationType: presentationTypeEnum("presentation_type").notNull(),
   keywords: varchar("keywords", { length: 255 }),
   background: text("background").notNull(),

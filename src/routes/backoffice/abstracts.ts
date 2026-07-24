@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
 import {
   abstracts,
+  abstractCategories,
   abstractFiles,
   abstractCoAuthors,
   abstractRevisionRequestFiles,
@@ -108,7 +109,7 @@ export default async function (fastify: FastifyInstance) {
         .send({ error: "Invalid query", details: queryResult.error.flatten() });
     }
 
-    const { page, limit, search, eventId, status, category, presentationType } =
+    const { page, limit, search, eventId, status, categoryId, category, presentationType } =
       queryResult.data;
     const offset = (page - 1) * limit;
 
@@ -170,7 +171,15 @@ export default async function (fastify: FastifyInstance) {
 
       if (eventId) conditions.push(eq(abstracts.eventId, eventId));
       if (status) conditions.push(eq(abstracts.status, status));
-      if (category) conditions.push(eq(abstracts.category, category));
+      if (categoryId) conditions.push(eq(abstracts.categoryId, categoryId));
+      if (category) {
+        conditions.push(
+          or(
+            eq(abstracts.category, category),
+            eq(abstractCategories.name, category),
+          ),
+        );
+      }
       if (presentationType)
         conditions.push(eq(abstracts.presentationType, presentationType));
       if (search) {
@@ -192,6 +201,7 @@ export default async function (fastify: FastifyInstance) {
         .select({ totalCount: count() })
         .from(abstracts)
         .leftJoin(users, eq(abstracts.userId, users.id))
+        .leftJoin(abstractCategories, eq(abstracts.categoryId, abstractCategories.id))
         .where(whereClause);
 
       // Fetch data
@@ -200,7 +210,9 @@ export default async function (fastify: FastifyInstance) {
           id: abstracts.id,
           trackingId: abstracts.trackingId,
           title: abstracts.title,
+          categoryId: abstracts.categoryId,
           category: abstracts.category,
+          categoryName: abstractCategories.name,
           presentationType: abstracts.presentationType,
           keywords: abstracts.keywords,
           background: abstracts.background,
@@ -231,6 +243,7 @@ export default async function (fastify: FastifyInstance) {
         .from(abstracts)
         .leftJoin(users, eq(abstracts.userId, users.id))
         .leftJoin(events, eq(abstracts.eventId, events.id))
+        .leftJoin(abstractCategories, eq(abstracts.categoryId, abstractCategories.id))
         .where(whereClause)
         .orderBy(desc(abstracts.createdAt))
         .limit(limit)
@@ -271,6 +284,7 @@ export default async function (fastify: FastifyInstance) {
       // Merge co-authors with abstracts
       const abstractsWithCoAuthors = abstractList.map((abs) => ({
         ...abs,
+        category: abs.categoryName || abs.category,
         coAuthors: coAuthorsList.filter((ca) => ca.abstractId === abs.id),
         files: filesList
           .filter((file) => file.abstractId === abs.id)
@@ -309,7 +323,9 @@ export default async function (fastify: FastifyInstance) {
           id: abstracts.id,
           trackingId: abstracts.trackingId,
           title: abstracts.title,
+          categoryId: abstracts.categoryId,
           category: abstracts.category,
+          categoryName: abstractCategories.name,
           presentationType: abstracts.presentationType,
           keywords: abstracts.keywords,
           background: abstracts.background,
@@ -340,7 +356,12 @@ export default async function (fastify: FastifyInstance) {
         .from(abstracts)
         .leftJoin(users, eq(abstracts.userId, users.id))
         .leftJoin(events, eq(abstracts.eventId, events.id))
+        .leftJoin(abstractCategories, eq(abstracts.categoryId, abstractCategories.id))
         .where(eq(abstracts.id, parseInt(id)));
+
+      if (abstractData) {
+        abstractData.category = abstractData.categoryName || abstractData.category;
+      }
 
       if (!abstractData) {
         return reply.status(404).send({ error: "Abstract not found" });

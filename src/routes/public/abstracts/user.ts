@@ -163,6 +163,7 @@ async function cleanupExistingDriveFiles(
     );
 }
 
+
 export default async function (fastify: FastifyInstance) {
     // Get current user's abstracts (JWT-protected)
     fastify.get("", { preHandler: [fastify.authenticate] }, async (request, reply) => {
@@ -175,7 +176,9 @@ export default async function (fastify: FastifyInstance) {
                     id: abstracts.id,
                     trackingId: abstracts.trackingId,
                     title: abstracts.title,
+                    categoryId: abstracts.categoryId,
                     category: abstracts.category,
+                    categoryName: abstractCategories.name,
                     presentationType: abstracts.presentationType,
                     status: abstracts.status,
                     keywords: abstracts.keywords,
@@ -188,6 +191,7 @@ export default async function (fastify: FastifyInstance) {
                     createdAt: abstracts.createdAt,
                 })
                 .from(abstracts)
+                .leftJoin(abstractCategories, eq(abstracts.categoryId, abstractCategories.id))
                 .where(eq(abstracts.userId, userId))
                 .orderBy(desc(abstracts.createdAt));
 
@@ -224,6 +228,7 @@ export default async function (fastify: FastifyInstance) {
 
             const abstractsWithCoAuthors = userAbstracts.map((abstract) => ({
                 ...abstract,
+                category: abstract.categoryName || abstract.category,
                 coAuthors: coAuthorsList.filter((coAuthor) => coAuthor.abstractId === abstract.id),
                 files: filesList
                     .filter((file) => file.abstractId === abstract.id)
@@ -263,7 +268,9 @@ export default async function (fastify: FastifyInstance) {
                     id: abstracts.id,
                     trackingId: abstracts.trackingId,
                     title: abstracts.title,
+                    categoryId: abstracts.categoryId,
                     category: abstracts.category,
+                    categoryName: abstractCategories.name,
                     presentationType: abstracts.presentationType,
                     status: abstracts.status,
                     keywords: abstracts.keywords,
@@ -276,6 +283,7 @@ export default async function (fastify: FastifyInstance) {
                     createdAt: abstracts.createdAt,
                 })
                 .from(abstracts)
+                .leftJoin(abstractCategories, eq(abstracts.categoryId, abstractCategories.id))
                 .where(and(eq(abstracts.id, abstractId), eq(abstracts.userId, userId)))
                 .limit(1);
 
@@ -456,6 +464,7 @@ export default async function (fastify: FastifyInstance) {
 
             const {
                 title,
+                categoryId,
                 category,
                 presentationType,
                 keywords,
@@ -518,32 +527,45 @@ export default async function (fastify: FastifyInstance) {
                 });
             }
 
+            const conditions = [
+                eq(abstractCategories.eventId, currentAbstract.eventId),
+                eq(abstractCategories.isActive, true),
+            ];
+
+            if (categoryId) {
+                conditions.push(eq(abstractCategories.id, categoryId));
+            } else if (category) {
+                conditions.push(eq(abstractCategories.name, category));
+            } else {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Category is required",
+                });
+            }
+
             const [catRow] = await db
-                .select({ id: abstractCategories.id })
+                .select({ id: abstractCategories.id, name: abstractCategories.name })
                 .from(abstractCategories)
-                .where(
-                    and(
-                        eq(abstractCategories.eventId, currentAbstract.eventId),
-                        eq(abstractCategories.name, category),
-                        eq(abstractCategories.isActive, true),
-                    ),
-                )
+                .where(and(...conditions))
                 .limit(1);
 
             if (!catRow) {
                 return reply.status(400).send({
                     success: false,
-                    error: `Invalid category "${category}" for this event`,
+                    error: `Invalid category for this event`,
                 });
             }
+
+            const resolvedCategoryId = catRow.id;
+            const categoryDisplayName = catRow.name;
 
             let uploadedFiles: UploadedAbstractFile[] = [];
             try {
                 const typeFolderName = presentationType === "oral" ? "Oral" : "Poster";
                 const sanitizedTitle = sanitizeFileSegment(title, "abstract", 80);
                 const subfolders = currentAbstract.eventCode
-                    ? [currentAbstract.eventCode, typeFolderName, category]
-                    : [typeFolderName, category];
+                    ? [currentAbstract.eventCode, typeFolderName, categoryDisplayName]
+                    : [typeFolderName, categoryDisplayName];
 
                 for (const [index, file] of parsedFiles.entries()) {
                     const sequence = String(index + 1).padStart(2, "0");
@@ -594,7 +616,8 @@ export default async function (fastify: FastifyInstance) {
                         .update(abstracts)
                         .set({
                             title,
-                            category,
+                            categoryId: resolvedCategoryId,
+                            category: categoryDisplayName,
                             presentationType,
                             keywords,
                             background,

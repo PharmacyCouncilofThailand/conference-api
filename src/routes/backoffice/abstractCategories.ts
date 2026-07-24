@@ -39,7 +39,7 @@ export default async function (fastify: FastifyInstance) {
         .leftJoin(events, eq(abstractCategories.eventId, events.id))
         .orderBy(
           asc(abstractCategories.eventId),
-          asc(abstractCategories.name),
+          asc(abstractCategories.id),
         )
         .$dynamic();
 

@@ -282,6 +282,7 @@ export default async function (fastify: FastifyInstance) {
         affiliation,
         phone,
         title,
+        categoryId,
         category,
         presentationType,
         keywords,
@@ -380,28 +381,42 @@ export default async function (fastify: FastifyInstance) {
         eventEmailRow = eventRow as EventEmailRow;
       }
 
-      // ── Validate category name against abstract_categories table ─────────
-      const categoryDisplayName = category;
+      // ── Validate category against abstract_categories table ─────────
+      let categoryDisplayName = category || "";
+      let resolvedCategoryId: number | undefined = categoryId;
 
       if (finalEventId) {
+        const conditions = [
+          eq(abstractCategories.eventId, finalEventId),
+          eq(abstractCategories.isActive, true),
+        ];
+
+        if (categoryId) {
+          conditions.push(eq(abstractCategories.id, categoryId));
+        } else if (category) {
+          conditions.push(eq(abstractCategories.name, category));
+        } else {
+          return reply.status(400).send({
+            success: false,
+            error: "Category is required",
+          });
+        }
+
         const [catRow] = await db
-          .select({ id: abstractCategories.id })
+          .select({ id: abstractCategories.id, name: abstractCategories.name })
           .from(abstractCategories)
-          .where(
-            and(
-              eq(abstractCategories.eventId, finalEventId),
-              eq(abstractCategories.name, category),
-              eq(abstractCategories.isActive, true),
-            )
-          )
+          .where(and(...conditions))
           .limit(1);
 
         if (!catRow) {
           return reply.status(400).send({
             success: false,
-            error: `Invalid category "${category}" for this event`,
+            error: `Invalid category specified for this event`,
           });
         }
+
+        resolvedCategoryId = catRow.id;
+        categoryDisplayName = catRow.name;
       }
 
       // ── Upload file to Google Drive ─────────────────────────────────────
@@ -456,13 +471,13 @@ export default async function (fastify: FastifyInstance) {
           error: "Failed to upload abstract file. Please try again.",
         });
       }
-
       // Prepare abstract data (userId from JWT token)
       const abstractData: any = {
         eventId: finalEventId,
         userId: request.user.id,
         title,
-        category,
+        categoryId: resolvedCategoryId,
+        category: categoryDisplayName,
         presentationType,
         keywords,
         background,
