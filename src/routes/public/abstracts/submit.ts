@@ -283,7 +283,6 @@ export default async function (fastify: FastifyInstance) {
         phone,
         title,
         categoryId,
-        category,
         presentationType,
         keywords,
         background,
@@ -382,42 +381,27 @@ export default async function (fastify: FastifyInstance) {
       }
 
       // ── Validate category against abstract_categories table ─────────
-      let categoryDisplayName = category || "";
-      let resolvedCategoryId: number | undefined = categoryId;
+      const [catRow] = await db
+        .select({ id: abstractCategories.id, name: abstractCategories.name })
+        .from(abstractCategories)
+        .where(
+          and(
+            eq(abstractCategories.id, categoryId),
+            eq(abstractCategories.eventId, finalEventId),
+            eq(abstractCategories.isActive, true),
+          ),
+        )
+        .limit(1);
 
-      if (finalEventId) {
-        const conditions = [
-          eq(abstractCategories.eventId, finalEventId),
-          eq(abstractCategories.isActive, true),
-        ];
-
-        if (categoryId) {
-          conditions.push(eq(abstractCategories.id, categoryId));
-        } else if (category) {
-          conditions.push(eq(abstractCategories.name, category));
-        } else {
-          return reply.status(400).send({
-            success: false,
-            error: "Category is required",
-          });
-        }
-
-        const [catRow] = await db
-          .select({ id: abstractCategories.id, name: abstractCategories.name })
-          .from(abstractCategories)
-          .where(and(...conditions))
-          .limit(1);
-
-        if (!catRow) {
-          return reply.status(400).send({
-            success: false,
-            error: `Invalid category specified for this event`,
-          });
-        }
-
-        resolvedCategoryId = catRow.id;
-        categoryDisplayName = catRow.name;
+      if (!catRow) {
+        return reply.status(400).send({
+          success: false,
+          error: "Invalid category selected for this event",
+        });
       }
+
+      const resolvedCategoryId = catRow.id;
+      const categoryDisplayName = catRow.name;
 
       // ── Upload file to Google Drive ─────────────────────────────────────
       // Folder structure: Root → EventCode → Type (Oral/Poster) → Category name
@@ -477,7 +461,6 @@ export default async function (fastify: FastifyInstance) {
         userId: request.user.id,
         title,
         categoryId: resolvedCategoryId,
-        category: categoryDisplayName,
         presentationType,
         keywords,
         background,

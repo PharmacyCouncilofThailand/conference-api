@@ -109,7 +109,7 @@ export default async function (fastify: FastifyInstance) {
         .send({ error: "Invalid query", details: queryResult.error.flatten() });
     }
 
-    const { page, limit, search, eventId, status, categoryId, category, presentationType } =
+    const { page, limit, search, eventId, status, categoryId, presentationType } =
       queryResult.data;
     const offset = (page - 1) * limit;
 
@@ -128,7 +128,7 @@ export default async function (fastify: FastifyInstance) {
             (cat): cat is string => typeof cat === "string" && cat.trim().length > 0,
           );
           if (validCategories.length > 0) {
-            conditions.push(inArray(abstracts.category, validCategories));
+            conditions.push(inArray(abstractCategories.name, validCategories));
           } else {
             // No valid categories assigned
             return reply.send({
@@ -172,14 +172,6 @@ export default async function (fastify: FastifyInstance) {
       if (eventId) conditions.push(eq(abstracts.eventId, eventId));
       if (status) conditions.push(eq(abstracts.status, status));
       if (categoryId) conditions.push(eq(abstracts.categoryId, categoryId));
-      if (category) {
-        conditions.push(
-          or(
-            eq(abstracts.category, category),
-            eq(abstractCategories.name, category),
-          ),
-        );
-      }
       if (presentationType)
         conditions.push(eq(abstracts.presentationType, presentationType));
       if (search) {
@@ -211,7 +203,7 @@ export default async function (fastify: FastifyInstance) {
           trackingId: abstracts.trackingId,
           title: abstracts.title,
           categoryId: abstracts.categoryId,
-          category: abstracts.category,
+          category: abstractCategories.name,
           categoryName: abstractCategories.name,
           presentationType: abstracts.presentationType,
           keywords: abstracts.keywords,
@@ -324,7 +316,7 @@ export default async function (fastify: FastifyInstance) {
           trackingId: abstracts.trackingId,
           title: abstracts.title,
           categoryId: abstracts.categoryId,
-          category: abstracts.category,
+          category: abstractCategories.name,
           categoryName: abstractCategories.name,
           presentationType: abstracts.presentationType,
           keywords: abstracts.keywords,

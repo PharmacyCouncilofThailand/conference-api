@@ -177,7 +177,7 @@ export default async function (fastify: FastifyInstance) {
                     trackingId: abstracts.trackingId,
                     title: abstracts.title,
                     categoryId: abstracts.categoryId,
-                    category: abstracts.category,
+                    category: abstractCategories.name,
                     categoryName: abstractCategories.name,
                     presentationType: abstracts.presentationType,
                     status: abstracts.status,
@@ -269,7 +269,7 @@ export default async function (fastify: FastifyInstance) {
                     trackingId: abstracts.trackingId,
                     title: abstracts.title,
                     categoryId: abstracts.categoryId,
-                    category: abstracts.category,
+                    category: abstractCategories.name,
                     categoryName: abstractCategories.name,
                     presentationType: abstracts.presentationType,
                     status: abstracts.status,
@@ -465,7 +465,6 @@ export default async function (fastify: FastifyInstance) {
             const {
                 title,
                 categoryId,
-                category,
                 presentationType,
                 keywords,
                 background,
@@ -527,32 +526,22 @@ export default async function (fastify: FastifyInstance) {
                 });
             }
 
-            const conditions = [
-                eq(abstractCategories.eventId, currentAbstract.eventId),
-                eq(abstractCategories.isActive, true),
-            ];
-
-            if (categoryId) {
-                conditions.push(eq(abstractCategories.id, categoryId));
-            } else if (category) {
-                conditions.push(eq(abstractCategories.name, category));
-            } else {
-                return reply.status(400).send({
-                    success: false,
-                    error: "Category is required",
-                });
-            }
-
             const [catRow] = await db
                 .select({ id: abstractCategories.id, name: abstractCategories.name })
                 .from(abstractCategories)
-                .where(and(...conditions))
+                .where(
+                    and(
+                        eq(abstractCategories.id, categoryId),
+                        eq(abstractCategories.eventId, currentAbstract.eventId),
+                        eq(abstractCategories.isActive, true),
+                    ),
+                )
                 .limit(1);
 
             if (!catRow) {
                 return reply.status(400).send({
                     success: false,
-                    error: `Invalid category for this event`,
+                    error: "Invalid category selected for this event",
                 });
             }
 
@@ -617,7 +606,6 @@ export default async function (fastify: FastifyInstance) {
                         .set({
                             title,
                             categoryId: resolvedCategoryId,
-                            category: categoryDisplayName,
                             presentationType,
                             keywords,
                             background,

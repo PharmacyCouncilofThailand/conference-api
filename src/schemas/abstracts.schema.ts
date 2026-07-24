@@ -35,8 +35,7 @@ export const abstractSubmissionSchema = z.object({
 
     // Abstract Details
     title: z.string().min(10, 'Title must be at least 10 characters').max(500, 'Title too long'),
-    categoryId: z.coerce.number().int().positive().optional(),
-    category: z.string().optional(), // Fallback category string or name from abstract_categories table
+    categoryId: z.coerce.number().int().positive({ message: 'Category is required' }),
     presentationType: z.enum(['oral', 'poster']),
     keywords: z.string().min(1, 'Keywords are required'),
 
@@ -56,8 +55,7 @@ export const abstractSubmissionSchema = z.object({
 
 export const abstractResubmissionSchema = z.object({
     title: z.string().min(10, 'Title must be at least 10 characters').max(500, 'Title too long'),
-    categoryId: z.coerce.number().int().positive().optional(),
-    category: z.string().optional(),
+    categoryId: z.coerce.number().int().positive({ message: 'Category is required' }),
     presentationType: z.enum(['oral', 'poster']),
     keywords: z.string().min(1, 'Keywords are required'),
     background: z.string().min(1, 'Background is required'),
@@ -77,7 +75,6 @@ export const abstractListSchema = z.object({
     eventId: z.coerce.number().optional(),
     status: abstractStatusSchema.optional(),
     categoryId: z.coerce.number().optional(),
-    category: z.string().optional(), // Dynamic category from abstract_categories table
     presentationType: z.enum(['oral', 'poster']).optional(),
 });
 
