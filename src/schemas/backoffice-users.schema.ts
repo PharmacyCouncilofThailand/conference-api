@@ -10,7 +10,7 @@ export const createUserSchema = z.object({
   password: z.string().min(6),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  role: z.enum(["admin", "organizer", "reviewer", "staff", "verifier"]),
+  role: z.enum(["admin", "organizer", "reviewer", "staff", "verifier", "team_registration_viewer"]),
   // For reviewers: categories they can review
   assignedCategories: z.array(abstractCategorySchema).optional(),
   // For reviewers: presentation types they can review
@@ -21,7 +21,7 @@ export const updateUserSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
   role: z
-    .enum(["admin", "organizer", "reviewer", "staff", "verifier"])
+    .enum(["admin", "organizer", "reviewer", "staff", "verifier", "team_registration_viewer"])
     .optional(),
   isActive: z.boolean().optional(),
   password: z.string().min(6).optional(),

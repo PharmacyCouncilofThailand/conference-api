@@ -30,10 +30,14 @@ const fastify = Fastify({ logger: true });
 const corsOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
   : ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:3001', 'http://127.0.0.1:3001', 'http://localhost:3003', 'http://127.0.0.1:3003', 'http://localhost:3005', 'http://127.0.0.1:3005'];
+const teamRegistrationOrigins = process.env.TEAM_REGISTRATION_WEB_ORIGINS
+  ? process.env.TEAM_REGISTRATION_WEB_ORIGINS.split(',').map(origin => origin.trim()).filter(Boolean)
+  : [];
+const allowedCorsOrigins = Array.from(new Set([...corsOrigins, ...teamRegistrationOrigins]));
 
 fastify.register(cors, {
-  origin: corsOrigins,
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Source-App', 'ngrok-skip-browser-warning'],
+  origin: allowedCorsOrigins,
+  allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Source-App', 'ngrok-skip-browser-warning'],
   credentials: true
 });
 
@@ -180,6 +184,9 @@ import driveImageRoutes from "./routes/public/drive-image.js";
 import paymentRoutes from "./routes/payments/index.js";
 import freeRegistrationRoutes from "./routes/registrations/free.js";
 import quickRegistrationRoutes from "./routes/registrations/quick.js";
+import teamRegistrationPublicRoutes from "./modules/team-registrations/public.routes.js";
+import teamRegistrationProviderRoutes from "./modules/team-registrations/provider.routes.js";
+import teamRegistrationBackofficeRoutes from "./modules/team-registrations/backoffice.routes.js";
 
 // ============================================================================
 // Public Routes (No Auth Required)
@@ -233,6 +240,8 @@ fastify.register(driveImageRoutes, { prefix: "/api/drive-image" });
 fastify.register(paymentRoutes, { prefix: "/api/payments" });
 fastify.register(freeRegistrationRoutes, { prefix: "/api/registrations" });
 fastify.register(quickRegistrationRoutes, { prefix: "/api/registrations" });
+fastify.register(teamRegistrationPublicRoutes, { prefix: "/api/v1/team-registrations" });
+fastify.register(teamRegistrationProviderRoutes, { prefix: "/api/v1/team-registrations" });
 
 // ============================================================================
 // Protected Backoffice Routes (Auth Required)
@@ -258,6 +267,7 @@ fastify.register(async (protectedRoutes) => {
   protectedRoutes.register(backofficeEmailManualRoutes, { prefix: "/email-manual" });
   protectedRoutes.register(backofficeStudentEligibilityRequestsRoutes, { prefix: "/student-eligibility-requests" });
   protectedRoutes.register(backofficeSponsorRoutes);
+  protectedRoutes.register(teamRegistrationBackofficeRoutes);
 }, { prefix: "/api/backoffice" });
 
 // ============================================================================

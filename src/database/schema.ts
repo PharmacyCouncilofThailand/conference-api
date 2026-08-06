@@ -9,8 +9,15 @@ import {
   boolean,
   jsonb,
   pgEnum,
+  uuid,
+  smallint,
+  char,
+  bigserial,
+  bigint,
+  uniqueIndex,
+  index,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 // --------------------------------------------------------------------------
 // 1. ENUMS
@@ -85,6 +92,7 @@ export const staffRoleEnum = pgEnum("staff_role", [
   "reviewer",
   "staff",
   "verifier",
+  "team_registration_viewer",
 ]);
 export const sessionTypeEnum = pgEnum("session_type", [
   "workshop",
@@ -117,6 +125,25 @@ export const sponsorPaymentStatusEnum = pgEnum("sponsor_payment_status", [
   "verified",
   "rejected",
 ]);
+export const teamRegistrationStatusEnum = pgEnum("team_registration_status", [
+  "draft",
+  "ready_for_payment",
+  "payment_pending",
+  "paid",
+  "expired",
+]);
+export const teamRegistrationMemberRoleEnum = pgEnum(
+  "team_registration_member_role",
+  ["leader", "member"],
+);
+export const teamRegistrationPaymentStatusEnum = pgEnum(
+  "team_registration_payment_status",
+  ["creating", "pending", "paid", "failed", "expired", "verification_required"],
+);
+export const teamRegistrationEmailStatusEnum = pgEnum(
+  "team_registration_email_status",
+  ["pending", "processing", "sent", "failed"],
+);
 
 // --------------------------------------------------------------------------
 // 2. USER MANAGEMENT
@@ -893,6 +920,331 @@ export const verificationRejectionHistory = pgTable(
     rejectedBy: integer("rejected_by").references(() => backofficeUsers.id),
     rejectedAt: timestamp("rejected_at").notNull().defaultNow(),
   },
+);
+
+// --------------------------------------------------------------------------
+// 9. TEAM REGISTRATION (ISOLATED FROM TICKETS / ORDERS / PAYMENTS)
+// --------------------------------------------------------------------------
+export const teamRegistrationConfigs = pgTable(
+  "team_registration_configs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    eventId: integer("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    isEnabled: boolean("is_enabled").notNull().default(false),
+    timezone: varchar("timezone", { length: 64 }).notNull().default("Asia/Bangkok"),
+    registrationOpensAt: timestamp("registration_opens_at", { withTimezone: true }).notNull(),
+    registrationClosesAt: timestamp("registration_closes_at", { withTimezone: true }).notNull(),
+    minMembers: smallint("min_members").notNull().default(3),
+    maxMembers: smallint("max_members").notNull().default(5),
+    minAge: smallint("min_age").notNull().default(15),
+    maxAge: smallint("max_age").notNull().default(30),
+    draftTtlHours: integer("draft_ttl_hours").notNull().default(72),
+    paymentAttemptTtlMinutes: integer("payment_attempt_ttl_minutes").notNull().default(30),
+    paymentProfileCode: varchar("payment_profile_code", { length: 64 }).notNull(),
+    eventWebsiteOrigin: varchar("event_website_origin", { length: 500 }).notNull(),
+    paymentResultUrl: varchar("payment_result_url", { length: 1000 }).notNull(),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("team_registration_configs_event_unique").on(table.eventId)],
+);
+
+export const teamRegistrationCategories = pgTable(
+  "team_registration_categories",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    configId: bigint("config_id", { mode: "number" })
+      .notNull()
+      .references(() => teamRegistrationConfigs.id, { onDelete: "cascade" }),
+    code: varchar("code", { length: 64 }).notNull(),
+    displayName: varchar("display_name", { length: 255 }).notNull(),
+    educationLevel: varchar("education_level", { length: 32 }).notNull(),
+    pharmacyRule: varchar("pharmacy_rule", { length: 32 }).notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("team_registration_categories_code_unique").on(table.configId, table.code)],
+);
+
+export const teamRegistrationPricingRounds = pgTable(
+  "team_registration_pricing_rounds",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    configId: bigint("config_id", { mode: "number" })
+      .notNull()
+      .references(() => teamRegistrationConfigs.id, { onDelete: "cascade" }),
+    code: varchar("code", { length: 64 }).notNull(),
+    displayName: varchar("display_name", { length: 255 }).notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("team_registration_pricing_rounds_code_unique").on(table.configId, table.code),
+    index("team_registration_pricing_rounds_window_idx").on(table.configId, table.startsAt, table.endsAt),
+  ],
+);
+
+export const teamRegistrationPrices = pgTable(
+  "team_registration_prices",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    pricingRoundId: bigint("pricing_round_id", { mode: "number" })
+      .notNull()
+      .references(() => teamRegistrationPricingRounds.id, { onDelete: "cascade" }),
+    categoryId: bigint("category_id", { mode: "number" })
+      .notNull()
+      .references(() => teamRegistrationCategories.id, { onDelete: "cascade" }),
+    amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+    currency: char("currency", { length: 3 }).notNull().default("THB"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("team_registration_prices_round_category_unique").on(table.pricingRoundId, table.categoryId)],
+);
+
+export const teamRegistrationOtpChallenges = pgTable(
+  "team_registration_otp_challenges",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    emailNormalized: varchar("email_normalized", { length: 255 }).notNull(),
+    otpHash: varchar("otp_hash", { length: 255 }).notNull(),
+    referenceCode: char("reference_code", { length: 5 }).notNull(),
+    attemptCount: smallint("attempt_count").notNull().default(0),
+    maxAttempts: smallint("max_attempts").notNull().default(5),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    requestIpHash: varchar("request_ip_hash", { length: 255 }),
+    userAgentHash: varchar("user_agent_hash", { length: 255 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("team_registration_otp_lookup_idx").on(table.eventId, table.emailNormalized, table.createdAt)],
+);
+
+export const teamRegistrationAccessSessions = pgTable(
+  "team_registration_access_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    leaderEmailNormalized: varchar("leader_email_normalized", { length: 255 }).notNull(),
+    tokenHash: varchar("token_hash", { length: 255 }).notNull(),
+    otpChallengeId: uuid("otp_challenge_id").references(() => teamRegistrationOtpChallenges.id),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("team_registration_access_sessions_token_unique").on(table.tokenHash),
+    index("team_registration_access_sessions_owner_idx").on(table.eventId, table.leaderEmailNormalized),
+  ],
+);
+
+export const teamRegistrations = pgTable(
+  "team_registrations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    registrationCode: varchar("registration_code", { length: 50 }).notNull(),
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    configId: bigint("config_id", { mode: "number" }).notNull().references(() => teamRegistrationConfigs.id),
+    categoryId: bigint("category_id", { mode: "number" }).notNull().references(() => teamRegistrationCategories.id),
+    teamName: varchar("team_name", { length: 255 }).notNull(),
+    teamNameNormalized: varchar("team_name_normalized", { length: 255 }).notNull(),
+    leaderEmail: varchar("leader_email", { length: 255 }).notNull(),
+    leaderEmailNormalized: varchar("leader_email_normalized", { length: 255 }).notNull(),
+    status: teamRegistrationStatusEnum("status").notNull().default("draft"),
+    categoryCodeSnapshot: varchar("category_code_snapshot", { length: 64 }),
+    categoryNameSnapshot: varchar("category_name_snapshot", { length: 255 }),
+    pricingRoundCodeSnapshot: varchar("pricing_round_code_snapshot", { length: 64 }),
+    pricingRoundNameSnapshot: varchar("pricing_round_name_snapshot", { length: 255 }),
+    amountSnapshot: decimal("amount_snapshot", { precision: 12, scale: 2 }),
+    currencySnapshot: char("currency_snapshot", { length: 3 }),
+    draftExpiresAt: timestamp("draft_expires_at", { withTimezone: true }).notNull(),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    expiredAt: timestamp("expired_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("team_registrations_code_unique").on(table.registrationCode),
+    uniqueIndex("team_registrations_active_team_name_unique")
+      .on(table.eventId, table.teamNameNormalized)
+      .where(sql`${table.status} in ('draft', 'ready_for_payment', 'payment_pending', 'paid')`),
+    index("team_registrations_status_expiry_idx").on(table.status, table.draftExpiresAt),
+  ],
+);
+
+export const teamRegistrationMembers = pgTable(
+  "team_registration_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    registrationId: uuid("registration_id").notNull().references(() => teamRegistrations.id, { onDelete: "cascade" }),
+    position: smallint("position").notNull(),
+    memberRole: teamRegistrationMemberRoleEnum("member_role").notNull(),
+    title: varchar("title", { length: 16 }).notNull(),
+    firstName: varchar("first_name", { length: 150 }).notNull(),
+    lastName: varchar("last_name", { length: 150 }).notNull(),
+    nickname: varchar("nickname", { length: 100 }),
+    age: smallint("age").notNull(),
+    university: varchar("university", { length: 255 }),
+    faculty: varchar("faculty", { length: 255 }),
+    school: varchar("school", { length: 255 }),
+    schoolGrade: varchar("school_grade", { length: 8 }),
+    isPharmacyStudent: boolean("is_pharmacy_student").notNull().default(false),
+    foodDrugAllergies: text("food_drug_allergies"),
+    email: varchar("email", { length: 255 }).notNull(),
+    emailNormalized: varchar("email_normalized", { length: 255 }).notNull(),
+    phoneNumber: varchar("phone_number", { length: 32 }).notNull(),
+    lineId: varchar("line_id", { length: 100 }).notNull(),
+    emergencyContactName: varchar("emergency_contact_name", { length: 255 }),
+    emergencyContactPhone: varchar("emergency_contact_phone", { length: 32 }),
+    sensitiveDataPurgedAt: timestamp("sensitive_data_purged_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("team_registration_members_position_unique").on(table.registrationId, table.position),
+    uniqueIndex("team_registration_members_email_unique").on(table.registrationId, table.emailNormalized),
+    uniqueIndex("team_registration_members_one_leader_unique")
+      .on(table.registrationId)
+      .where(sql`${table.memberRole} = 'leader'`),
+  ],
+);
+
+export const teamRegistrationEmailClaims = pgTable(
+  "team_registration_email_claims",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    registrationId: uuid("registration_id").notNull().references(() => teamRegistrations.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id").notNull().references(() => teamRegistrationMembers.id, { onDelete: "cascade" }),
+    emailNormalized: varchar("email_normalized", { length: 255 }).notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("team_registration_active_email_claim_unique")
+      .on(table.eventId, table.emailNormalized)
+      .where(sql`${table.releasedAt} is null`),
+    index("team_registration_email_claim_registration_idx").on(table.registrationId),
+  ],
+);
+
+export const teamRegistrationPaymentAttempts = pgTable(
+  "team_registration_payment_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    registrationId: uuid("registration_id").notNull().references(() => teamRegistrations.id, { onDelete: "cascade" }),
+    attemptNumber: integer("attempt_number").notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 100 }).notNull(),
+    provider: varchar("provider", { length: 32 }).notNull().default("paysolutions"),
+    paymentProfileCode: varchar("payment_profile_code", { length: 64 }).notNull(),
+    merchantIdSnapshot: varchar("merchant_id_snapshot", { length: 64 }).notNull(),
+    referenceNo: varchar("reference_no", { length: 12 }).notNull(),
+    providerOrderNo: varchar("provider_order_no", { length: 100 }),
+    categoryCodeSnapshot: varchar("category_code_snapshot", { length: 64 }).notNull(),
+    categoryNameSnapshot: varchar("category_name_snapshot", { length: 255 }).notNull(),
+    pricingRoundCodeSnapshot: varchar("pricing_round_code_snapshot", { length: 64 }).notNull(),
+    pricingRoundNameSnapshot: varchar("pricing_round_name_snapshot", { length: 255 }).notNull(),
+    amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+    currency: char("currency", { length: 3 }).notNull().default("THB"),
+    channel: varchar("channel", { length: 32 }).notNull().default("promptpay"),
+    status: teamRegistrationPaymentStatusEnum("status").notNull().default("creating"),
+    providerStatus: varchar("provider_status", { length: 100 }),
+    providerStatusName: varchar("provider_status_name", { length: 100 }),
+    formCreatedAt: timestamp("form_created_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    failedAt: timestamp("failed_at", { withTimezone: true }),
+    lastInquiredAt: timestamp("last_inquired_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("team_registration_payment_attempt_number_unique").on(table.registrationId, table.attemptNumber),
+    uniqueIndex("team_registration_payment_idempotency_unique").on(table.registrationId, table.idempotencyKey),
+    uniqueIndex("team_registration_payment_reference_unique").on(table.referenceNo),
+    uniqueIndex("team_registration_payment_active_unique")
+      .on(table.registrationId)
+      .where(sql`${table.status} in ('creating', 'pending')`),
+    index("team_registration_payment_status_expiry_idx").on(table.status, table.expiresAt),
+  ],
+);
+
+export const teamRegistrationPaymentEvents = pgTable(
+  "team_registration_payment_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    paymentAttemptId: uuid("payment_attempt_id").references(() => teamRegistrationPaymentAttempts.id, { onDelete: "set null" }),
+    eventType: varchar("event_type", { length: 64 }).notNull(),
+    providerEventKey: varchar("provider_event_key", { length: 255 }),
+    referenceNo: varchar("reference_no", { length: 12 }),
+    providerStatus: varchar("provider_status", { length: 100 }),
+    payloadRedacted: jsonb("payload_redacted").$type<Record<string, unknown>>(),
+    merchantMatches: boolean("merchant_matches"),
+    amountMatches: boolean("amount_matches"),
+    currencyMatches: boolean("currency_matches"),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("team_registration_payment_provider_event_unique").on(table.providerEventKey)],
+);
+
+export const teamRegistrationEmailOutbox = pgTable(
+  "team_registration_email_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    registrationId: uuid("registration_id").notNull().references(() => teamRegistrations.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id").notNull().references(() => teamRegistrationMembers.id, { onDelete: "cascade" }),
+    templateCode: varchar("template_code", { length: 64 }).notNull(),
+    deliveryKey: varchar("delivery_key", { length: 100 }).notNull().default("initial"),
+    recipientEmail: varchar("recipient_email", { length: 255 }).notNull(),
+    payloadSnapshot: jsonb("payload_snapshot").$type<Record<string, unknown>>().notNull(),
+    status: teamRegistrationEmailStatusEnum("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    lastErrorCode: varchar("last_error_code", { length: 100 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("team_registration_email_delivery_unique").on(
+      table.registrationId,
+      table.memberId,
+      table.templateCode,
+      table.deliveryKey,
+    ),
+    index("team_registration_email_pending_idx").on(table.status, table.nextAttemptAt),
+  ],
+);
+
+export const teamRegistrationAuditLogs = pgTable(
+  "team_registration_audit_logs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    actorBackofficeUserId: integer("actor_backoffice_user_id").references(() => backofficeUsers.id, { onDelete: "set null" }),
+    action: varchar("action", { length: 100 }).notNull(),
+    entityType: varchar("entity_type", { length: 100 }).notNull(),
+    entityId: varchar("entity_id", { length: 100 }).notNull(),
+    changeReason: text("change_reason"),
+    beforeRedacted: jsonb("before_redacted").$type<Record<string, unknown>>(),
+    afterRedacted: jsonb("after_redacted").$type<Record<string, unknown>>(),
+    requestId: varchar("request_id", { length: 100 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("team_registration_audit_entity_idx").on(table.entityType, table.entityId, table.createdAt)],
 );
 
 // --------------------------------------------------------------------------
