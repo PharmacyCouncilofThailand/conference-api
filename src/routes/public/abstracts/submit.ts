@@ -16,6 +16,10 @@ import {
 import { eq, and, sql } from "drizzle-orm";
 import { buildEventEmailContext, getDefaultEventEmailContext, type EventEmailRow } from "../../../services/emailTemplates.types.js";
 import { sendEventAbstractSubmissionEmail, sendEventCoAuthorNotificationEmail } from "../../../services/emailTemplates.js";
+import {
+  formatAbstractWordCountIssue,
+  validateAbstractWords,
+} from "../../../utils/abstractWordCount.js";
 
 // Allowed file types for abstract documents
 const ALLOWED_MIME_TYPES = ["application/pdf"];
@@ -35,17 +39,8 @@ const ABSTRACT_FILE_FIELD_NAMES = new Set([
   "abstractFiles[]",
 ]);
 
-const TITLE_WORD_LIMIT = 30;
-const KEYWORD_LIMIT = 6;
-const SECTION_MIN_WORDS = 10;
-
 // Default event ID (configurable via env)
 const DEFAULT_EVENT_ID = parseInt(process.env.DEFAULT_EVENT_ID || "1", 10);
-
-type WordSegment = {
-  segment: string;
-  isWordLike?: boolean;
-};
 
 type ParsedAbstractFile = {
   buffer: Buffer;
@@ -59,75 +54,6 @@ type UploadedAbstractFile = ParsedAbstractFile & {
   storedFileName: string;
   sortOrder: number;
 };
-
-/**
- * Helper function to count words in text
- */
-function getWordSegments(text: string): WordSegment[] | null {
-  const intlWithSegmenter = Intl as typeof Intl & {
-    Segmenter?: new (
-      locales?: string | string[],
-      options?: { granularity: "word" },
-    ) => { segment(input: string): Iterable<WordSegment> };
-  };
-
-  if (!intlWithSegmenter.Segmenter) return null;
-
-  const segmenter = new intlWithSegmenter.Segmenter(["th", "en"], {
-    granularity: "word",
-  });
-
-  return Array.from(segmenter.segment(text));
-}
-
-function countWords(text: string): number {
-  const normalized = text.trim();
-  if (!normalized) return 0;
-
-  const segments = getWordSegments(normalized);
-  if (segments) {
-    return segments.filter((segment) => segment.isWordLike).length;
-  }
-
-  return normalized.split(/\s+/).filter((word) => word.length > 0).length;
-}
-
-function parseKeywords(text: string): string[] {
-  return text.split(",").map((keyword) => keyword.trim()).filter(Boolean);
-}
-
-/**
- * Validate total word count for abstract sections
- */
-function validateWordCount(
-  background: string,
-  objective: string,
-  methods: string,
-  results: string,
-  conclusion: string,
-): { valid: boolean; count: number } {
-  const totalText = [background, objective, methods, results, conclusion].join(" ");
-  const wordCount = countWords(totalText);
-
-  // Word count should be max 300 words
-  return {
-    valid: wordCount <= 300,
-    count: wordCount,
-  };
-}
-
-function validateSectionWordMinimum(
-  sections: Record<string, string>,
-): { valid: boolean; section?: string; count?: number } {
-  for (const [section, text] of Object.entries(sections)) {
-    const wordCount = countWords(text);
-    if (wordCount < SECTION_MIN_WORDS) {
-      return { valid: false, section, count: wordCount };
-    }
-  }
-
-  return { valid: true };
-}
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -294,48 +220,24 @@ export default async function (fastify: FastifyInstance) {
         eventCode,
       } = result.data;
 
-      const titleWordCount = countWords(title);
-      if (titleWordCount > TITLE_WORD_LIMIT) {
-        return reply.status(400).send({
-          success: false,
-          error: `Abstract title must not exceed ${TITLE_WORD_LIMIT} words. Current: ${titleWordCount} words`,
-        });
-      }
-
-      const keywordCount = parseKeywords(keywords).length;
-      if (keywordCount > KEYWORD_LIMIT) {
-        return reply.status(400).send({
-          success: false,
-          error: `Keywords must not exceed ${KEYWORD_LIMIT} comma-separated items. Current: ${keywordCount}`,
-        });
-      }
-
-      const sectionMinimumValidation = validateSectionWordMinimum({
-        background,
-        objective,
-        methods,
-        results,
-        conclusion,
+      const abstractWordValidation = validateAbstractWords({
+        title,
+        keywords,
+        sections: {
+          background,
+          objective,
+          methods,
+          results,
+          conclusion,
+        },
       });
-      if (!sectionMinimumValidation.valid) {
+      const firstWordIssue = abstractWordValidation.issues[0];
+      if (firstWordIssue) {
         return reply.status(400).send({
           success: false,
-          error: `${sectionMinimumValidation.section} must be at least ${SECTION_MIN_WORDS} words. Current: ${sectionMinimumValidation.count} words`,
-        });
-      }
-
-      // Validate word count
-      const wordValidation = validateWordCount(
-        background,
-        objective,
-        methods,
-        results,
-        conclusion,
-      );
-      if (!wordValidation.valid) {
-        return reply.status(400).send({
-          success: false,
-          error: `Abstract word count must not exceed 300 words. Current: ${wordValidation.count} words`,
+          code: firstWordIssue.code,
+          error: formatAbstractWordCountIssue(firstWordIssue),
+          details: abstractWordValidation,
         });
       }
 
