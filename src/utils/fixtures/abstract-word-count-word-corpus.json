@@ -1,0 +1,22 @@
+{
+  "baseline": {
+    "application": "Microsoft Word Desktop",
+    "countScope": "Selected abstract body only; title, keywords, authors, affiliations and section labels excluded",
+    "proofingLanguage": "Thai",
+    "normalization": "Exact Unicode copied from the API payload"
+  },
+  "cases": [
+    {
+      "id": "english-smoke-001",
+      "category": "english",
+      "sections": {
+        "background": "alpha beta gamma",
+        "objective": "",
+        "methods": "",
+        "results": "",
+        "conclusion": ""
+      },
+      "wordCount": 3
+    }
+  ]
+}
