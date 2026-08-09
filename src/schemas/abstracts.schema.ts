@@ -67,6 +67,23 @@ export const abstractResubmissionSchema = z.object({
     eventCode: z.string().optional(),
 });
 
+const liveTitleSchema = z.string().max(500, 'Title too long').default('');
+const liveKeywordsSchema = z.string().max(2000, 'Keywords too long').default('');
+const liveSectionSchema = z
+    .string()
+    .max(20000, 'Abstract section too long')
+    .default('');
+
+export const abstractWordCountRequestSchema = z.object({
+    title: liveTitleSchema,
+    keywords: liveKeywordsSchema,
+    background: liveSectionSchema,
+    objective: liveSectionSchema,
+    methods: liveSectionSchema,
+    results: liveSectionSchema,
+    conclusion: liveSectionSchema,
+});
+
 // Backoffice: List abstracts
 export const abstractListSchema = z.object({
     page: z.coerce.number().min(1).default(1),
