@@ -220,7 +220,7 @@ export default async function (fastify: FastifyInstance) {
         eventCode,
       } = result.data;
 
-      const abstractWordValidation = validateAbstractWords({
+      const abstractWordValidation = await validateAbstractWords({
         title,
         keywords,
         sections: {

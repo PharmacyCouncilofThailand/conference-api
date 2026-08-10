@@ -48,6 +48,43 @@ class PyThaiNlpWordCountWorkerTests(unittest.TestCase):
         self.assertIn("texts must be an array of strings", result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_server_mode_handles_multiple_json_line_requests(self) -> None:
+        process = subprocess.Popen(
+            [sys.executable, str(WORKER_PATH), "--server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        requests = [
+            {
+                "id": 41,
+                "engine": "newmm",
+                "normalization": "nfc",
+                "texts": ["ภาษาไทย", "alpha beta"],
+            },
+            {
+                "id": 42,
+                "engine": "newmm",
+                "normalization": "nfc",
+                "texts": [""],
+            },
+        ]
+        stdout, stderr = process.communicate(
+            "".join(
+                json.dumps(request, ensure_ascii=False) + "\n"
+                for request in requests
+            ),
+            timeout=10,
+        )
+
+        self.assertEqual(process.returncode, 0, stderr)
+        responses = [json.loads(line) for line in stdout.splitlines()]
+        self.assertEqual([response["id"] for response in responses], [41, 42])
+        self.assertEqual(responses[0]["counts"], [1, 2])
+        self.assertEqual(responses[1]["counts"], [0])
+
 
 if __name__ == "__main__":
     unittest.main()

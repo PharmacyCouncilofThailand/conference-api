@@ -6,8 +6,16 @@ Backend API server with embedded database for ACCP Conference.
 
 ```bash
 npm install --legacy-peer-deps
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements.txt
 npm run dev
 ```
+
+On Windows PowerShell, set `PYTHAINLP_PYTHON=.venv\Scripts\python.exe` in
+`.env`. On Linux/macOS, create the environment with `python3 -m venv .venv`
+and set `PYTHAINLP_PYTHON=.venv/bin/python`. The API warms the pinned
+PyThaiNLP 5.3.4 worker before accepting traffic and fails startup if the
+authoritative word counter is unavailable.
 
 ## Available Scripts
 
@@ -29,6 +37,8 @@ Copy `.env.example` to `.env` and update values:
 DATABASE_URL=postgresql://user:password@localhost:5432/accp_db
 JWT_SECRET=your-secret-key
 CORS_ORIGIN=http://localhost:3000,http://localhost:3001
+PYTHAINLP_PYTHON=.venv\Scripts\python.exe
+PYTHAINLP_TIMEOUT_MS=5000
 ```
 
 ### Production values when frontend is on Netlify

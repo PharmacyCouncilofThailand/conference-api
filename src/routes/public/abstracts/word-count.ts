@@ -1,8 +1,22 @@
 import type { FastifyInstance } from "fastify";
 import { abstractWordCountRequestSchema } from "../../../schemas/abstracts.schema.js";
 import { validateAbstractWords } from "../../../utils/abstractWordCount.js";
+import type {
+  AbstractWordCountInput,
+  AbstractWordCountResult,
+} from "../../../utils/abstractWordCount.js";
 
-export default async function wordCountRoutes(fastify: FastifyInstance) {
+type WordCountRouteOptions = {
+  validateWords?: (
+    input: AbstractWordCountInput,
+  ) => Promise<AbstractWordCountResult>;
+};
+
+export default async function wordCountRoutes(
+  fastify: FastifyInstance,
+  options: WordCountRouteOptions,
+) {
+  const validateWords = options.validateWords ?? validateAbstractWords;
   fastify.post(
     "/word-count",
     {
@@ -35,7 +49,7 @@ export default async function wordCountRoutes(fastify: FastifyInstance) {
         conclusion,
       } = parsed.data;
 
-      const result = validateAbstractWords({
+      const result = await validateWords({
         title,
         keywords,
         sections: {

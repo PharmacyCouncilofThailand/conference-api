@@ -1,4 +1,4 @@
-"""Batch word-count worker used only by the local compatibility benchmark."""
+"""PyThaiNLP word-count worker for batch and persistent server modes."""
 
 from __future__ import annotations
 
@@ -63,20 +63,20 @@ def count_word_like_tokens(text: str, engine: str, normalization: str) -> int:
     return sum(1 for token in tokens if any(character.isalnum() for character in token))
 
 
-def run() -> None:
+def verify_runtime() -> None:
     if pythainlp.__version__ != REQUIRED_PYTHAINLP_VERSION:
         raise RuntimeError(
             "PyThaiNLP version mismatch: "
             f"expected {REQUIRED_PYTHAINLP_VERSION}, got {pythainlp.__version__}"
         )
 
-    request = json.load(sys.stdin)
+def build_response(request: Any) -> dict[str, Any]:
     engine, normalization, texts = validate_request(request)
     counts = [
         count_word_like_tokens(text, engine, normalization)
         for text in texts
     ]
-    response = {
+    return {
         "engine": engine,
         "normalization": normalization,
         "counts": counts,
@@ -85,12 +85,37 @@ def run() -> None:
             "pythainlp": pythainlp.__version__,
         },
     }
-    json.dump(response, sys.stdout, ensure_ascii=False)
+
+
+def run_batch() -> None:
+    verify_runtime()
+    json.dump(build_response(json.load(sys.stdin)), sys.stdout, ensure_ascii=False)
+
+
+def run_server() -> None:
+    verify_runtime()
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        request: Any = None
+        try:
+            request = json.loads(line)
+            request_id = request.get("id") if isinstance(request, dict) else None
+            if not isinstance(request_id, int):
+                raise ValueError("id must be an integer")
+            response = {"id": request_id, **build_response(request)}
+        except Exception as error:
+            request_id = request.get("id") if isinstance(request, dict) else None
+            response = {"id": request_id, "error": str(error)}
+        print(json.dumps(response, ensure_ascii=False), flush=True)
 
 
 def main() -> int:
     try:
-        run()
+        if len(sys.argv) > 1 and sys.argv[1] == "--server":
+            run_server()
+        else:
+            run_batch()
         return 0
     except Exception as error:  # The CLI boundary must convert failures to diagnostics.
         print(f"PyThaiNLP worker error: {error}", file=sys.stderr)

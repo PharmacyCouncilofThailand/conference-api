@@ -10,6 +10,10 @@ import fastifyStatic from "@fastify/static";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import {
+  closeAbstractWordCountWorker,
+  warmAbstractWordCountWorker,
+} from "./utils/abstractWordCount.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +27,10 @@ if (!JWT_SECRET) {
 }
 
 const fastify = Fastify({ logger: true });
+
+fastify.addHook("onClose", async () => {
+  await closeAbstractWordCountWorker();
+});
 
 // ============================================================================
 // CORS Configuration
@@ -291,6 +299,7 @@ fastify.get("/", async () => ({
 const start = async () => {
   try {
     const port = parseInt(process.env.PORT || "3002", 10);
+    await warmAbstractWordCountWorker();
     await fastify.listen({ port, host: "0.0.0.0" });
     fastify.log.info(`🚀 API running on port ${port}`);
   } catch (err) {

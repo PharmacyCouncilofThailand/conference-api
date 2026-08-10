@@ -32,7 +32,16 @@ ENV NODE_ENV=production
 # PDF receipts are generated with @react-pdf/renderer (pure JS) — no browser/Chromium needed.
 RUN apk add --no-cache \
     postgresql-client \
+    python3 \
+    py3-pip \
+    tzdata \
     && rm -rf /var/cache/apk/*
+
+COPY --from=builder /app/requirements.txt ./requirements.txt
+RUN python3 -m venv /opt/pythainlp-venv \
+    && /opt/pythainlp-venv/bin/pip install --no-cache-dir -r requirements.txt
+
+ENV PYTHAINLP_PYTHON=/opt/pythainlp-venv/bin/python
 
 # Copy built files and dependencies
 COPY --from=builder /app/dist ./dist
@@ -40,6 +49,7 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/drizzle.config.ts ./
 COPY --from=builder /app/src/database/schema.ts ./src/database/schema.ts
+COPY --from=builder /app/src/scripts/pythainlp-word-count.py ./dist/scripts/pythainlp-word-count.py
 
 # Install production dependencies only
 RUN npm install --legacy-peer-deps --omit=dev

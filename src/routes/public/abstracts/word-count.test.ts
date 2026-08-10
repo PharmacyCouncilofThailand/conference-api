@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import Fastify from "fastify";
 import wordCountRoutes from "./word-count.js";
+import {
+  countWords,
+  validateAbstractWords,
+} from "../../../utils/abstractWordCount.js";
 
 const words = (count: number) =>
   Array.from({ length: count }, (_, index) => `word${index + 1}`).join(" ");
@@ -9,7 +13,11 @@ const words = (count: number) =>
 async function buildApp() {
   const app = Fastify();
   app.decorate("authenticate", async () => undefined);
-  await app.register(wordCountRoutes, { prefix: "/api/abstracts" });
+  await app.register(wordCountRoutes, {
+    prefix: "/api/abstracts",
+    validateWords: (input) =>
+      validateAbstractWords(input, async (texts) => texts.map(countWords)),
+  });
   return app;
 }
 
@@ -25,7 +33,7 @@ test("returns authoritative counts for incomplete input", async () => {
   assert.equal(response.statusCode, 200);
   const body = response.json();
   assert.equal(body.success, true);
-  assert.equal(body.policy, "intl-segmenter-th-en-v1");
+  assert.equal(body.policy, "ensemble-intl-pythainlp-50-50-v1");
   assert.equal(typeof body.counts.title, "number");
   assert.equal(body.counts.total, 0);
 });

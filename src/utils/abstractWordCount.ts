@@ -1,4 +1,8 @@
-export const ABSTRACT_WORD_COUNT_POLICY = "intl-segmenter-th-en-v1" as const;
+import { fileURLToPath } from "node:url";
+import { PyThaiNlpWordCounter } from "../services/pyThaiNlpWordCounter.js";
+
+export const ABSTRACT_WORD_COUNT_POLICY =
+  "ensemble-intl-pythainlp-50-50-v1" as const;
 
 export const ABSTRACT_WORD_LIMITS = {
   titleMax: 30,
@@ -85,6 +89,38 @@ const wordSegmenter = new Segmenter(["th", "en"], {
   granularity: "word",
 });
 
+export const ABSTRACT_WORD_COUNT_WEIGHTS = {
+  intl: 0.5,
+  pyThaiNlp: 0.5,
+} as const;
+
+export type PyThaiNlpCountProvider = (texts: string[]) => Promise<number[]>;
+
+let productionPyThaiNlpCounter: PyThaiNlpWordCounter | undefined;
+
+function getProductionPyThaiNlpCounter(): PyThaiNlpWordCounter {
+  productionPyThaiNlpCounter ??= new PyThaiNlpWordCounter({
+    executable:
+      process.env.PYTHAINLP_PYTHON ||
+      (process.platform === "win32" ? "python" : "python3"),
+    workerPath: fileURLToPath(
+      new URL("../scripts/pythainlp-word-count.py", import.meta.url),
+    ),
+    timeoutMs: Number(process.env.PYTHAINLP_TIMEOUT_MS || 5_000),
+  });
+  return productionPyThaiNlpCounter;
+}
+
+const productionPyThaiNlpProvider: PyThaiNlpCountProvider = (texts) =>
+  getProductionPyThaiNlpCounter().count(texts);
+
+export function combineWordCounts(
+  intlCount: number,
+  pyThaiNlpCount: number,
+): number {
+  return Math.round((intlCount + pyThaiNlpCount) / 2);
+}
+
 export function countWords(text: string): number {
   const value = text.trim();
   if (!value) return 0;
@@ -105,13 +141,39 @@ export function parseKeywords(text: string): string[] {
 
 export function validateAbstractWords(
   input: AbstractWordCountInput,
-): AbstractWordCountResult {
+  countWithPyThaiNlp: PyThaiNlpCountProvider = productionPyThaiNlpProvider,
+): Promise<AbstractWordCountResult> {
+  return validateAbstractWordsAsync(input, countWithPyThaiNlp);
+}
+
+async function validateAbstractWordsAsync(
+  input: AbstractWordCountInput,
+  countWithPyThaiNlp: PyThaiNlpCountProvider,
+): Promise<AbstractWordCountResult> {
+  const texts = [
+    input.title,
+    ...ABSTRACT_SECTION_NAMES.map((name) => input.sections[name]),
+  ];
+  const intlCounts = texts.map(countWords);
+  const pyThaiNlpCounts = await countWithPyThaiNlp(texts);
+  if (
+    pyThaiNlpCounts.length !== texts.length ||
+    pyThaiNlpCounts.some(
+      (count) => !Number.isInteger(count) || count < 0,
+    )
+  ) {
+    throw new Error("PyThaiNLP returned invalid abstract word counts");
+  }
+
   const sectionCounts = Object.fromEntries(
-    ABSTRACT_SECTION_NAMES.map((name) => [name, countWords(input.sections[name])]),
+    ABSTRACT_SECTION_NAMES.map((name, index) => [
+      name,
+      combineWordCounts(intlCounts[index + 1], pyThaiNlpCounts[index + 1]),
+    ]),
   ) as Record<AbstractSectionName, number>;
 
   const counts = {
-    title: countWords(input.title),
+    title: combineWordCounts(intlCounts[0], pyThaiNlpCounts[0]),
     keywords: parseKeywords(input.keywords).length,
     sections: sectionCounts,
     total: ABSTRACT_SECTION_NAMES.reduce(
@@ -168,6 +230,18 @@ export function validateAbstractWords(
   };
 }
 
+export async function closeAbstractWordCountWorker(): Promise<void> {
+  const counter = productionPyThaiNlpCounter;
+  productionPyThaiNlpCounter = undefined;
+  await counter?.close();
+}
+
+export async function warmAbstractWordCountWorker(
+  countWithPyThaiNlp: PyThaiNlpCountProvider = productionPyThaiNlpProvider,
+): Promise<void> {
+  await countWithPyThaiNlp(["ภาษาไทยสำหรับอุ่นเครื่องตัดคำ"]);
+}
+
 export function formatAbstractWordCountIssue(
   issue: AbstractWordCountIssue,
 ): string {
@@ -189,6 +263,12 @@ export function getAbstractWordCountRuntimeInfo() {
     node: process.version,
     icu: process.versions.icu ?? "unknown",
     resolvedLocale: wordSegmenter.resolvedOptions().locale,
+    weights: ABSTRACT_WORD_COUNT_WEIGHTS,
+    pyThaiNlp: {
+      engine: "newmm",
+      version: "5.3.4",
+      persistentWorker: true,
+    },
     segmenterAvailable: true,
     thaiLocaleSupported: Segmenter.supportedLocalesOf(["th"]).length === 1,
   } as const;
