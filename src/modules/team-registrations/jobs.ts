@@ -12,6 +12,7 @@ import { sendTeamPaidConfirmationEmail, type TeamPaidEmailInput } from "./paid-e
 import { createTeamPaySolutionsClient, getTeamPaySolutionsConfig } from "./paysolutions.client.js";
 import { reconcileTeamPaymentAttempt } from "./payment-verification.service.js";
 import { isPaymentDueForReconciliation } from "./jobs-policy.js";
+import { processSequentiallyWithDelay } from "./email-outbox.js";
 
 export interface JobResult { scanned: number; changed: number; failed: number }
 
@@ -87,12 +88,12 @@ export async function processTeamEmailOutbox(now = new Date(), batchSize = 100):
     .limit(batchSize);
   let changed = 0;
   let failed = 0;
-  for (const row of rows) {
+  await processSequentiallyWithDelay(rows, async (row) => {
     const claimed = await db.update(teamRegistrationEmailOutbox)
       .set({ status: "processing", updatedAt: now })
       .where(and(eq(teamRegistrationEmailOutbox.id, row.id), inArray(teamRegistrationEmailOutbox.status, ["pending", "failed"])))
       .returning({ id: teamRegistrationEmailOutbox.id });
-    if (claimed.length === 0) continue;
+    if (claimed.length === 0) return;
     try {
       await sendTeamPaidConfirmationEmail(row.recipientEmail, row.payloadSnapshot as unknown as TeamPaidEmailInput);
       await db.update(teamRegistrationEmailOutbox).set({ status: "sent", sentAt: new Date(), updatedAt: new Date(), lastErrorCode: null })
@@ -109,7 +110,7 @@ export async function processTeamEmailOutbox(now = new Date(), batchSize = 100):
       }).where(eq(teamRegistrationEmailOutbox.id, row.id));
       failed += 1;
     }
-  }
+  });
   return { scanned: rows.length, changed, failed };
 }
 
