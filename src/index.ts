@@ -10,6 +10,10 @@ import fastifyStatic from "@fastify/static";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import {
+  closeAbstractWordCountWorker,
+  warmAbstractWordCountWorker,
+} from "./utils/abstractWordCount.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +27,10 @@ if (!JWT_SECRET) {
 }
 
 const fastify = Fastify({ logger: true });
+
+fastify.addHook("onClose", async () => {
+  await closeAbstractWordCountWorker();
+});
 
 // ============================================================================
 // CORS Configuration
@@ -172,6 +180,7 @@ import publicEventsRoutes from "./routes/public/events.js";
 import publicSponsorRoutes from "./routes/public/sponsors.js";
 import publicStudentEligibilityRoutes from "./routes/public/studentEligibility.js";
 import abstractSubmitRoutes from "./routes/public/abstracts/submit.js";
+import abstractWordCountRoutes from "./routes/public/abstracts/word-count.js";
 import abstractConfirmRoutes from "./routes/public/abstracts/confirm.js";
 import userProfileRoutes from "./routes/public/users/profile.js";
 import userAbstractsRoutes from "./routes/public/abstracts/user.js";
@@ -228,6 +237,7 @@ fastify.register(publicSponsorRoutes, { prefix: "/api/events" });
 fastify.register(publicStudentEligibilityRoutes, { prefix: "/api/events" });
 fastify.register(publicSpeakersRoutes, { prefix: "/api/speakers" });
 fastify.register(abstractSubmitRoutes, { prefix: "/api/abstracts" });
+fastify.register(abstractWordCountRoutes, { prefix: "/api/abstracts" });
 fastify.register(abstractConfirmRoutes, { prefix: "/api/abstracts/confirm" });
 fastify.register(userProfileRoutes, { prefix: "/api/users" });
 fastify.register(userAbstractsRoutes, { prefix: "/api/abstracts/user" });
@@ -289,6 +299,7 @@ fastify.get("/", async () => ({
 const start = async () => {
   try {
     const port = parseInt(process.env.PORT || "3002", 10);
+    await warmAbstractWordCountWorker();
     await fastify.listen({ port, host: "0.0.0.0" });
     fastify.log.info(`🚀 API running on port ${port}`);
   } catch (err) {

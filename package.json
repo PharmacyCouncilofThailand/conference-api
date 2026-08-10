@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "tsx --test src/**/*.test.ts",
+    "benchmark:abstract-word-count": "tsx src/scripts/benchmark-abstract-word-count.ts",
     "test:team-registrations": "tsx --test src/modules/team-registrations/**/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
