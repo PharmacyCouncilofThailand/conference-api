@@ -33,7 +33,7 @@ test("returns authoritative counts for incomplete input", async () => {
   assert.equal(response.statusCode, 200);
   const body = response.json();
   assert.equal(body.success, true);
-  assert.equal(body.policy, "ensemble-intl-pythainlp-50-50-v1");
+  assert.equal(body.policy, "ensemble-intl-pythainlp-50-50-v2");
   assert.equal(typeof body.counts.title, "number");
   assert.equal(body.counts.total, 0);
 });

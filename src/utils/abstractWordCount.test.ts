@@ -42,7 +42,7 @@ const validateWithIntlParity = (input: ReturnType<typeof validInput>) =>
 test("identifies the production counter as the 50/50 ensemble policy", () => {
   assert.equal(
     ABSTRACT_WORD_COUNT_POLICY,
-    "ensemble-intl-pythainlp-50-50-v1",
+    "ensemble-intl-pythainlp-50-50-v2",
   );
 });
 
@@ -147,9 +147,8 @@ test("returns per-section counts and their sum as the total", async () => {
   assert.deepEqual(result.issues, []);
 });
 
-test("returns issues in title, keywords, section, and total order", async () => {
+test("returns keyword, section, and total issues in order", async () => {
   const input = validInput();
-  input.title = words(31);
   input.keywords = "one,two,three,four,five,six,seven";
   input.sections.background = words(9);
   input.sections.objective = words(262);
@@ -157,11 +156,20 @@ test("returns issues in title, keywords, section, and total order", async () => 
   const result = await validateWithIntlParity(input);
 
   assert.deepEqual(result.issues.map((issue) => issue.code), [
-    "TITLE_TOO_LONG",
     "TOO_MANY_KEYWORDS",
     "SECTION_TOO_SHORT",
     "TOTAL_TOO_LONG",
   ]);
+});
+
+test("does not apply a word limit to abstract titles", async () => {
+  const input = validInput();
+  input.title = words(31);
+
+  const result = await validateWithIntlParity(input);
+
+  assert.equal(result.counts.title, 31);
+  assert.equal(result.issues.some((issue) => issue.field === "title"), false);
 });
 
 test("accepts 300 total words and rejects 301", async () => {
@@ -188,11 +196,11 @@ test("accepts 300 total words and rejects 301", async () => {
 
 test("formats the first issue for the existing API error field", async () => {
   const input = validInput();
-  input.title = words(31);
+  input.keywords = "one,two,three,four,five,six,seven";
   const result = await validateWithIntlParity(input);
 
   assert.equal(
     formatAbstractWordCountIssue(result.issues[0]),
-    "Abstract title must not exceed 30 words. Current: 31 words",
+    "Keywords must not exceed 6 comma-separated items. Current: 7",
   );
 });
