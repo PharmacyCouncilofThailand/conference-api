@@ -16,6 +16,8 @@ import {
   bigint,
   uniqueIndex,
   index,
+  check,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
@@ -138,7 +140,17 @@ export const teamRegistrationMemberRoleEnum = pgEnum(
 );
 export const teamRegistrationPaymentStatusEnum = pgEnum(
   "team_registration_payment_status",
-  ["creating", "pending", "paid", "failed", "expired", "verification_required"],
+  [
+    "creating",
+    "pending",
+    "paid",
+    "failed",
+    "expired",
+    "verification_required",
+    "cancelled",
+    "duplicate_paid",
+    "refunded",
+  ],
 );
 export const teamRegistrationEmailStatusEnum = pgEnum(
   "team_registration_email_status",
@@ -949,7 +961,12 @@ export const teamRegistrationConfigs = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("team_registration_configs_event_unique").on(table.eventId)],
+  (table) => [
+    uniqueIndex("team_registration_configs_event_unique").on(table.eventId),
+    uniqueIndex("team_registration_configs_enabled_profile_unique")
+      .on(table.paymentProfileCode)
+      .where(sql`${table.isEnabled} = true`),
+  ],
 );
 
 export const teamRegistrationCategories = pgTable(
@@ -1068,6 +1085,8 @@ export const teamRegistrations = pgTable(
     pricingRoundNameSnapshot: varchar("pricing_round_name_snapshot", { length: 255 }),
     amountSnapshot: decimal("amount_snapshot", { precision: 12, scale: 2 }),
     currencySnapshot: char("currency_snapshot", { length: 3 }),
+    revision: integer("revision").notNull().default(1),
+    paymentReservationExpiresAt: timestamp("payment_reservation_expires_at", { withTimezone: true }),
     draftExpiresAt: timestamp("draft_expires_at", { withTimezone: true }).notNull(),
     lockedAt: timestamp("locked_at", { withTimezone: true }),
     paidAt: timestamp("paid_at", { withTimezone: true }),
@@ -1081,6 +1100,7 @@ export const teamRegistrations = pgTable(
       .on(table.eventId, table.teamNameNormalized)
       .where(sql`${table.status} in ('draft', 'ready_for_payment', 'payment_pending', 'paid')`),
     index("team_registrations_status_expiry_idx").on(table.status, table.draftExpiresAt),
+    check("team_registrations_revision_check", sql`${table.revision} >= 1`),
   ],
 );
 
@@ -1167,6 +1187,28 @@ export const teamRegistrationPaymentAttempts = pgTable(
     paidAt: timestamp("paid_at", { withTimezone: true }),
     failedAt: timestamp("failed_at", { withTimezone: true }),
     lastInquiredAt: timestamp("last_inquired_at", { withTimezone: true }),
+    registrationRevisionSnapshot: integer("registration_revision_snapshot").notNull().default(0),
+    isWinner: boolean("is_winner").notNull().default(false),
+    customerEmailSnapshot: varchar("customer_email_snapshot", { length: 255 }),
+    customerNameSnapshot: varchar("customer_name_snapshot", { length: 255 }),
+    productDetailSnapshot: varchar("product_detail_snapshot", { length: 255 }),
+    formActionUrlSnapshot: varchar("form_action_url_snapshot", { length: 1000 }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    refundedAt: timestamp("refunded_at", { withTimezone: true }),
+    cancellationReason: varchar("cancellation_reason", { length: 64 }),
+    supersededByAttemptId: uuid("superseded_by_attempt_id").references(
+      (): AnyPgColumn => teamRegistrationPaymentAttempts.id,
+      { onDelete: "set null" },
+    ),
+    reviewReason: varchar("review_reason", { length: 64 }),
+    actionRequired: boolean("action_required").notNull().default(false),
+    actionResolvedAt: timestamp("action_resolved_at", { withTimezone: true }),
+    actionResolution: varchar("action_resolution", { length: 32 }),
+    actionResolutionNote: text("action_resolution_note"),
+    nextReconcileAt: timestamp("next_reconcile_at", { withTimezone: true }),
+    reconciliationDeadlineAt: timestamp("reconciliation_deadline_at", { withTimezone: true }),
+    inquiryLeaseUntil: timestamp("inquiry_lease_until", { withTimezone: true }),
+    terminalReconciliationCount: integer("terminal_reconciliation_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1177,7 +1219,69 @@ export const teamRegistrationPaymentAttempts = pgTable(
     uniqueIndex("team_registration_payment_active_unique")
       .on(table.registrationId)
       .where(sql`${table.status} in ('creating', 'pending')`),
+    uniqueIndex("team_registration_payment_winner_unique")
+      .on(table.registrationId)
+      .where(sql`${table.isWinner} = true`),
     index("team_registration_payment_status_expiry_idx").on(table.status, table.expiresAt),
+    index("team_registration_payment_reconcile_due_idx")
+      .on(table.status, table.nextReconcileAt, table.inquiryLeaseUntil)
+      .where(sql`${table.nextReconcileAt} is not null`),
+    index("team_registration_payment_action_required_idx")
+      .on(table.registrationId, table.attemptNumber)
+      .where(sql`${table.actionRequired} = true`),
+    check(
+      "team_registration_payment_revision_check",
+      sql`${table.registrationRevisionSnapshot} >= 0`,
+    ),
+    check(
+      "team_registration_payment_terminal_count_check",
+      sql`${table.terminalReconciliationCount} between 0 and 4`,
+    ),
+    check(
+      "team_registration_payment_cancellation_pair_check",
+      sql`(${table.cancelledAt} is null) = (${table.cancellationReason} is null)`,
+    ),
+    check(
+      "team_registration_payment_winner_paid_check",
+      sql`not ${table.isWinner} or (${table.paidAt} is not null and ${table.status} in ('paid', 'refunded'))`,
+    ),
+    check(
+      "team_registration_payment_refunded_check",
+      sql`${table.status} <> 'refunded' or (${table.refundedAt} is not null and ${table.paidAt} is not null)`,
+    ),
+    check(
+      "team_registration_payment_duplicate_not_winner_check",
+      sql`${table.status} <> 'duplicate_paid' or (not ${table.isWinner} and ${table.paidAt} is not null)`,
+    ),
+    check(
+      "team_registration_payment_cancellation_reason_check",
+      sql`${table.cancellationReason} is null or ${table.cancellationReason} in ('superseded_by_retry', 'registration_edited', 'sibling_paid', 'payment_review_required', 'provider_cancelled', 'migration_safety')`,
+    ),
+    check(
+      "team_registration_payment_review_reason_check",
+      sql`${table.reviewReason} is null or ${table.reviewReason} in ('duplicate_payment', 'other_payment_action_unresolved', 'registration_revision_changed', 'registration_not_payable', 'registration_expired', 'claims_released', 'payment_reservation_changed', 'payment_reservation_expired', 'provider_paid_at_invalid', 'reference_mismatch', 'merchant_mismatch', 'amount_mismatch', 'currency_mismatch', 'winner_refunded', 'legacy_verification_required')`,
+    ),
+    check(
+      "team_registration_payment_action_resolution_check",
+      sql`${table.actionResolution} is null or ${table.actionResolution} in ('refunded', 'closed_no_fulfillment')`,
+    ),
+    check(
+      "team_registration_payment_action_fields_check",
+      sql`(
+        ${table.actionRequired}
+        and ${table.reviewReason} is not null
+        and ${table.actionResolvedAt} is null
+        and ${table.actionResolution} is null
+        and ${table.actionResolutionNote} is null
+      ) or (
+        not ${table.actionRequired}
+        and (
+          (${table.actionResolvedAt} is null and ${table.actionResolution} is null and ${table.actionResolutionNote} is null)
+          or
+          (${table.actionResolvedAt} is not null and ${table.actionResolution} is not null and ${table.actionResolutionNote} is not null)
+        )
+      )`,
+    ),
   ],
 );
 
@@ -1197,8 +1301,23 @@ export const teamRegistrationPaymentEvents = pgTable(
     processedAt: timestamp("processed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("team_registration_payment_provider_event_unique").on(table.providerEventKey)],
+  (table) => [
+    uniqueIndex("team_registration_payment_provider_event_unique").on(table.providerEventKey),
+    index("team_registration_payment_event_reference_type_created_idx").on(
+      table.referenceNo,
+      table.eventType,
+      table.createdAt,
+    ),
+  ],
 );
+
+export const teamRegistrationJobState = pgTable("team_registration_job_state", {
+  jobName: varchar("job_name", { length: 64 }).primaryKey(),
+  lastStartedAt: timestamp("last_started_at", { withTimezone: true }),
+  lastSucceededAt: timestamp("last_succeeded_at", { withTimezone: true }),
+  lastErrorCode: varchar("last_error_code", { length: 100 }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const teamRegistrationEmailOutbox = pgTable(
   "team_registration_email_outbox",

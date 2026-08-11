@@ -17,4 +17,11 @@ const client = postgres(connectionString, {
 });
 export const db = drizzle(client, { schema });
 
+let closePromise: Promise<void> | undefined;
+
+export async function closeDatabase(): Promise<void> {
+  closePromise ??= client.end({ timeout: 5 });
+  await closePromise;
+}
+
 export * from "./schema.js";

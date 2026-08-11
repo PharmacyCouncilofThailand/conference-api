@@ -17,23 +17,25 @@ function sendTeamError(reply: FastifyReply, request: FastifyRequest, error: unkn
   if (error instanceof TeamRegistrationError) {
     return reply.status(error.statusCode).send({
       success: false,
+      requestId: request.id,
       error: {
         code: error.code,
         message: error.message,
         fields: error.fields,
+        ...error.details,
         requestId: request.id,
       },
     });
   }
   if (error instanceof z.ZodError) {
-    return reply.status(422).send({ success: false, error: { code: "VALIDATION_ERROR", message: "ข้อมูลไม่ถูกต้อง", fields: error.issues, requestId: request.id } });
+    return reply.status(422).send({ success: false, requestId: request.id, error: { code: "VALIDATION_ERROR", message: "ข้อมูลไม่ถูกต้อง", fields: error.issues, requestId: request.id } });
   }
   throw error;
 }
 
-async function requireEvent(eventCode: string) {
+async function requireEvent(eventCode: string, allowDisabled = false) {
   const context = await getTeamEventContext(eventCode);
-  if (!context || !context.config.isEnabled) {
+  if (!context || (!allowDisabled && !context.config.isEnabled)) {
     throw new TeamRegistrationError(404, "TEAM_REGISTRATION_NOT_FOUND", "ไม่พบการลงทะเบียนทีมสำหรับ Event นี้");
   }
   return context;
@@ -98,7 +100,7 @@ export default async function teamRegistrationPublicRoutes(fastify: FastifyInsta
       const result = await service.requestOtp(context.eventId, email, context.eventName);
       return reply.status(201).send({ success: true, data: result });
     } catch (error) {
-      if (error instanceof z.ZodError) return reply.status(422).send({ success: false, error: { code: "VALIDATION_ERROR", message: "Email ไม่ถูกต้อง", requestId: request.id } });
+      if (error instanceof z.ZodError) return reply.status(422).send({ success: false, requestId: request.id, error: { code: "VALIDATION_ERROR", message: "Email ไม่ถูกต้อง", requestId: request.id } });
       return sendTeamError(reply, request, error);
     }
   });
@@ -114,7 +116,7 @@ export default async function teamRegistrationPublicRoutes(fastify: FastifyInsta
       const result = await service.verifyOtp(context.eventId, challengeId, body.otp, body.referenceCode);
       return reply.send({ success: true, data: result });
     } catch (error) {
-      if (error instanceof z.ZodError) return reply.status(422).send({ success: false, error: { code: "VALIDATION_ERROR", message: "OTP หรือรหัสอ้างอิงไม่ถูกต้อง", requestId: request.id } });
+      if (error instanceof z.ZodError) return reply.status(422).send({ success: false, requestId: request.id, error: { code: "VALIDATION_ERROR", message: "OTP หรือรหัสอ้างอิงไม่ถูกต้อง", requestId: request.id } });
       return sendTeamError(reply, request, error);
     }
   });
@@ -128,7 +130,7 @@ export default async function teamRegistrationPublicRoutes(fastify: FastifyInsta
       const registration = await createDraft(access, body);
       return reply.status(201).send({ success: true, data: { registration } });
     } catch (error) {
-      if (error instanceof z.ZodError) return reply.status(422).send({ success: false, error: { code: "VALIDATION_ERROR", message: "ข้อมูลทีมไม่ถูกต้อง", fields: error.issues, requestId: request.id } });
+      if (error instanceof z.ZodError) return reply.status(422).send({ success: false, requestId: request.id, error: { code: "VALIDATION_ERROR", message: "ข้อมูลทีมไม่ถูกต้อง", fields: error.issues, requestId: request.id } });
       return sendTeamError(reply, request, error);
     }
   });
@@ -164,7 +166,7 @@ export default async function teamRegistrationPublicRoutes(fastify: FastifyInsta
       const registration = await replaceDraft(access, registrationId, body);
       return reply.send({ success: true, data: { registration } });
     } catch (error) {
-      if (error instanceof z.ZodError) return reply.status(422).send({ success: false, error: { code: "VALIDATION_ERROR", message: "ข้อมูลทีมไม่ถูกต้อง", fields: error.issues, requestId: request.id } });
+      if (error instanceof z.ZodError) return reply.status(422).send({ success: false, requestId: request.id, error: { code: "VALIDATION_ERROR", message: "ข้อมูลทีมไม่ถูกต้อง", fields: error.issues, requestId: request.id } });
       return sendTeamError(reply, request, error);
     }
   });
@@ -187,8 +189,11 @@ export default async function teamRegistrationPublicRoutes(fastify: FastifyInsta
   fastify.post("/events/:eventCode/registrations/:registrationId/payment-attempts", async (request, reply) => {
     try {
       const { eventCode, registrationId } = registrationParamsSchema.parse(request.params);
-      const context = await requireEvent(eventCode);
+      const context = await requireEvent(eventCode, true);
       const access = await requireTeamAccess(context.eventId, request.headers.authorization);
+      if (request.body !== undefined && request.body !== null) {
+        throw new TeamRegistrationError(400, "PAYMENT_ATTEMPT_BODY_NOT_ALLOWED", "คำขอนี้ไม่รับ request body");
+      }
       const idempotencyKey = String(request.headers["idempotency-key"] ?? "");
       const payment = await createTeamPaymentAttempt(registrationId, access, idempotencyKey);
       return reply.status(201).send({ success: true, data: payment });
@@ -200,7 +205,7 @@ export default async function teamRegistrationPublicRoutes(fastify: FastifyInsta
   fastify.get("/events/:eventCode/registrations/:registrationId/payment-status", async (request, reply) => {
     try {
       const { eventCode, registrationId } = registrationParamsSchema.parse(request.params);
-      const context = await requireEvent(eventCode);
+      const context = await requireEvent(eventCode, true);
       const access = await requireTeamAccess(context.eventId, request.headers.authorization);
       return reply.send({ success: true, data: await getTeamPaymentStatus(registrationId, access) });
     } catch (error) {

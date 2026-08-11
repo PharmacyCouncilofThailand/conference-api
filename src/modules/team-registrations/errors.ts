@@ -9,6 +9,7 @@ export class TeamRegistrationError extends Error {
     public readonly code: string,
     message: string,
     public readonly fields?: TeamRegistrationFieldError[],
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "TeamRegistrationError";

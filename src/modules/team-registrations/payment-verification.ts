@@ -1,3 +1,8 @@
+import {
+  classifyTeamProviderStatus,
+  type TeamProviderStatusOptions,
+} from "./payment-state.js";
+
 export interface VerificationAttemptSnapshot {
   referenceNo: string;
   merchantId: string;
@@ -19,14 +24,21 @@ function normalizedMoney(value: string): string {
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "invalid";
 }
 
-function isPaidStatus(status: string, statusName: string): boolean {
-  const values = [status, statusName].map((value) => value.trim().toUpperCase());
-  return values.some((value) => ["CP", "Y", "TC", "COMPLETE", "COMPLETED", "PAID", "TEST COMPLETE", "TEST COMPLETED"].includes(value));
+export function getTeamPaymentClassifierOptions(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): TeamProviderStatusOptions {
+  const nodeEnv = environment.NODE_ENV?.trim().toLowerCase() || undefined;
+  const requested = environment.TEAM_REGISTRATION_PAYMENT_ALLOW_TEST_STATUSES?.trim().toLowerCase() === "true";
+  return {
+    nodeEnv,
+    allowTestStatuses: nodeEnv !== "production" && requested,
+  };
 }
 
 export function compareTeamPaymentInquiry(
   attempt: VerificationAttemptSnapshot,
   inquiry: VerificationInquirySnapshot,
+  classifierOptions: TeamProviderStatusOptions = getTeamPaymentClassifierOptions(),
 ) {
   const referenceMatches = inquiry.referenceNo === attempt.referenceNo;
   const merchantMatches = inquiry.merchantId === attempt.merchantId
@@ -34,7 +46,7 @@ export function compareTeamPaymentInquiry(
   const amountMatches = normalizedMoney(inquiry.total) === normalizedMoney(attempt.amount);
   const currencyMatches = inquiry.currencyCode.trim().toUpperCase() === "00"
     || inquiry.currencyCode.trim().toUpperCase() === attempt.currency;
-  const isPaid = isPaidStatus(inquiry.status, inquiry.statusName);
+  const isPaid = classifyTeamProviderStatus(inquiry, classifierOptions) === "paid";
   return {
     referenceMatches,
     merchantMatches,

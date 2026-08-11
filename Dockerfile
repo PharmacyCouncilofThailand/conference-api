@@ -27,6 +27,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV SERVICE_ROLE=api
 
 # Install postgresql-client for health checks.
 # PDF receipts are generated with @react-pdf/renderer (pure JS) — no browser/Chromium needed.
@@ -73,7 +74,7 @@ EXPOSE 3002
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1
+    CMD if [ "$SERVICE_ROLE" = "worker" ]; then node dist/modules/team-registrations/jobs-runner.js --healthcheck; else wget --no-verbose --tries=1 --spider http://localhost:3002/health; fi
 
 # Run server (run db:push manually via DBeaver or Railway CLI)
 CMD ["node", "dist/index.js"]

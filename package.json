@@ -10,13 +10,17 @@
     "test": "tsx --test src/**/*.test.ts",
     "benchmark:abstract-word-count": "tsx src/scripts/benchmark-abstract-word-count.ts",
     "test:team-registrations": "tsx --test src/modules/team-registrations/**/*.test.ts",
+    "test:team-registrations:integration": "tsx --test src/modules/team-registrations/payment.integration.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "npx tsx src/database/seed.ts",
     "db:migrate-sessions": "npx tsx src/database/migrate-sessions.ts",
     "jobs:team-registrations": "tsx src/modules/team-registrations/jobs-runner.ts",
-    "jobs:team-registrations:once": "tsx src/modules/team-registrations/jobs-runner.ts --once"
+    "jobs:team-registrations:once": "tsx src/modules/team-registrations/jobs-runner.ts --once",
+    "jobs:team-registrations:prod": "node dist/modules/team-registrations/jobs-runner.js",
+    "jobs:team-registrations:prod:once": "node dist/modules/team-registrations/jobs-runner.js --once",
+    "jobs:team-registrations:prod:health": "node dist/modules/team-registrations/jobs-runner.js --healthcheck"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
