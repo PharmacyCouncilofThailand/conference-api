@@ -119,12 +119,13 @@ fastify.setErrorHandler((error: FastifyError | ApiError, request, reply) => {
       success: false,
       code: "FILE_TOO_LARGE",
       error: "File too large. Maximum size allowed is 30MB.",
+      requestId: request.id,
     });
   }
 
   // Handle ApiError instances
   if (error instanceof ApiError) {
-    return reply.status(error.statusCode).send(error.toJSON());
+    return reply.status(error.statusCode).send({ ...error.toJSON(), requestId: request.id });
   }
 
   // Handle validation errors from Fastify
@@ -134,6 +135,7 @@ fastify.setErrorHandler((error: FastifyError | ApiError, request, reply) => {
       code: "VALIDATION_ERROR",
       error: "Invalid input",
       details: error.validation,
+      requestId: request.id,
     });
   }
 
@@ -145,6 +147,7 @@ fastify.setErrorHandler((error: FastifyError | ApiError, request, reply) => {
     success: false,
     code: "INTERNAL_ERROR",
     error: "Internal server error",
+    requestId: request.id,
   });
 });
 
@@ -196,6 +199,7 @@ import quickRegistrationRoutes from "./routes/registrations/quick.js";
 import teamRegistrationPublicRoutes from "./modules/team-registrations/public.routes.js";
 import teamRegistrationProviderRoutes from "./modules/team-registrations/provider.routes.js";
 import teamRegistrationBackofficeRoutes from "./modules/team-registrations/backoffice.routes.js";
+import { getTeamRegistrationWorkerHealth, type TeamRegistrationWorkerHealth } from "./modules/team-registrations/jobs.js";
 
 // ============================================================================
 // Public Routes (No Auth Required)
@@ -283,10 +287,25 @@ fastify.register(async (protectedRoutes) => {
 // ============================================================================
 // Health Check & Root
 // ============================================================================
-fastify.get("/health", async () => ({
-  status: "ok",
-  timestamp: new Date().toISOString(),
-}));
+fastify.get("/health", async () => {
+  let teamRegistrations: TeamRegistrationWorkerHealth;
+  try {
+    teamRegistrations = await getTeamRegistrationWorkerHealth();
+  } catch {
+    // API liveness stays independent from a worker/schema/database health issue.
+    teamRegistrations = {
+      status: "stale",
+      lastStartedAt: null,
+      lastSucceededAt: null,
+      lastErrorCode: "HEALTH_QUERY_FAILED",
+    };
+  }
+  return {
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    worker: { teamRegistrations },
+  };
+});
 
 fastify.get("/", async () => ({
   name: process.env.API_NAME || "Conference API",
@@ -309,4 +328,3 @@ const start = async () => {
 };
 
 start();
-

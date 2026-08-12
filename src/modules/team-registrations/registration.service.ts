@@ -9,7 +9,14 @@ import {
   teamRegistrations,
 } from "../../database/schema.js";
 import { TeamRegistrationError } from "./errors.js";
+import { initializeTerminalSchedule } from "./jobs-policy.js";
 import { normalizeEmail, normalizeTeamName } from "./normalization.js";
+import {
+  activePaymentAttempts,
+  cancelActivePaymentAttempts,
+  lockAllPaymentAttempts,
+  type TeamRegistrationTransaction,
+} from "./payment.repository.js";
 import { teamDraftSchema, validateTeamDraft, type TeamDraftInput, type ValidatedTeamDraft } from "./schemas.js";
 import type { ReadyRegistration, VerifiedTeamAccess } from "./types.js";
 
@@ -17,8 +24,12 @@ function isPostgresConstraint(error: unknown, constraint: string): boolean {
   return typeof error === "object" && error !== null && "constraint_name" in error && error.constraint_name === constraint;
 }
 
-async function loadRules(eventId: number, categoryId: number) {
-  const [row] = await db
+async function lockRules(
+  tx: TeamRegistrationTransaction,
+  eventId: number,
+  categoryId: number,
+) {
+  const [row] = await tx
     .select({ config: teamRegistrationConfigs, category: teamRegistrationCategories })
     .from(teamRegistrationConfigs)
     .innerJoin(teamRegistrationCategories, eq(teamRegistrationCategories.configId, teamRegistrationConfigs.id))
@@ -27,6 +38,7 @@ async function loadRules(eventId: number, categoryId: number) {
       eq(teamRegistrationCategories.id, categoryId),
       eq(teamRegistrationCategories.isActive, true),
     ))
+    .for("share")
     .limit(1);
   if (!row || !row.config.isEnabled) {
     throw new TeamRegistrationError(404, "TEAM_REGISTRATION_NOT_FOUND", "ไม่พบการลงทะเบียนทีมสำหรับ Event นี้");
@@ -34,9 +46,11 @@ async function loadRules(eventId: number, categoryId: number) {
   return row;
 }
 
+type RegistrationRules = Awaited<ReturnType<typeof lockRules>>;
+
 function validateSaveableDraft(
   input: TeamDraftInput,
-  rules: Awaited<ReturnType<typeof loadRules>>,
+  rules: RegistrationRules,
 ): { draft: ValidatedTeamDraft; ready: boolean } {
   const base = teamDraftSchema.safeParse(input);
   if (!base.success) {
@@ -150,14 +164,14 @@ export async function createDraft(
   input: TeamDraftInput,
   now = new Date(),
 ) {
-  const rules = await loadRules(access.eventId, input.categoryId);
-  if (now < rules.config.registrationOpensAt || now >= rules.config.registrationClosesAt) {
-    throw new TeamRegistrationError(409, "REGISTRATION_CLOSED", "ขณะนี้อยู่นอกช่วงรับสมัคร");
-  }
-  const { draft, ready } = validateSaveableDraft(input, rules);
-  assertLeader(draft, access);
   try {
     return await db.transaction(async (tx) => {
+      const rules = await lockRules(tx, access.eventId, input.categoryId);
+      if (now < rules.config.registrationOpensAt || now >= rules.config.registrationClosesAt) {
+        throw new TeamRegistrationError(409, "REGISTRATION_CLOSED", "ขณะนี้อยู่นอกช่วงรับสมัคร");
+      }
+      const { draft, ready } = validateSaveableDraft(input, rules);
+      assertLeader(draft, access);
       const [registration] = await tx.insert(teamRegistrations).values({
         registrationCode: createRegistrationCode(now),
         eventId: access.eventId,
@@ -186,9 +200,6 @@ export async function replaceDraft(
   input: TeamDraftInput,
   now = new Date(),
 ) {
-  const rules = await loadRules(access.eventId, input.categoryId);
-  const { draft, ready } = validateSaveableDraft(input, rules);
-  assertLeader(draft, access);
   try {
     return await db.transaction(async (tx) => {
       const [registration] = await tx.select().from(teamRegistrations).where(and(
@@ -200,6 +211,24 @@ export async function replaceDraft(
       if (registration.status === "paid") throw new TeamRegistrationError(409, "REGISTRATION_LOCKED", "ข้อมูลทีมถูกล็อกหลังชำระเงิน");
       if (registration.status === "expired" || registration.draftExpiresAt <= now) throw new TeamRegistrationError(409, "DRAFT_EXPIRED", "Draft หมดอายุแล้ว");
 
+      const attempts = await lockAllPaymentAttempts(tx, registrationId);
+      if (attempts.some((attempt) => attempt.actionRequired && !attempt.actionResolvedAt)) {
+        throw new TeamRegistrationError(409, "PAYMENT_REVIEW_REQUIRED", "รายการชำระเงินนี้ต้องให้เจ้าหน้าที่ตรวจสอบก่อนแก้ไขข้อมูลทีม");
+      }
+      const rules = await lockRules(tx, access.eventId, input.categoryId);
+      const { draft, ready } = validateSaveableDraft(input, rules);
+      assertLeader(draft, access);
+      const activeAttempts = activePaymentAttempts(attempts);
+      if (activeAttempts.length > 0) {
+        const schedule = initializeTerminalSchedule("cancelled", now, now);
+        await cancelActivePaymentAttempts(tx, {
+          registrationId,
+          reason: "registration_edited",
+          cancelledAt: now,
+          reconciliationDeadlineAt: schedule.reconciliationDeadlineAt,
+        });
+      }
+
       await tx.delete(teamRegistrationEmailClaims).where(eq(teamRegistrationEmailClaims.registrationId, registrationId));
       await tx.delete(teamRegistrationMembers).where(eq(teamRegistrationMembers.registrationId, registrationId));
       await persistMembersAndClaims(tx, access.eventId, registrationId, draft, now);
@@ -209,6 +238,8 @@ export async function replaceDraft(
         teamNameNormalized: normalizeTeamName(draft.teamName),
         leaderEmail: draft.members.find((member) => member.memberRole === "leader")!.email.trim(),
         status: ready ? "ready_for_payment" : "draft",
+        revision: registration.revision + 1,
+        paymentReservationExpiresAt: null,
         draftExpiresAt: draftExpiry(now, rules.config.draftTtlHours, rules.config.registrationClosesAt),
         updatedAt: now,
       }).where(eq(teamRegistrations.id, registrationId)).returning();

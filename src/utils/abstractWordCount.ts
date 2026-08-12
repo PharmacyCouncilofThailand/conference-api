@@ -2,10 +2,9 @@ import { fileURLToPath } from "node:url";
 import { PyThaiNlpWordCounter } from "../services/pyThaiNlpWordCounter.js";
 
 export const ABSTRACT_WORD_COUNT_POLICY =
-  "ensemble-intl-pythainlp-50-50-v1" as const;
+  "ensemble-intl-pythainlp-50-50-v2" as const;
 
 export const ABSTRACT_WORD_LIMITS = {
-  titleMax: 30,
   keywordMax: 6,
   sectionMin: 10,
   totalMax: 300,
@@ -30,7 +29,6 @@ export type AbstractWordCountInput = {
 
 export type AbstractWordCountIssue = {
   code:
-    | "TITLE_TOO_LONG"
     | "TOO_MANY_KEYWORDS"
     | "SECTION_TOO_SHORT"
     | "TOTAL_TOO_LONG";
@@ -184,15 +182,6 @@ async function validateAbstractWordsAsync(
 
   const issues: AbstractWordCountIssue[] = [];
 
-  if (counts.title > ABSTRACT_WORD_LIMITS.titleMax) {
-    issues.push({
-      code: "TITLE_TOO_LONG",
-      field: "title",
-      current: counts.title,
-      limit: ABSTRACT_WORD_LIMITS.titleMax,
-    });
-  }
-
   if (counts.keywords > ABSTRACT_WORD_LIMITS.keywordMax) {
     issues.push({
       code: "TOO_MANY_KEYWORDS",
@@ -246,8 +235,6 @@ export function formatAbstractWordCountIssue(
   issue: AbstractWordCountIssue,
 ): string {
   switch (issue.code) {
-    case "TITLE_TOO_LONG":
-      return `Abstract title must not exceed ${issue.limit} words. Current: ${issue.current} words`;
     case "TOO_MANY_KEYWORDS":
       return `Keywords must not exceed ${issue.limit} comma-separated items. Current: ${issue.current}`;
     case "SECTION_TOO_SHORT":

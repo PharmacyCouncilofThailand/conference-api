@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { and, asc, count, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../database/index.js";
 import {
@@ -19,7 +19,15 @@ import {
 } from "../../database/schema.js";
 import { requireTeamRegistrationAdmin, requireTeamRegistrationReader } from "./backoffice.authorization.js";
 import { TeamRegistrationError } from "./errors.js";
+import { initializeTerminalSchedule } from "./jobs-policy.js";
 import { normalizeEmail, normalizeTeamName } from "./normalization.js";
+import {
+  activePaymentAttempts,
+  cancelActivePaymentAttempts,
+  hasAllCurrentEmailClaims,
+  lockAllPaymentAttempts,
+} from "./payment.repository.js";
+import { decideUnpaidTeamRegistrationTransition } from "./payment-state.js";
 
 const listQuerySchema = z.object({
   eventId: z.coerce.number().int().positive(),
@@ -28,7 +36,11 @@ const listQuerySchema = z.object({
   search: z.string().trim().max(255).optional(),
   categoryCode: z.string().trim().max(64).optional(),
   registrationStatus: z.enum(["draft", "ready_for_payment", "payment_pending", "paid", "expired"]).optional(),
-  paymentStatus: z.enum(["creating", "pending", "paid", "failed", "expired", "verification_required"]).optional(),
+  paymentStatus: z.enum(["creating", "pending", "paid", "failed", "expired", "verification_required", "cancelled", "duplicate_paid", "refunded"]).optional(),
+  paymentActionRequired: z.union([
+    z.boolean(),
+    z.enum(["true", "false"]).transform((value) => value === "true"),
+  ]).optional(),
   pricingRoundCode: z.string().trim().max(64).optional(),
   sort: z.enum(["createdAt", "paidAt", "teamName"]).default("createdAt"),
   order: z.enum(["asc", "desc"]).default("desc"),
@@ -76,19 +88,22 @@ const configInputSchema = z.object({
 
 function sendError(reply: FastifyReply, request: FastifyRequest, error: unknown) {
   if (error instanceof TeamRegistrationError) {
-    return reply.status(error.statusCode).send({ success: false, error: { code: error.code, message: error.message, fields: error.fields, requestId: request.id } });
+    return reply.status(error.statusCode).send({ success: false, requestId: request.id, error: { code: error.code, message: error.message, fields: error.fields, ...error.details, requestId: request.id } });
   }
   if (error instanceof z.ZodError) {
-    return reply.status(422).send({ success: false, error: { code: "VALIDATION_ERROR", message: "ข้อมูลไม่ถูกต้อง", fields: error.issues, requestId: request.id } });
+    return reply.status(422).send({ success: false, requestId: request.id, error: { code: "VALIDATION_ERROR", message: "ข้อมูลไม่ถูกต้อง", fields: error.issues, requestId: request.id } });
   }
   const constraint = typeof error === "object" && error !== null && "constraint_name" in error
     ? String(error.constraint_name)
     : "";
   if (constraint === "team_registrations_active_team_name_unique") {
-    return reply.status(409).send({ success: false, error: { code: "TEAM_NAME_TAKEN", message: "ชื่อทีมนี้ถูกใช้ใน Event แล้ว", requestId: request.id } });
+    return reply.status(409).send({ success: false, requestId: request.id, error: { code: "TEAM_NAME_TAKEN", message: "ชื่อทีมนี้ถูกใช้ใน Event แล้ว", requestId: request.id } });
   }
   if (constraint === "team_registration_active_email_claim_unique") {
-    return reply.status(409).send({ success: false, error: { code: "MEMBER_EMAIL_ALREADY_REGISTERED", message: "Email นี้ถูกใช้ใน Event แล้ว", requestId: request.id } });
+    return reply.status(409).send({ success: false, requestId: request.id, error: { code: "MEMBER_EMAIL_ALREADY_REGISTERED", message: "Email นี้ถูกใช้ใน Event แล้ว", requestId: request.id } });
+  }
+  if (constraint === "team_registration_configs_enabled_profile_unique") {
+    return reply.status(409).send({ success: false, requestId: request.id, error: { code: "PAYMENT_PROFILE_ALREADY_ENABLED", message: "Payment profile นี้ถูกเปิดใช้กับ Event อื่นแล้ว", requestId: request.id } });
   }
   throw error;
 }
@@ -143,11 +158,31 @@ export default async function teamRegistrationBackofficeRoutes(fastify: FastifyI
       )!);
       if (query.categoryCode) conditions.push(eq(teamRegistrationCategories.code, query.categoryCode));
       if (query.pricingRoundCode) conditions.push(eq(teamRegistrations.pricingRoundCodeSnapshot, query.pricingRoundCode));
-      if (query.paymentStatus) conditions.push(sql`(
-        select attempt.status::text from team_registration_payment_attempts attempt
-        where attempt.registration_id = ${teamRegistrations.id}
-        order by attempt.attempt_number desc limit 1
+      if (query.paymentStatus) conditions.push(sql`coalesce(
+        (
+          select winner.status::text from team_registration_payment_attempts winner
+          where winner.registration_id = ${teamRegistrations.id} and winner.is_winner = true
+          limit 1
+        ),
+        (
+          select attempt.status::text from team_registration_payment_attempts attempt
+          where attempt.registration_id = ${teamRegistrations.id}
+          order by attempt.attempt_number desc limit 1
+        )
       ) = ${query.paymentStatus}`);
+      if (query.paymentActionRequired !== undefined) conditions.push(query.paymentActionRequired
+        ? sql`exists (
+            select 1 from team_registration_payment_attempts action_attempt
+            where action_attempt.registration_id = ${teamRegistrations.id}
+              and action_attempt.action_required = true
+              and action_attempt.action_resolved_at is null
+          )`
+        : sql`not exists (
+            select 1 from team_registration_payment_attempts action_attempt
+            where action_attempt.registration_id = ${teamRegistrations.id}
+              and action_attempt.action_required = true
+              and action_attempt.action_resolved_at is null
+          )`);
       const where = and(...conditions);
       const sortColumn = query.sort === "paidAt" ? teamRegistrations.paidAt : query.sort === "teamName" ? teamRegistrations.teamName : teamRegistrations.createdAt;
       const orderBy = query.order === "asc" ? asc(sortColumn) : desc(sortColumn);
@@ -163,7 +198,11 @@ export default async function teamRegistrationBackofficeRoutes(fastify: FastifyI
       const [paidRow] = await db.select({ value: count() }).from(teamRegistrations).where(and(eq(teamRegistrations.eventId, query.eventId), eq(teamRegistrations.status, "paid")));
       const items = baseRows.map(({ registration, category }) => {
         const teamMembers = members.filter((member) => member.registrationId === registration.id);
-        const latestAttempt = attempts.find((attempt) => attempt.registrationId === registration.id) ?? null;
+        const registrationAttempts = attempts.filter((attempt) => attempt.registrationId === registration.id);
+        const latestAttempt = registrationAttempts[0] ?? null;
+        const winnerAttempt = registrationAttempts.find((attempt) => attempt.isWinner) ?? null;
+        const relevantAttempt = winnerAttempt ?? latestAttempt;
+        const unresolvedActions = registrationAttempts.filter((attempt) => attempt.actionRequired && !attempt.actionResolvedAt);
         const leader = teamMembers.find((member) => member.memberRole === "leader");
         return {
           id: registration.id,
@@ -173,10 +212,14 @@ export default async function teamRegistrationBackofficeRoutes(fastify: FastifyI
           leader: leader ? { name: `${leader.firstName} ${leader.lastName}`.trim(), email: leader.email } : { name: "-", email: registration.leaderEmail },
           memberCount: teamMembers.length,
           pricingRound: registration.pricingRoundNameSnapshot,
-          amount: registration.amountSnapshot ?? latestAttempt?.amount ?? null,
-          currency: registration.currencySnapshot ?? latestAttempt?.currency ?? null,
+          amount: registration.amountSnapshot ?? relevantAttempt?.amount ?? null,
+          currency: registration.currencySnapshot ?? relevantAttempt?.currency ?? null,
           registrationStatus: registration.status,
-          paymentStatus: latestAttempt?.status ?? null,
+          paymentStatus: relevantAttempt?.status ?? null,
+          winnerPaymentAttemptId: winnerAttempt?.id ?? null,
+          latestPaymentAttemptId: latestAttempt?.id ?? null,
+          requiresAction: unresolvedActions.length > 0,
+          unresolvedActionCount: unresolvedActions.length,
           paidAt: registration.paidAt,
           createdAt: registration.createdAt,
         };
@@ -198,10 +241,45 @@ export default async function teamRegistrationBackofficeRoutes(fastify: FastifyI
         db.select().from(teamRegistrationAuditLogs).where(and(eq(teamRegistrationAuditLogs.entityType, "team_registration"), eq(teamRegistrationAuditLogs.entityId, registrationId))).orderBy(desc(teamRegistrationAuditLogs.createdAt)),
       ]);
       const attemptIds = attempts.map((attempt) => attempt.id);
-      const paymentEvents = attemptIds.length ? await db.select({ eventType: teamRegistrationPaymentEvents.eventType, providerStatus: teamRegistrationPaymentEvents.providerStatus, merchantMatches: teamRegistrationPaymentEvents.merchantMatches, amountMatches: teamRegistrationPaymentEvents.amountMatches, currencyMatches: teamRegistrationPaymentEvents.currencyMatches, createdAt: teamRegistrationPaymentEvents.createdAt })
-        .from(teamRegistrationPaymentEvents).where(inArray(teamRegistrationPaymentEvents.paymentAttemptId, attemptIds)).orderBy(desc(teamRegistrationPaymentEvents.createdAt)) : [];
+      const [paymentEvents, paymentEventCount] = attemptIds.length ? await Promise.all([
+        db.select({
+          eventType: teamRegistrationPaymentEvents.eventType,
+          referenceNo: teamRegistrationPaymentEvents.referenceNo,
+          providerStatus: teamRegistrationPaymentEvents.providerStatus,
+          merchantMatches: teamRegistrationPaymentEvents.merchantMatches,
+          amountMatches: teamRegistrationPaymentEvents.amountMatches,
+          currencyMatches: teamRegistrationPaymentEvents.currencyMatches,
+          processedAt: teamRegistrationPaymentEvents.processedAt,
+          createdAt: teamRegistrationPaymentEvents.createdAt,
+        }).from(teamRegistrationPaymentEvents)
+          .where(inArray(teamRegistrationPaymentEvents.paymentAttemptId, attemptIds))
+          .orderBy(desc(teamRegistrationPaymentEvents.createdAt)).limit(200),
+        db.select({ value: count() }).from(teamRegistrationPaymentEvents)
+          .where(inArray(teamRegistrationPaymentEvents.paymentAttemptId, attemptIds)),
+      ]) : [[], [{ value: 0 }]];
       await db.insert(teamRegistrationAuditLogs).values({ eventId: registration.eventId, actorBackofficeUserId: userOf(request).id, action: "detail_viewed", entityType: "team_registration", entityId: registrationId, requestId: request.id });
-      return reply.send({ success: true, data: { registration, members, paymentAttempts: attempts, paymentEvents, emailDeliveries: emails, auditLogs: audit } });
+      const totalPaymentEvents = Number(paymentEventCount[0]?.value ?? 0);
+      const winnerAttempt = attempts.find((attempt) => attempt.isWinner) ?? null;
+      const latestAttempt = attempts[0] ?? null;
+      const unresolvedActions = attempts.filter((attempt) => attempt.actionRequired && !attempt.actionResolvedAt);
+      return reply.send({
+        success: true,
+        data: {
+          registration,
+          members,
+          paymentAttempts: attempts,
+          paymentStatus: (winnerAttempt ?? latestAttempt)?.status ?? null,
+          winnerPaymentAttemptId: winnerAttempt?.id ?? null,
+          latestPaymentAttemptId: latestAttempt?.id ?? null,
+          requiresAction: unresolvedActions.length > 0,
+          unresolvedActionCount: unresolvedActions.length,
+          paymentEvents,
+          paymentEventCount: totalPaymentEvents,
+          paymentEventsHasMore: totalPaymentEvents > paymentEvents.length,
+          emailDeliveries: emails,
+          auditLogs: audit,
+        },
+      });
     } catch (error) { return sendError(reply, request, error); }
   });
 
@@ -226,12 +304,25 @@ export default async function teamRegistrationBackofficeRoutes(fastify: FastifyI
       const { eventId } = z.object({ eventId: z.coerce.number().int().positive() }).parse(request.params);
       const input = configInputSchema.parse(request.body);
       validateConfig(input);
+      const localPaymentProfile = process.env.TEAM_REGISTRATION_PAY_SOLUTIONS_PROFILE_CODE?.trim();
+      if (input.isEnabled && (!localPaymentProfile || input.paymentProfileCode !== localPaymentProfile)) {
+        throw new TeamRegistrationError(409, "PAYMENT_PROFILE_MISMATCH", "Payment profile ของ Event ไม่ตรงกับ deployment นี้");
+      }
       const now = new Date();
       const result = await db.transaction(async (tx) => {
         const [event] = await tx.select({ id: events.id }).from(events).where(eq(events.id, eventId)).limit(1);
         if (!event) throw new TeamRegistrationError(404, "EVENT_NOT_FOUND", "ไม่พบ Event");
         const [existing] = await tx.select().from(teamRegistrationConfigs).where(eq(teamRegistrationConfigs.eventId, eventId)).for("update").limit(1);
         if ((existing?.version ?? 0) !== input.version) throw new TeamRegistrationError(409, "CONFIG_VERSION_CONFLICT", "มีผู้แก้ไขการตั้งค่านี้แล้ว กรุณาโหลดข้อมูลใหม่");
+        if (existing && existing.paymentProfileCode !== input.paymentProfileCode) {
+          const [existingAttempt] = await tx.select({ id: teamRegistrationPaymentAttempts.id })
+            .from(teamRegistrationPaymentAttempts)
+            .innerJoin(teamRegistrations, eq(teamRegistrations.id, teamRegistrationPaymentAttempts.registrationId))
+            .where(eq(teamRegistrations.eventId, eventId)).limit(1);
+          if (existingAttempt) {
+            throw new TeamRegistrationError(409, "PAYMENT_PROFILE_IMMUTABLE", "ไม่สามารถเปลี่ยน Payment profile หลังมีรายการชำระเงินแล้ว");
+          }
+        }
         const configValues = {
           isEnabled: input.isEnabled, timezone: input.timezone, registrationOpensAt: input.registrationOpensAt,
           registrationClosesAt: input.registrationClosesAt, minMembers: input.minMembers, maxMembers: input.maxMembers,
@@ -289,23 +380,156 @@ export default async function teamRegistrationBackofficeRoutes(fastify: FastifyI
         teamName: z.string().trim().min(1).max(255).optional(),
         member: z.object({ id: z.string().uuid(), firstName: z.string().trim().min(1).max(150).optional(), lastName: z.string().trim().min(1).max(150).optional(), nickname: z.string().trim().max(100).nullable().optional(), email: z.string().email().max(255).optional(), phoneNumber: z.string().trim().min(8).max(32).optional(), lineId: z.string().trim().min(1).max(100).optional(), foodDrugAllergies: z.string().max(2000).nullable().optional(), emergencyContactName: z.string().trim().min(1).max(255).optional(), emergencyContactPhone: z.string().trim().min(8).max(32).optional() }).optional(),
       }).parse(request.body);
+      if (!input.teamName && !input.member) throw new TeamRegistrationError(422, "TEAM_CORRECTION_EMPTY", "กรุณาระบุข้อมูลที่ต้องการแก้ไข");
       const result = await db.transaction(async (tx) => {
         const [registration] = await tx.select().from(teamRegistrations).where(eq(teamRegistrations.id, registrationId)).for("update").limit(1);
         if (!registration) throw new TeamRegistrationError(404, "REGISTRATION_NOT_FOUND", "ไม่พบทีม");
+        if (registration.status === "expired") throw new TeamRegistrationError(409, "REGISTRATION_EXPIRED", "ทีมหมดอายุแล้ว");
+        const now = new Date();
+        const attempts = await lockAllPaymentAttempts(tx, registrationId);
+        if (registration.status !== "paid" && attempts.some((attempt) => attempt.actionRequired && !attempt.actionResolvedAt)) {
+          throw new TeamRegistrationError(409, "PAYMENT_REVIEW_REQUIRED", "รายการชำระเงินนี้ต้องให้เจ้าหน้าที่ตรวจสอบก่อนแก้ไขทีม");
+        }
+        if (registration.status !== "paid" && activePaymentAttempts(attempts).length > 0) {
+          const schedule = initializeTerminalSchedule("cancelled", now, now);
+          await cancelActivePaymentAttempts(tx, {
+            registrationId,
+            reason: "registration_edited",
+            cancelledAt: now,
+            reconciliationDeadlineAt: schedule.reconciliationDeadlineAt,
+          });
+        }
         const before: Record<string, unknown> = { teamName: registration.teamName };
-        if (input.teamName) await tx.update(teamRegistrations).set({ teamName: input.teamName, teamNameNormalized: normalizeTeamName(input.teamName), updatedAt: new Date() }).where(eq(teamRegistrations.id, registrationId));
+        const registrationUpdates = {
+          ...(input.teamName ? { teamName: input.teamName, teamNameNormalized: normalizeTeamName(input.teamName) } : {}),
+          ...(registration.status === "paid" ? {} : {
+            revision: registration.revision + 1,
+            paymentReservationExpiresAt: null,
+            status: registration.status === "draft" ? "draft" as const : "ready_for_payment" as const,
+          }),
+          updatedAt: now,
+        };
+        await tx.update(teamRegistrations).set(registrationUpdates).where(eq(teamRegistrations.id, registrationId));
         if (input.member) {
           const [member] = await tx.select().from(teamRegistrationMembers).where(and(eq(teamRegistrationMembers.id, input.member.id), eq(teamRegistrationMembers.registrationId, registrationId))).limit(1);
           if (!member) throw new TeamRegistrationError(404, "MEMBER_NOT_FOUND", "ไม่พบสมาชิก");
           const { id: _id, email, ...memberUpdates } = input.member;
           if (email && normalizeEmail(email) !== member.emailNormalized) {
-            await tx.update(teamRegistrationEmailClaims).set({ releasedAt: new Date() }).where(and(eq(teamRegistrationEmailClaims.memberId, member.id), sql`${teamRegistrationEmailClaims.releasedAt} is null`));
-            await tx.insert(teamRegistrationEmailClaims).values({ eventId: registration.eventId, registrationId, memberId: member.id, emailNormalized: normalizeEmail(email) });
+            await tx.update(teamRegistrationEmailClaims).set({ releasedAt: now }).where(and(eq(teamRegistrationEmailClaims.memberId, member.id), sql`${teamRegistrationEmailClaims.releasedAt} is null`));
+            await tx.insert(teamRegistrationEmailClaims).values({ eventId: registration.eventId, registrationId, memberId: member.id, emailNormalized: normalizeEmail(email), claimedAt: now });
           }
-          await tx.update(teamRegistrationMembers).set({ ...memberUpdates, ...(email ? { email, emailNormalized: normalizeEmail(email) } : {}), updatedAt: new Date() }).where(eq(teamRegistrationMembers.id, member.id));
+          await tx.update(teamRegistrationMembers).set({ ...memberUpdates, ...(email ? { email, emailNormalized: normalizeEmail(email) } : {}), updatedAt: now }).where(eq(teamRegistrationMembers.id, member.id));
         }
         await tx.insert(teamRegistrationAuditLogs).values({ eventId: registration.eventId, actorBackofficeUserId: userOf(request).id, action: "registration_corrected", entityType: "team_registration", entityId: registrationId, changeReason: input.changeReason, beforeRedacted: before, afterRedacted: { teamName: input.teamName ?? registration.teamName, memberId: input.member?.id }, requestId: request.id });
         return { id: registrationId };
+      });
+      return reply.send({ success: true, data: result });
+    } catch (error) { return sendError(reply, request, error); }
+  });
+
+  fastify.post("/team-registrations/:registrationId/payment-attempts/:attemptId/resolve-action", async (request, reply) => {
+    try {
+      requireTeamRegistrationAdmin(userOf(request));
+      const { registrationId, attemptId } = z.object({
+        registrationId: z.string().uuid(),
+        attemptId: z.string().uuid(),
+      }).parse(request.params);
+      const input = z.object({
+        resolution: z.enum(["refunded", "closed_no_fulfillment"]),
+        reason: z.string().trim().min(1).max(2000),
+      }).parse(request.body);
+      const now = new Date();
+      const result = await db.transaction(async (tx) => {
+        const [registration] = await tx.select().from(teamRegistrations)
+          .where(eq(teamRegistrations.id, registrationId)).for("update").limit(1);
+        if (!registration) throw new TeamRegistrationError(404, "REGISTRATION_NOT_FOUND", "ไม่พบทีม");
+        const attempts = await lockAllPaymentAttempts(tx, registrationId);
+        const attempt = attempts.find((item) => item.id === attemptId);
+        if (!attempt) throw new TeamRegistrationError(404, "PAYMENT_ATTEMPT_NOT_FOUND", "ไม่พบรายการชำระเงิน");
+
+        if (attempt.actionResolvedAt) {
+          if (attempt.actionResolution === input.resolution && attempt.actionResolutionNote === input.reason) {
+            return {
+              paymentAttemptId: attempt.id,
+              resolution: attempt.actionResolution,
+              reason: attempt.actionResolutionNote,
+              resolvedAt: attempt.actionResolvedAt,
+            };
+          }
+          throw new TeamRegistrationError(409, "PAYMENT_ACTION_ALREADY_RESOLVED", "รายการนี้ถูกดำเนินการแล้วด้วยผลลัพธ์อื่น");
+        }
+        if (!attempt.actionRequired) {
+          throw new TeamRegistrationError(409, "PAYMENT_ACTION_NOT_REQUIRED", "รายการนี้ไม่มี action ที่รอดำเนินการ");
+        }
+
+        await tx.update(teamRegistrationPaymentAttempts).set({
+          actionRequired: false,
+          actionResolvedAt: now,
+          actionResolution: input.resolution,
+          actionResolutionNote: input.reason,
+          updatedAt: now,
+        }).where(eq(teamRegistrationPaymentAttempts.id, attempt.id));
+
+        const [config] = await tx.select().from(teamRegistrationConfigs)
+          .where(eq(teamRegistrationConfigs.id, registration.configId)).for("share").limit(1);
+        if (!config) throw new TeamRegistrationError(500, "TEAM_REGISTRATION_CONFIG_ERROR", "ไม่พบการตั้งค่าทีม");
+        const claimsHeld = await hasAllCurrentEmailClaims(tx, registration.id);
+        const updatedAttempts = attempts.map((item) => item.id === attempt.id ? {
+          ...item,
+          actionRequired: false,
+          actionResolvedAt: now,
+          actionResolution: input.resolution,
+          actionResolutionNote: input.reason,
+        } : item);
+        let transition = decideUnpaidTeamRegistrationTransition({
+          now,
+          paymentReservationExpiresAt: registration.paymentReservationExpiresAt,
+          registrationClosesAt: config.registrationClosesAt,
+          hasWinner: updatedAttempts.some((item) => item.isWinner),
+          hasUnresolvedAction: updatedAttempts.some((item) => item.actionRequired && !item.actionResolvedAt),
+          paymentFinalized: activePaymentAttempts(updatedAttempts).length === 0,
+        });
+        if (transition.kind === "ready_for_payment") {
+          const hasRetainedSession = transition.paymentReservationExpiresAt !== null
+            && transition.paymentReservationExpiresAt > now;
+          const canUseWindow = hasRetainedSession || (
+            registration.draftExpiresAt > now
+            && config.registrationClosesAt > now
+          );
+          if (!claimsHeld || !canUseWindow) {
+            transition = {
+              kind: "expired",
+              registrationStatus: "expired",
+              paymentReservationExpiresAt: null,
+              releaseClaims: true,
+            };
+          }
+        }
+        if (transition.kind !== "held") {
+          await tx.update(teamRegistrations).set({
+            status: transition.registrationStatus,
+            paymentReservationExpiresAt: transition.paymentReservationExpiresAt,
+            expiredAt: transition.kind === "expired" ? now : null,
+            updatedAt: now,
+          }).where(eq(teamRegistrations.id, registration.id));
+          if (transition.releaseClaims) {
+            await tx.update(teamRegistrationEmailClaims).set({ releasedAt: now }).where(and(
+              eq(teamRegistrationEmailClaims.registrationId, registration.id),
+              isNull(teamRegistrationEmailClaims.releasedAt),
+            ));
+          }
+        }
+        await tx.insert(teamRegistrationAuditLogs).values({
+          eventId: registration.eventId,
+          actorBackofficeUserId: userOf(request).id,
+          action: "payment_action_resolved",
+          entityType: "team_registration_payment_attempt",
+          entityId: attempt.id,
+          changeReason: input.reason,
+          requestId: request.id,
+          afterRedacted: { resolution: input.resolution, paymentAttemptId: attempt.id },
+        });
+        return { paymentAttemptId: attempt.id, resolution: input.resolution, reason: input.reason, resolvedAt: now };
       });
       return reply.send({ success: true, data: result });
     } catch (error) { return sendError(reply, request, error); }
