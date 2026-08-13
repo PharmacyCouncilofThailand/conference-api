@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { createHash } from "node:crypto";
 import { abstractSubmissionSchema } from "../../../schemas/abstracts.schema.js";
 import { db } from "../../../database/index.js";
 import {
@@ -7,7 +8,15 @@ import {
   abstractCoAuthors,
   abstractCategories,
   events,
+  abstractSubmissionIdempotencyKeys,
 } from "../../../database/schema.js";
+import {
+  allocateTrackingId,
+  appendTrackingAssignment,
+  appendTrackingAuditEvent,
+  assertAbstractWritesAvailable,
+} from "../../../modules/abstracts/tracking.repository.js";
+import { ApiError } from "../../../errors/ApiError.js";
 import {
   deleteFromGoogleDrive,
   extractFileIdFromUrl,
@@ -57,6 +66,18 @@ type UploadedAbstractFile = ParsedAbstractFile & {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function fingerprintSubmission(data: unknown, files: ParsedAbstractFile[]): string {
+  const normalizedFiles = files.map((file) => ({
+    name: file.originalFileName,
+    mimeType: file.mimeType,
+    size: file.size,
+    sha256: createHash("sha256").update(file.buffer).digest("hex"),
+  }));
+  return createHash("sha256")
+    .update(JSON.stringify({ data, files: normalizedFiles }))
+    .digest("hex");
+}
+
 function sanitizeFileSegment(
   value: string,
   fallback: string,
@@ -101,8 +122,10 @@ export default async function (fastify: FastifyInstance) {
    * Submit Abstract
    * POST /api/abstracts/submit
    * * Accepts multipart/form-data with abstract information and one or more PDF files
-   */
+  */
   fastify.post("/submit", { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    let idempotencyKeyForRequest: string | undefined;
+    let idempotencyFingerprintForRequest: string | null = null;
     try {
       // Parse multipart form data
       const parts = request.parts();
@@ -249,6 +272,30 @@ export default async function (fastify: FastifyInstance) {
         });
       }
 
+      const rawIdempotencyKey = request.headers["idempotency-key"];
+      idempotencyKeyForRequest = Array.isArray(rawIdempotencyKey) ? rawIdempotencyKey[0] : rawIdempotencyKey;
+      if (idempotencyKeyForRequest !== undefined) {
+        if (!idempotencyKeyForRequest || idempotencyKeyForRequest.length > 128) {
+          return reply.status(400).send({ success: false, code: "INVALID_IDEMPOTENCY_KEY", error: "Invalid Idempotency-Key", requestId: request.id });
+        }
+        idempotencyFingerprintForRequest = fingerprintSubmission(result.data, parsedFiles);
+        const [existingIdempotency] = await db
+          .select()
+          .from(abstractSubmissionIdempotencyKeys)
+          .where(and(
+            eq(abstractSubmissionIdempotencyKeys.userId, request.user.id),
+            eq(abstractSubmissionIdempotencyKeys.idempotencyKey, idempotencyKeyForRequest),
+          ))
+          .limit(1);
+        if (existingIdempotency) {
+          if (existingIdempotency.requestFingerprint !== idempotencyFingerprintForRequest) {
+            return reply.status(409).send({ success: false, code: "IDEMPOTENCY_KEY_REUSED", error: "Idempotency-Key was already used for a different submission", requestId: request.id });
+          }
+          reply.header("Idempotency-Replayed", "true");
+          return reply.status(201).send(existingIdempotency.responseBody);
+        }
+      }
+
       // ── Resolve event by eventCode ──────────────────────────────────────
       let finalEventId = DEFAULT_EVENT_ID;
       let resolvedEventCode = eventCode || "";
@@ -358,53 +405,77 @@ export default async function (fastify: FastifyInstance) {
         });
       }
       // Prepare abstract data (userId from JWT token)
-      const abstractData: any = {
-        eventId: finalEventId,
-        userId: request.user.id,
-        title,
-        categoryId: resolvedCategoryId,
-        presentationType,
-        keywords,
-        background,
-        objective,
-        methods,
-        results,
-        conclusion,
-        fullPaperUrl,
-        status: "pending" as const,
-      };
+      const submissionResult = await db.transaction(async (tx) => {
+        await assertAbstractWritesAvailable(tx);
 
-      const { newAbstract, trackingId, insertedFiles } = await db.transaction(async (tx) => {
-        // Insert abstract
+        const eventLock = await tx.execute(sql`
+          SELECT id, event_code, archived_at
+          FROM events
+          WHERE id = ${finalEventId}
+          FOR UPDATE
+        `);
+        if ((eventLock as unknown as unknown[]).length === 0) {
+          throw new ApiError("EVENT_NOT_FOUND", "Invalid event selected", 400);
+        }
+        const eventRow = (eventLock as unknown as Array<{ archived_at: Date | null }>)[0];
+        if (eventRow.archived_at) {
+          throw new ApiError("EVENT_ARCHIVED", "Submissions are disabled for this event", 409);
+        }
+
+        const categoryLock = await tx.execute(sql`
+          SELECT id
+          FROM abstract_categories
+          WHERE id = ${resolvedCategoryId}
+            AND event_id = ${finalEventId}
+            AND is_active = true
+          FOR UPDATE
+        `);
+        if ((categoryLock as unknown as unknown[]).length === 0) {
+          throw new ApiError("ABSTRACT_CATEGORY_INVALID", "Invalid category selected for this event", 400);
+        }
+
+        const reservation = await allocateTrackingId(tx, {
+          eventId: finalEventId,
+          presentationType,
+        });
+
+        const abstractData: any = {
+          eventId: finalEventId,
+          userId: request.user.id,
+          title,
+          categoryId: resolvedCategoryId,
+          presentationType,
+          keywords,
+          background,
+          objective,
+          methods,
+          results,
+          conclusion,
+          fullPaperUrl,
+          status: "pending" as const,
+          trackingId: reservation.trackingId,
+        };
+
         const [createdAbstract] = await tx
           .insert(abstracts)
           .values(abstractData)
           .returning();
 
-        // Generate tracking ID based on event + presentation type
-        const prefix = resolvedEventCode || process.env.TRACKING_ID_PREFIX || "CONF";
-        const padLength = parseInt(process.env.TRACKING_ID_PAD_LENGTH || "3", 10);
-        const typePrefix = presentationType === "oral" ? "O" : "P";
-
-        // Count existing abstracts of same presentation type within the same event
-        const countResult = await tx
-          .select({ count: sql<number>`count(*)::int` })
-          .from(abstracts)
-          .where(
-            and(
-              eq(abstracts.eventId, finalEventId),
-              eq(abstracts.presentationType, presentationType as "oral" | "poster"),
-            )
-          );
-
-        const runningNumber = (countResult[0]?.count || 0);
-        const generatedTrackingId = `${prefix}-${typePrefix}${String(runningNumber).padStart(padLength, "0")}`;
-
-        // Update abstract with tracking ID
-        await tx
-          .update(abstracts)
-          .set({ trackingId: generatedTrackingId })
-          .where(eq(abstracts.id, createdAbstract.id));
+        await appendTrackingAssignment(tx, {
+          trackingId: reservation.trackingId,
+          abstractId: createdAbstract.id,
+          eventId: finalEventId,
+          presentationType,
+          reason: "initial_submission",
+        });
+        await appendTrackingAuditEvent(tx, {
+          eventType: "abstract_tracking.issued",
+          eventId: finalEventId,
+          abstractId: createdAbstract.id,
+          reasonCode: "initial_submission",
+          requestId: request.id,
+          afterState: { trackingId: reservation.trackingId, presentationType },
+        });
 
         const insertedAbstractFiles = await tx
           .insert(abstractFiles)
@@ -435,15 +506,48 @@ export default async function (fastify: FastifyInstance) {
           await tx.insert(abstractCoAuthors).values(coAuthorsToInsert);
         }
 
+        const responseBody = {
+          success: true,
+          abstract: {
+            id: createdAbstract.id,
+            trackingId: reservation.trackingId,
+            title: createdAbstract.title,
+            status: createdAbstract.status,
+            fullPaperUrl,
+            files: insertedAbstractFiles,
+            submittedAt: createdAbstract.createdAt,
+          },
+          message: "Abstract submitted successfully",
+        };
+        if (idempotencyKeyForRequest && idempotencyFingerprintForRequest) {
+          const [stored] = await tx
+            .insert(abstractSubmissionIdempotencyKeys)
+            .values({
+              userId: request.user.id,
+              idempotencyKey: idempotencyKeyForRequest,
+              requestFingerprint: idempotencyFingerprintForRequest,
+              abstractId: createdAbstract.id,
+              responseBody: responseBody as Record<string, unknown>,
+            })
+            .onConflictDoNothing()
+            .returning({ id: abstractSubmissionIdempotencyKeys.id });
+          if (!stored) {
+            throw new Error("IDEMPOTENCY_RACE");
+          }
+        }
+
         return {
           newAbstract: createdAbstract,
-          trackingId: generatedTrackingId,
+          trackingId: reservation.trackingId,
           insertedFiles: insertedAbstractFiles,
+          responseBody,
         };
       }).catch(async (error) => {
         await cleanupUploadedFiles(uploadedFiles, fastify.log);
         throw error;
       });
+
+      const { newAbstract, trackingId, insertedFiles } = submissionResult;
 
       // -----------------------------------------------------------------------
       // Email Sending
@@ -512,24 +616,37 @@ export default async function (fastify: FastifyInstance) {
       runEmailTasksInBackground();
 
       // Return response immediately after DB insert (Response time ~3-5s)
-      return reply.status(201).send({
-        success: true,
-        abstract: {
-          id: newAbstract.id,
-          trackingId,
-          title: newAbstract.title,
-          status: newAbstract.status,
-          fullPaperUrl,
-          files: insertedFiles,
-          submittedAt: newAbstract.createdAt,
-        },
-        message: "Abstract submitted successfully",
-      });
+      return reply.status(201).send(submissionResult.responseBody);
     } catch (error) {
+      if (error instanceof Error && error.message === "IDEMPOTENCY_RACE" && idempotencyKeyForRequest && idempotencyFingerprintForRequest) {
+        const [existingIdempotency] = await db
+          .select()
+          .from(abstractSubmissionIdempotencyKeys)
+          .where(and(
+            eq(abstractSubmissionIdempotencyKeys.userId, request.user.id),
+            eq(abstractSubmissionIdempotencyKeys.idempotencyKey, idempotencyKeyForRequest),
+          ))
+          .limit(1);
+        if (existingIdempotency) {
+          if (existingIdempotency.requestFingerprint !== idempotencyFingerprintForRequest) {
+            return reply.status(409).send({ success: false, code: "IDEMPOTENCY_KEY_REUSED", error: "Idempotency-Key was already used for a different submission", requestId: request.id });
+          }
+          reply.header("Idempotency-Replayed", "true");
+          return reply.status(201).send(existingIdempotency.responseBody);
+        }
+      }
       fastify.log.error(error);
+      if (error instanceof ApiError) {
+        return reply.status(error.statusCode).send({
+          ...error.toJSON(),
+          requestId: request.id,
+        });
+      }
       return reply.status(500).send({
         success: false,
+        code: "INTERNAL_ERROR",
         error: "Internal server error",
+        requestId: request.id,
       });
     }
   });

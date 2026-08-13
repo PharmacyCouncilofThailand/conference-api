@@ -14,8 +14,9 @@ import {
   passwordResetTokens,
   verificationRejectionHistory,
 } from "../../database/schema.js";
-import { eq, desc, ilike, or, count, and, SQL, inArray, exists } from "drizzle-orm";
+import { eq, desc, ilike, or, count, and, SQL, inArray, exists, sql } from "drizzle-orm";
 import { z } from "zod";
+import { appendTrackingAuditEvent } from "../../modules/abstracts/tracking.repository.js";
 
 // Query schema for listing members
 const listMembersQuerySchema = z.object({
@@ -211,8 +212,9 @@ export default async function (fastify: FastifyInstance) {
         return reply.status(404).send({ error: "Member not found" });
       }
 
-      // Execute all deletions in a transaction
-      await db.transaction(async (tx) => {
+      // Execute cleanup in one transaction. Abstracts are archived/unlinked,
+      // never deleted, so issued tracking IDs remain reserved forever.
+      const archivedAbstractCount = await db.transaction(async (tx) => {
         // 1. Verification rejection history
         await tx.delete(verificationRejectionHistory).where(eq(verificationRejectionHistory.userId, userId));
 
@@ -222,20 +224,42 @@ export default async function (fastify: FastifyInstance) {
         // 3. Abstract reviews (where user is REVIEWER)
         await tx.delete(abstractReviews).where(eq(abstractReviews.reviewerId, userId));
 
-        // 3.1. Delete reviews ON user's abstracts (where user is AUTHOR)
+        // 3.1. Preserve reviews on archived abstracts.
         const userAbstracts = await tx
-          .select({ id: abstracts.id })
+          .select({ id: abstracts.id, eventId: abstracts.eventId, trackingId: abstracts.trackingId })
           .from(abstracts)
           .where(eq(abstracts.userId, userId));
 
-        if (userAbstracts.length > 0) {
-          const abstractIds = userAbstracts.map((a) => a.id);
-          // Delete reviews of these abstracts
-          await tx.delete(abstractReviews).where(inArray(abstractReviews.abstractId, abstractIds));
+        // Match submit/resubmit lock order: event rows are locked before any
+        // abstract rows. Sort IDs to avoid deadlocks across multi-event users.
+        const eventIds = [...new Set(userAbstracts.map((abstract) => abstract.eventId))].sort((a, b) => a - b);
+        for (const eventId of eventIds) {
+          await tx.execute(sql`SELECT id FROM events WHERE id = ${eventId} FOR UPDATE`);
         }
 
-        // 4. Abstracts (will cascade delete co-authors)
-        await tx.delete(abstracts).where(eq(abstracts.userId, userId));
+        if (userAbstracts.length > 0) {
+          for (const abstract of userAbstracts) {
+            await tx
+              .update(abstracts)
+              .set({
+                archivedAt: new Date(),
+                archiveReason: "member_deleted",
+                archiveNote: null,
+                userId: null,
+              })
+              .where(eq(abstracts.id, abstract.id));
+
+            await appendTrackingAuditEvent(tx, {
+              eventType: "abstract.member_unlinked",
+              eventId: abstract.eventId,
+              abstractId: abstract.id,
+              reasonCode: "member_deleted",
+              requestId: request.id,
+              beforeState: { trackingId: abstract.trackingId, userId },
+              afterState: { trackingId: abstract.trackingId, archived: true, userId: null },
+            });
+          }
+        }
 
         // 5. Get user's registrations for cascading
         const userRegistrations = await tx
@@ -287,14 +311,23 @@ export default async function (fastify: FastifyInstance) {
         if (!deletedUser) {
           throw new Error("Failed to delete user record");
         }
+
+        return userAbstracts.length;
       });
 
-      return reply.send({ success: true, message: "Member deleted" });
+      return reply.send({
+        success: true,
+        message: "Member deleted",
+        archivedAbstractCount,
+        identifiersPreserved: true,
+      });
     } catch (error) {
       fastify.log.error(error);
       return reply.status(500).send({
+        success: false,
+        code: "INTERNAL_ERROR",
         error: "Failed to delete member",
-        details: error instanceof Error ? error.message : "Unknown error"
+        requestId: request.id,
       });
     }
   });

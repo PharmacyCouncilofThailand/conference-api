@@ -183,7 +183,7 @@ export default async function publicSponsorRoutes(fastify: FastifyInstance) {
 
     try {
       const event = await getEventByIdOrCode(eventId);
-      if (!event || event.status !== "published") {
+      if (!event || event.status !== "published" || event.archivedAt) {
         return reply.status(404).send({ error: "Event not found" });
       }
 

@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { and, desc, eq, ilike, or, exists } from "drizzle-orm";
 import { db } from "../../database/index.js";
 import {
   users,
@@ -11,6 +11,7 @@ import {
   registrationSessions,
   sessions,
   abstracts,
+  abstractTrackingIdentifiers,
   events,
 } from "../../database/schema.js";
 import {
@@ -771,6 +772,14 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
               search
                 ? or(
                     ilike(abstracts.trackingId, `%${search}%`),
+                    exists(
+                      db.select({ id: abstractTrackingIdentifiers.trackingId })
+                        .from(abstractTrackingIdentifiers)
+                        .where(and(
+                          eq(abstractTrackingIdentifiers.abstractId, abstracts.id),
+                          ilike(abstractTrackingIdentifiers.trackingId, `%${search}%`),
+                        )),
+                    ),
                     ilike(abstracts.title, `%${search}%`),
                     ilike(users.email, `%${search}%`),
                     ilike(users.firstName, `%${search}%`),
@@ -974,4 +983,3 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
     }
   });
 }
-

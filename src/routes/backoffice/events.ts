@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { db } from "../../database/index.js";
 import {
   events,
@@ -11,6 +12,9 @@ import {
   registrationSessions,
   speakers,
   eventSpeakers,
+  abstractTrackingNamespaces,
+  abstractTrackingCounters,
+  abstracts,
 } from "../../database/schema.js";
 import {
   createEventSchema,
@@ -28,6 +32,8 @@ import type {
   SessionUpdatePayload,
   TicketTypeUpdatePayload,
 } from "../../types/index.js";
+import { validatePaddingWidth, validateTrackingPrefix } from "../../modules/abstracts/tracking-format.js";
+import { appendTrackingAuditEvent } from "../../modules/abstracts/tracking.repository.js";
 
 /**
  * Normalize allowedRoles to CSV format for consistent DB storage.
@@ -83,10 +89,253 @@ function calculateDisplayOrder(
   return weight * 10000 + mmdd;
 }
 
+const trackingNamespaceSchema = z.object({
+  prefix: z.string().min(1).max(50),
+  paddingWidth: z.number().int().min(1).max(12).default(3),
+}).strict();
+
+const eventArchiveSchema = z.object({
+  reason: z.enum(["manual", "completed", "cancelled", "duplicate_event"]),
+  note: z.string().max(1000).optional().nullable(),
+}).strict();
+
+function requestIdOf(request: { id?: string }): string | undefined {
+  return request.id;
+}
+
 export default async function (fastify: FastifyInstance) {
   // ============================================================================
   // EVENTS CRUD
   // ============================================================================
+
+  // The tracking namespace is deliberately separate from eventCode. Event codes
+  // may be edited for display; an issued identifier's prefix must not change.
+  fastify.get("/:id/abstract-tracking-namespace", async (request, reply) => {
+    const eventId = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(eventId)) {
+      return reply.status(400).send({ success: false, code: "INVALID_EVENT_ID", error: "Invalid event id" });
+    }
+
+    try {
+      const [event] = await db
+        .select({ id: events.id, eventCode: events.eventCode, archivedAt: events.archivedAt })
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      if (!event) {
+        return reply.status(404).send({ success: false, code: "EVENT_NOT_FOUND", error: "Event not found" });
+      }
+
+      const [namespace] = await db
+        .select()
+        .from(abstractTrackingNamespaces)
+        .where(eq(abstractTrackingNamespaces.eventId, eventId))
+        .limit(1);
+      if (!namespace) {
+        return reply.send({
+          success: true,
+          trackingNamespace: {
+            eventId,
+            configured: false,
+            prefix: null,
+            paddingWidth: null,
+            lockedAt: null,
+          },
+          requestId: request.id,
+        });
+      }
+
+      const counters = await db
+        .select({ presentationType: abstractTrackingCounters.presentationType, lastIssuedNumber: abstractTrackingCounters.lastIssuedNumber })
+        .from(abstractTrackingCounters)
+        .where(eq(abstractTrackingCounters.namespaceId, namespace.id));
+
+      return reply.send({
+        success: true,
+        trackingNamespace: {
+          eventId,
+          configured: true,
+          prefix: namespace.prefix,
+          paddingWidth: namespace.paddingWidth,
+          lockedAt: namespace.lockedAt,
+          counters,
+          eventCode: event.eventCode,
+          eventArchived: Boolean(event.archivedAt),
+        },
+        requestId: request.id,
+      });
+    } catch (error) {
+      fastify.log.error({ err: error, eventId }, "Failed to fetch tracking namespace");
+      return reply.status(500).send({ success: false, code: "TRACKING_NAMESPACE_READ_FAILED", error: "Failed to fetch tracking namespace", requestId: request.id });
+    }
+  });
+
+  fastify.put("/:id/abstract-tracking-namespace", async (request, reply) => {
+    const eventId = Number((request.params as { id: string }).id);
+    const parsed = trackingNamespaceSchema.safeParse(request.body);
+    if (!Number.isInteger(eventId) || !parsed.success) {
+      return reply.status(422).send({ success: false, code: "INVALID_TRACKING_PREFIX", error: "Invalid tracking namespace", requestId: request.id });
+    }
+
+    let prefix: string;
+    let paddingWidth: number;
+    try {
+      prefix = validateTrackingPrefix(parsed.data.prefix.trim());
+      paddingWidth = validatePaddingWidth(parsed.data.paddingWidth);
+      // Keep the current column contract safe for the default three digits.
+      if (prefix.length + 3 + paddingWidth > 80) throw new Error("tracking prefix is too long");
+    } catch {
+      return reply.status(422).send({ success: false, code: "INVALID_TRACKING_PREFIX", error: "Invalid tracking namespace", requestId: request.id });
+    }
+
+    try {
+      const result = await db.transaction(async (tx) => {
+        const eventRows = await tx.execute(sql`
+          SELECT id, archived_at
+          FROM events
+          WHERE id = ${eventId}
+          FOR UPDATE
+        `);
+        const eventRow = (eventRows as unknown as Array<{ id: number; archived_at: Date | null }>)[0];
+        if (!eventRow) return { notFound: true as const };
+
+        const [existing] = await tx
+          .select()
+          .from(abstractTrackingNamespaces)
+          .where(eq(abstractTrackingNamespaces.eventId, eventId))
+          .limit(1);
+
+        if (existing) {
+          if (existing.lockedAt && (existing.prefix !== prefix || existing.paddingWidth !== paddingWidth)) {
+            return { conflict: "TRACKING_PREFIX_LOCKED" as const };
+          }
+          const [conflicting] = await tx
+            .select({ eventId: abstractTrackingNamespaces.eventId })
+            .from(abstractTrackingNamespaces)
+            .where(and(eq(abstractTrackingNamespaces.prefix, prefix), sql`${abstractTrackingNamespaces.eventId} <> ${eventId}`))
+            .limit(1);
+          if (conflicting) return { conflict: "TRACKING_PREFIX_IN_USE" as const };
+
+          const [updated] = await tx
+            .update(abstractTrackingNamespaces)
+            .set({ prefix, paddingWidth, updatedAt: new Date() })
+            .where(eq(abstractTrackingNamespaces.id, existing.id))
+            .returning();
+          await tx
+            .insert(abstractTrackingCounters)
+            .values([
+              { namespaceId: existing.id, presentationType: "oral", lastIssuedNumber: 0 },
+              { namespaceId: existing.id, presentationType: "poster", lastIssuedNumber: 0 },
+            ])
+            .onConflictDoNothing();
+          return { namespace: updated };
+        }
+
+        const [conflicting] = await tx
+          .select({ eventId: abstractTrackingNamespaces.eventId })
+          .from(abstractTrackingNamespaces)
+          .where(eq(abstractTrackingNamespaces.prefix, prefix))
+          .limit(1);
+        if (conflicting) return { conflict: "TRACKING_PREFIX_IN_USE" as const };
+
+        const [namespace] = await tx
+          .insert(abstractTrackingNamespaces)
+          .values({ eventId, prefix, paddingWidth })
+          .returning();
+        await tx.insert(abstractTrackingCounters).values([
+          { namespaceId: namespace.id, presentationType: "oral", lastIssuedNumber: 0 },
+          { namespaceId: namespace.id, presentationType: "poster", lastIssuedNumber: 0 },
+        ]);
+        await appendTrackingAuditEvent(tx, {
+          eventType: "abstract_tracking.prefix_configured",
+          eventId,
+          requestId: requestIdOf(request),
+          reasonCode: "backoffice_namespace_configured",
+          afterState: { prefix, paddingWidth },
+        });
+        return { namespace };
+      });
+
+      if ("notFound" in result) {
+        return reply.status(404).send({ success: false, code: "EVENT_NOT_FOUND", error: "Event not found", requestId: request.id });
+      }
+      if ("conflict" in result) {
+        const message = result.conflict === "TRACKING_PREFIX_LOCKED" ? "Tracking prefix is locked" : "Tracking prefix is already in use";
+        return reply.status(409).send({ success: false, code: result.conflict, error: message, requestId: request.id });
+      }
+      return reply.send({
+        success: true,
+        trackingNamespace: {
+          eventId,
+          configured: true,
+          prefix: result.namespace.prefix,
+          paddingWidth: result.namespace.paddingWidth,
+          lockedAt: result.namespace.lockedAt,
+        },
+        requestId: request.id,
+      });
+    } catch (error) {
+      fastify.log.error({ err: error, eventId }, "Failed to configure tracking namespace");
+      return reply.status(500).send({ success: false, code: "TRACKING_NAMESPACE_UPDATE_FAILED", error: "Failed to configure tracking namespace", requestId: request.id });
+    }
+  });
+
+  const archiveEvent = async (request: any, reply: any) => {
+    const eventId = Number(request.params?.id);
+    const parsed = eventArchiveSchema.safeParse(request.body);
+    if (!Number.isInteger(eventId) || !parsed.success) {
+      return reply.status(400).send({ success: false, code: "VALIDATION_ERROR", error: "Invalid archive request", requestId: request.id });
+    }
+    const note = parsed.data.note?.trim() || null;
+    try {
+      const result = await db.transaction(async (tx) => {
+        const rows = await tx.execute(sql`SELECT id, archived_at, archive_reason, archive_note FROM events WHERE id = ${eventId} FOR UPDATE`);
+        const eventRow = (rows as unknown as Array<{ id: number; archived_at: Date | null; archive_reason: string | null; archive_note: string | null }>)[0];
+        if (!eventRow) return { notFound: true as const };
+        if (eventRow.archived_at) {
+          if (eventRow.archive_reason !== parsed.data.reason || (eventRow.archive_note || null) !== note) return { conflict: "ARCHIVE_REASON_CONFLICT" as const };
+          return { archived: true as const, archivedAt: eventRow.archived_at, reason: eventRow.archive_reason, note: eventRow.archive_note };
+        }
+        const [updated] = await tx.update(events).set({
+          archivedAt: new Date(),
+          archivedBy: request.user?.id ?? null,
+          archiveReason: parsed.data.reason,
+          archiveNote: note,
+          updatedAt: new Date(),
+        }).where(eq(events.id, eventId)).returning();
+        await appendTrackingAuditEvent(tx, { eventType: "event.archived", eventId, actorId: request.user?.id, requestId: request.id, reasonCode: parsed.data.reason, afterState: { archived: true } });
+        return { archived: true as const, archivedAt: updated.archivedAt, reason: updated.archiveReason, note: updated.archiveNote };
+      });
+      if ("notFound" in result) return reply.status(404).send({ success: false, code: "EVENT_NOT_FOUND", error: "Event not found", requestId: request.id });
+      if ("conflict" in result) return reply.status(409).send({ success: false, code: result.conflict, error: "Archive reason conflicts with existing archive", requestId: request.id });
+      return reply.send({ success: true, archival: result, requestId: request.id });
+    } catch (error) {
+      fastify.log.error({ err: error, eventId }, "Failed to archive event");
+      return reply.status(500).send({ success: false, code: "EVENT_ARCHIVE_FAILED", error: "Failed to archive event", requestId: request.id });
+    }
+  };
+
+  fastify.put("/:id/archival", archiveEvent);
+  fastify.delete("/:id/archival", async (request: any, reply) => {
+    const eventId = Number(request.params?.id);
+    if (!Number.isInteger(eventId)) return reply.status(400).send({ success: false, code: "INVALID_EVENT_ID", error: "Invalid event id", requestId: request.id });
+    try {
+      const result = await db.transaction(async (tx) => {
+        const rows = await tx.execute(sql`SELECT id, archived_at, archive_reason, archive_note FROM events WHERE id = ${eventId} FOR UPDATE`);
+        const eventRow = (rows as unknown as Array<{ id: number; archived_at: Date | null; archive_reason: string | null; archive_note: string | null }>)[0];
+        if (!eventRow) return null;
+        if (!eventRow.archived_at) return { restored: false, archivedAt: null, reason: null, note: null };
+        const [updated] = await tx.update(events).set({ archivedAt: null, archivedBy: null, archiveReason: null, archiveNote: null, updatedAt: new Date() }).where(eq(events.id, eventId)).returning();
+        await appendTrackingAuditEvent(tx, { eventType: "event.restored", eventId, actorId: request.user?.id, requestId: request.id, afterState: { archived: false } });
+        return { restored: true, archivedAt: updated.archivedAt, reason: updated.archiveReason, note: updated.archiveNote };
+      });
+      if (!result) return reply.status(404).send({ success: false, code: "EVENT_NOT_FOUND", error: "Event not found", requestId: request.id });
+      return reply.send({ success: true, archival: result, requestId: request.id });
+    } catch (error) {
+      fastify.log.error({ err: error, eventId }, "Failed to restore event");
+      return reply.status(500).send({ success: false, code: "EVENT_RESTORE_FAILED", error: "Failed to restore event", requestId: request.id });
+    }
+  });
 
   // List Events with pagination and filters
   fastify.get("", async (request, reply) => {
@@ -388,6 +637,25 @@ export default async function (fastify: FastifyInstance) {
     const eventId = parseInt(id);
 
     try {
+      const [trackingNamespace] = await db
+        .select({ id: abstractTrackingNamespaces.id })
+        .from(abstractTrackingNamespaces)
+        .where(eq(abstractTrackingNamespaces.eventId, eventId))
+        .limit(1);
+      const [abstractWithIdentifier] = await db
+        .select({ id: abstracts.id })
+        .from(abstracts)
+        .where(and(eq(abstracts.eventId, eventId), sql`${abstracts.trackingId} IS NOT NULL`))
+        .limit(1);
+      if (trackingNamespace || abstractWithIdentifier) {
+        return reply.status(409).send({
+          success: false,
+          code: "HARD_DELETE_NOT_ALLOWED",
+          error: "Event has tracking identifiers; archive it instead.",
+          requestId: request.id,
+        });
+      }
+
       // Check for related tickets
       const relatedTickets = await db
         .select({ id: ticketTypes.id })

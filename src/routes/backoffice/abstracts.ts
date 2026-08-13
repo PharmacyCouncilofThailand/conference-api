@@ -7,6 +7,7 @@ import {
   abstractCoAuthors,
   abstractRevisionRequestFiles,
   abstractRevisionRequests,
+  abstractTrackingIdentifiers,
   events,
   users,
 } from "../../database/schema.js";
@@ -15,7 +16,9 @@ import {
   requestAbstractRevisionSchema,
   updateAbstractStatusSchema,
 } from "../../schemas/abstracts.schema.js";
-import { eq, desc, ilike, and, or, count, inArray } from "drizzle-orm";
+import { eq, desc, ilike, and, or, count, inArray, isNull, exists, sql } from "drizzle-orm";
+import { z } from "zod";
+import { appendTrackingAuditEvent } from "../../modules/abstracts/tracking.repository.js";
 import {
   sendAbstractRejectedEmail,
 } from "../../services/emailService.js";
@@ -100,6 +103,109 @@ async function cleanupRevisionAttachment(
 }
 
 export default async function (fastify: FastifyInstance) {
+  const archiveSchema = z.object({
+    reason: z.enum(["manual", "withdrawn", "duplicate_submission"]),
+    note: z.string().max(1000).optional().nullable(),
+  }).strict();
+
+  fastify.put("/:id/archival", async (request, reply) => {
+    const abstractId = Number((request.params as { id: string }).id);
+    const parsed = archiveSchema.safeParse(request.body);
+    if (!Number.isInteger(abstractId) || !parsed.success) {
+      return reply.status(400).send({ success: false, code: "VALIDATION_ERROR", error: "Invalid archive request" });
+    }
+    const note = parsed.data.note?.trim() || null;
+    try {
+      const result = await db.transaction(async (tx) => {
+        const [current] = await tx.select({
+          id: abstracts.id,
+          eventId: abstracts.eventId,
+          trackingId: abstracts.trackingId,
+          archivedAt: abstracts.archivedAt,
+          archiveReason: abstracts.archiveReason,
+          archiveNote: abstracts.archiveNote,
+        }).from(abstracts).where(eq(abstracts.id, abstractId)).limit(1);
+        if (!current) return null;
+        if (current.archivedAt) {
+          if (current.archiveReason !== parsed.data.reason || (current.archiveNote || null) !== note) {
+            throw new Error("ARCHIVE_REASON_CONFLICT");
+          }
+          return current;
+        }
+        const [updated] = await tx.update(abstracts).set({
+          archivedAt: new Date(),
+          archivedBy: request.user.id,
+          archiveReason: parsed.data.reason,
+          archiveNote: note,
+        }).where(eq(abstracts.id, abstractId)).returning();
+        await appendTrackingAuditEvent(tx, {
+          eventType: "abstract.archived",
+          eventId: current.eventId,
+          abstractId,
+          reasonCode: parsed.data.reason,
+          requestId: request.id,
+          beforeState: { trackingId: current.trackingId, archived: false },
+          afterState: { trackingId: current.trackingId, archived: true, notePresent: Boolean(note) },
+        });
+        return updated;
+      });
+      if (!result) return reply.status(404).send({ success: false, code: "NOT_FOUND", error: "Abstract not found" });
+      return reply.send({ success: true, abstract: result, requestId: request.id });
+    } catch (error) {
+      if (error instanceof Error && error.message === "ARCHIVE_REASON_CONFLICT") {
+        return reply.status(409).send({ success: false, code: "ARCHIVE_REASON_CONFLICT", error: "Abstract already archived with different reason", requestId: request.id });
+      }
+      fastify.log.error(error);
+      return reply.status(500).send({ success: false, code: "INTERNAL_ERROR", error: "Failed to archive abstract", requestId: request.id });
+    }
+  });
+
+  fastify.delete("/:id/archival", async (request, reply) => {
+    const abstractId = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(abstractId)) {
+      return reply.status(400).send({ success: false, code: "VALIDATION_ERROR", error: "Invalid abstract id" });
+    }
+    try {
+      const result = await db.transaction(async (tx) => {
+        const [current] = await tx.select({
+          id: abstracts.id,
+          eventId: abstracts.eventId,
+          trackingId: abstracts.trackingId,
+          archivedAt: abstracts.archivedAt,
+          userId: abstracts.userId,
+        }).from(abstracts).where(eq(abstracts.id, abstractId)).limit(1);
+        if (!current) return null;
+        if (!current.archivedAt) return current;
+        if (!current.userId && current.archivedAt) {
+          throw new Error("ABSTRACT_RESTORE_AUTHOR_REQUIRED");
+        }
+        const [updated] = await tx.update(abstracts).set({
+          archivedAt: null,
+          archivedBy: null,
+          archiveReason: null,
+          archiveNote: null,
+        }).where(eq(abstracts.id, abstractId)).returning();
+        await appendTrackingAuditEvent(tx, {
+          eventType: "abstract.restored",
+          eventId: current.eventId,
+          abstractId,
+          requestId: request.id,
+          beforeState: { trackingId: current.trackingId, archived: true },
+          afterState: { trackingId: current.trackingId, archived: false },
+        });
+        return updated;
+      });
+      if (!result) return reply.status(404).send({ success: false, code: "NOT_FOUND", error: "Abstract not found" });
+      return reply.send({ success: true, abstract: result, requestId: request.id });
+    } catch (error) {
+      if (error instanceof Error && error.message === "ABSTRACT_RESTORE_AUTHOR_REQUIRED") {
+        return reply.status(409).send({ success: false, code: "ABSTRACT_RESTORE_AUTHOR_REQUIRED", error: "Abstract author is required before restore", requestId: request.id });
+      }
+      fastify.log.error(error);
+      return reply.status(500).send({ success: false, code: "INTERNAL_ERROR", error: "Failed to restore abstract", requestId: request.id });
+    }
+  });
+
   // List Abstracts
   fastify.get("", async (request, reply) => {
     const queryResult = abstractListSchema.safeParse(request.query);
@@ -109,7 +215,7 @@ export default async function (fastify: FastifyInstance) {
         .send({ error: "Invalid query", details: queryResult.error.flatten() });
     }
 
-    const { page, limit, search, eventId, status, categoryId, presentationType } =
+    const { page, limit, search, eventId, status, categoryId, presentationType, trackingId, trackingMatch, archived } =
       queryResult.data;
     const offset = (page - 1) * limit;
 
@@ -117,7 +223,11 @@ export default async function (fastify: FastifyInstance) {
     const user = request.user;
 
     try {
-      const conditions = [];
+      const conditions = archived === "include"
+        ? []
+        : archived === "only"
+          ? [sql`${abstracts.archivedAt} IS NOT NULL`]
+          : [isNull(abstracts.archivedAt)];
 
       // Category-based access control for reviewers
       // Admin sees all, Reviewer sees only assigned categories
@@ -174,14 +284,42 @@ export default async function (fastify: FastifyInstance) {
       if (categoryId) conditions.push(eq(abstracts.categoryId, categoryId));
       if (presentationType)
         conditions.push(eq(abstracts.presentationType, presentationType));
+      if (trackingId) {
+        if (trackingMatch === "canonical") {
+          conditions.push(eq(abstracts.trackingId, trackingId));
+        } else if (trackingMatch === "alias") {
+          conditions.push(exists(
+            db.select({ id: abstractTrackingIdentifiers.trackingId })
+              .from(abstractTrackingIdentifiers)
+              .where(and(
+                eq(abstractTrackingIdentifiers.abstractId, abstracts.id),
+                eq(abstractTrackingIdentifiers.trackingId, trackingId),
+                sql`${abstractTrackingIdentifiers.trackingId} <> ${abstracts.trackingId}`,
+              )),
+          ));
+        } else {
+          conditions.push(or(
+            eq(abstracts.trackingId, trackingId),
+            exists(
+              db.select({ id: abstractTrackingIdentifiers.trackingId })
+                .from(abstractTrackingIdentifiers)
+                .where(and(
+                  eq(abstractTrackingIdentifiers.abstractId, abstracts.id),
+                  eq(abstractTrackingIdentifiers.trackingId, trackingId),
+                )),
+            ),
+          )!);
+        }
+      }
       if (search) {
         conditions.push(
           or(
             ilike(abstracts.title, `%${search}%`),
+            ilike(abstracts.trackingId, `%${search}%`),
             ilike(users.firstName, `%${search}%`),
             ilike(users.lastName, `%${search}%`),
             ilike(users.email, `%${search}%`),
-          ),
+          )!,
         );
       }
 
@@ -243,6 +381,9 @@ export default async function (fastify: FastifyInstance) {
 
       // Fetch co-authors for each abstract (using inArray for efficiency)
       const abstractIds = abstractList.map((a) => a.id);
+      const trackingHistory = abstractIds.length > 0
+        ? await db.select().from(abstractTrackingIdentifiers).where(inArray(abstractTrackingIdentifiers.abstractId, abstractIds))
+        : [];
       const coAuthorsList =
         abstractIds.length > 0
           ? await db
@@ -276,6 +417,13 @@ export default async function (fastify: FastifyInstance) {
       // Merge co-authors with abstracts
       const abstractsWithCoAuthors = abstractList.map((abs) => ({
         ...abs,
+        trackingAliases: trackingHistory
+          .filter((entry) => entry.abstractId === abs.id && entry.trackingId !== abs.trackingId)
+          .map((entry) => entry.trackingId),
+        ...(trackingId ? {
+          matchedTrackingId: trackingId,
+          trackingIdMatch: abs.trackingId === trackingId ? "canonical" : "alias",
+        } : { matchedTrackingId: null, trackingIdMatch: null }),
         category: abs.categoryName || abs.category,
         coAuthors: coAuthorsList.filter((ca) => ca.abstractId === abs.id),
         files: filesList

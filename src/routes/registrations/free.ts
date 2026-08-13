@@ -220,6 +220,7 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
             id: events.id,
             eventName: events.eventName,
             status: events.status,
+            archivedAt: events.archivedAt,
             startDate: events.startDate,
             endDate: events.endDate,
             location: events.location,
@@ -238,7 +239,7 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
           });
         }
 
-        if (event.status !== "published") {
+        if (event.status !== "published" || event.archivedAt) {
           return reply.status(400).send({
             success: false,
             code: "EVENT_NOT_AVAILABLE",

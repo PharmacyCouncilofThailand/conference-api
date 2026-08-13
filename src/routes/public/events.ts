@@ -10,7 +10,7 @@ import {
   users,
   abstractCategories,
 } from "../../database/schema.js";
-import { eq, desc, min, asc, sql, and, inArray } from "drizzle-orm";
+import { eq, desc, min, asc, sql, and, inArray, isNull } from "drizzle-orm";
 import { ticketAllowsRole, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
 import { enrichSessionsWithEnrollment } from "../../utils/sessionEnrollment.js";
 
@@ -36,7 +36,7 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
           documents: events.documents,
         })
         .from(events)
-        .where(eq(events.status, "published"))
+        .where(and(eq(events.status, "published"), isNull(events.archivedAt)))
         .orderBy(desc(events.startDate));
 
       // Fetch earliest session start time for each event
@@ -84,12 +84,13 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
           eventCode: events.eventCode,
           eventName: events.eventName,
           status: events.status,
+          archivedAt: events.archivedAt,
         })
         .from(events)
         .where(isNumeric ? eq(events.id, parseInt(id, 10)) : eq(events.eventCode, id))
         .limit(1);
 
-      if (!event || event.status !== "published") {
+      if (!event || event.status !== "published" || event.archivedAt) {
         return reply.status(404).send({ error: "Event not found" });
       }
 
@@ -148,12 +149,12 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
       const isNumeric = /^\d+$/.test(id);
 
       const [event] = await db
-        .select({ id: events.id, eventCode: events.eventCode })
+        .select({ id: events.id, eventCode: events.eventCode, archivedAt: events.archivedAt })
         .from(events)
         .where(isNumeric ? eq(events.id, parseInt(id, 10)) : eq(events.eventCode, id))
         .limit(1);
 
-      if (!event) {
+      if (!event || event.archivedAt) {
         return reply.status(404).send({ error: "Event not found" });
       }
 
@@ -203,7 +204,7 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
       }
 
       // Only return if published
-      if (event.status !== "published") {
+      if (event.status !== "published" || event.archivedAt) {
         return reply.status(404).send({ error: "Event not found" });
       }
 

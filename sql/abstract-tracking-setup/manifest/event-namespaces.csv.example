@@ -1,0 +1,2 @@
+migration_batch_id,event_id,prefix,padding_width,evidence_source,approved_by,approved_at,approval_reason
+00000000-0000-0000-0000-000000000001,1,PRIS-2026,3,preflight-and-event-config,operator@example.invalid,2026-08-14T00:00:00Z,canonical conference namespace

@@ -113,6 +113,7 @@ export default async function quickRegistrationRoutes(fastify: FastifyInstance) 
             eventName: events.eventName,
             eventCode: events.eventCode,
             status: events.status,
+            archivedAt: events.archivedAt,
             startDate: events.startDate,
             endDate: events.endDate,
             location: events.location,
@@ -131,7 +132,7 @@ export default async function quickRegistrationRoutes(fastify: FastifyInstance) 
           });
         }
 
-        if (event.status !== "published") {
+        if (event.status !== "published" || event.archivedAt) {
           return reply.status(400).send({
             success: false,
             code: "EVENT_NOT_AVAILABLE",

@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { db } from "../../database/index.js";
-import { abstractCategories, events } from "../../database/schema.js";
-import { eq, and, asc } from "drizzle-orm";
+import { abstractCategories, events, abstractTrackingNamespaces } from "../../database/schema.js";
+import { eq, and, asc, sql } from "drizzle-orm";
 import { z } from "zod";
 
 // ── Validation Schemas ──────────────────────────────────────────────────
@@ -84,15 +84,18 @@ export default async function (fastify: FastifyInstance) {
 
       const { eventId, name, isActive } = result.data;
 
-      // Verify event exists
+      // Verify event exists and serialize active-category creation with submit.
       const [event] = await db
-        .select({ id: events.id })
+        .select({ id: events.id, archivedAt: events.archivedAt })
         .from(events)
         .where(eq(events.id, eventId))
         .limit(1);
 
       if (!event) {
         return reply.status(404).send({ error: "Event not found" });
+      }
+      if (isActive && event.archivedAt) {
+        return reply.status(409).send({ success: false, code: "EVENT_ARCHIVED", error: "Archived events cannot activate abstract categories" });
       }
 
       // Check duplicate name within event
@@ -113,10 +116,27 @@ export default async function (fastify: FastifyInstance) {
         });
       }
 
-      const [category] = await db
-        .insert(abstractCategories)
-        .values({ eventId, name, isActive })
-        .returning();
+      const category = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT id FROM events WHERE id = ${eventId} FOR UPDATE`);
+        if (isActive) {
+          const [namespace] = await tx.select({ id: abstractTrackingNamespaces.id })
+            .from(abstractTrackingNamespaces)
+            .where(eq(abstractTrackingNamespaces.eventId, eventId))
+            .limit(1);
+          if (!namespace) throw new Error("TRACKING_NAMESPACE_NOT_CONFIGURED");
+        }
+        const [created] = await tx.insert(abstractCategories).values({ eventId, name, isActive }).returning();
+        return created;
+      }).catch((error) => {
+        if (error instanceof Error && error.message === "TRACKING_NAMESPACE_NOT_CONFIGURED") {
+          return null;
+        }
+        throw error;
+      });
+
+      if (!category) {
+        return reply.status(409).send({ success: false, code: "TRACKING_NAMESPACE_NOT_CONFIGURED", error: "Configure the event tracking namespace before activating a category" });
+      }
 
       return reply.status(201).send({ category });
     } catch (error) {
@@ -202,6 +222,23 @@ export default async function (fastify: FastifyInstance) {
 
         if (!existing) {
           return reply.status(404).send({ error: "Category not found" });
+        }
+
+        if (!existing.isActive) {
+          const [categoryEvent] = await db
+            .select({ eventId: abstractCategories.eventId, archivedAt: events.archivedAt })
+            .from(abstractCategories)
+            .innerJoin(events, eq(abstractCategories.eventId, events.id))
+            .where(eq(abstractCategories.id, parseInt(id, 10)))
+            .limit(1);
+          if (!categoryEvent) return reply.status(404).send({ error: "Category not found" });
+          if (categoryEvent.archivedAt) return reply.status(409).send({ success: false, code: "EVENT_ARCHIVED", error: "Archived events cannot activate abstract categories" });
+          const [namespace] = await db
+            .select({ id: abstractTrackingNamespaces.id })
+            .from(abstractTrackingNamespaces)
+            .where(eq(abstractTrackingNamespaces.eventId, categoryEvent.eventId))
+            .limit(1);
+          if (!namespace) return reply.status(409).send({ success: false, code: "TRACKING_NAMESPACE_NOT_CONFIGURED", error: "Configure the event tracking namespace before activating a category" });
         }
 
         const [updated] = await db
