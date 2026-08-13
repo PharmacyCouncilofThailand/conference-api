@@ -7,9 +7,18 @@ import {
     abstractRevisionRequestFiles,
     abstractRevisionRequests,
     abstracts,
+    abstractTrackingIdentifiers,
     events,
 } from "../../../database/schema.js";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { ApiError } from "../../../errors/ApiError.js";
+import {
+    allocateTrackingId,
+    appendTrackingAssignment,
+    appendTrackingAuditEvent,
+    assertAbstractWritesAvailable,
+    assertTypeChangeAvailable,
+} from "../../../modules/abstracts/tracking.repository.js";
 import { abstractResubmissionSchema } from "../../../schemas/abstracts.schema.js";
 import {
     deleteFromGoogleDrive,
@@ -125,10 +134,16 @@ export default async function (fastify: FastifyInstance) {
                 })
                 .from(abstracts)
                 .leftJoin(abstractCategories, eq(abstracts.categoryId, abstractCategories.id))
-                .where(eq(abstracts.userId, userId))
+                .where(and(eq(abstracts.userId, userId), isNull(abstracts.archivedAt)))
                 .orderBy(desc(abstracts.createdAt));
 
             const abstractIds = userAbstracts.map((abstract) => abstract.id);
+            const trackingHistory = abstractIds.length > 0
+                ? await db
+                    .select()
+                    .from(abstractTrackingIdentifiers)
+                    .where(inArray(abstractTrackingIdentifiers.abstractId, abstractIds))
+                : [];
             const coAuthorsList =
                 abstractIds.length > 0
                     ? await db
@@ -161,6 +176,12 @@ export default async function (fastify: FastifyInstance) {
 
             const abstractsWithCoAuthors = userAbstracts.map((abstract) => ({
                 ...abstract,
+                trackingAliases: trackingHistory
+                    .filter((entry) => entry.abstractId === abstract.id && entry.trackingId !== abstract.trackingId)
+                    .map((entry) => entry.trackingId),
+                trackingIdHistory: trackingHistory
+                    .filter((entry) => entry.abstractId === abstract.id)
+                    .sort((a, b) => a.assignedAt.getTime() - b.assignedAt.getTime()),
                 category: abstract.categoryName || abstract.category,
                 coAuthors: coAuthorsList.filter((coAuthor) => coAuthor.abstractId === abstract.id),
                 files: filesList
@@ -290,6 +311,7 @@ export default async function (fastify: FastifyInstance) {
                     eventId: abstracts.eventId,
                     title: abstracts.title,
                     eventCode: events.eventCode,
+                    archivedAt: abstracts.archivedAt,
                 })
                 .from(abstracts)
                 .leftJoin(events, eq(abstracts.eventId, events.id))
@@ -298,6 +320,15 @@ export default async function (fastify: FastifyInstance) {
 
             if (!currentAbstract) {
                 return reply.status(404).send({ success: false, error: "Abstract not found" });
+            }
+
+            if (currentAbstract.archivedAt) {
+                return reply.status(409).send({
+                    success: false,
+                    code: "ABSTRACT_ARCHIVED",
+                    error: "Abstract is archived",
+                    requestId: request.id,
+                });
             }
 
             if (currentAbstract.status !== "revision") {
@@ -509,14 +540,97 @@ export default async function (fastify: FastifyInstance) {
                 .where(eq(abstractFiles.abstractId, abstractId));
             const fullPaperUrl = uploadedFiles[0].fileUrl;
 
-            const { updatedAbstract, insertedFiles } = await db
+            const { updatedAbstract, insertedFiles, trackingId } = await db
                 .transaction(async (tx) => {
+                    await assertAbstractWritesAvailable(tx);
+
+                    const eventLock = await tx.execute(sql`
+                        SELECT id, archived_at
+                        FROM events
+                        WHERE id = ${currentAbstract.eventId}
+                        FOR UPDATE
+                    `);
+                    if ((eventLock as unknown as unknown[]).length === 0) {
+                        throw new ApiError("EVENT_NOT_FOUND", "Event not found", 400);
+                    }
+                    const eventRow = (eventLock as unknown as Array<{ archived_at: Date | null }>)[0];
+                    if (eventRow.archived_at) {
+                        throw new ApiError("EVENT_ARCHIVED", "Submissions are disabled for this event", 409);
+                    }
+
+                    const abstractLock = await tx.execute(sql`
+                        SELECT id, tracking_id, presentation_type, status
+                        FROM abstracts
+                        WHERE id = ${abstractId} AND user_id = ${userId}
+                        FOR UPDATE
+                    `) as unknown as Array<{
+                        id: number;
+                        tracking_id: string | null;
+                        presentation_type: "oral" | "poster";
+                        status: string;
+                    }>;
+                    const lockedAbstract = abstractLock[0];
+                    if (!lockedAbstract || lockedAbstract.status !== "revision") {
+                        throw new ApiError(
+                            "ABSTRACT_NOT_OPEN_FOR_REVISION",
+                            "Only abstracts with revision status can be resubmitted.",
+                            400,
+                        );
+                    }
+
+                    const categoryLock = await tx.execute(sql`
+                        SELECT id
+                        FROM abstract_categories
+                        WHERE id = ${resolvedCategoryId}
+                          AND event_id = ${currentAbstract.eventId}
+                          AND is_active = true
+                        FOR UPDATE
+                    `);
+                    if ((categoryLock as unknown as unknown[]).length === 0) {
+                        throw new ApiError("ABSTRACT_CATEGORY_INVALID", "Invalid category selected for this event", 400);
+                    }
+
+                    const typeChanged = lockedAbstract.presentation_type !== presentationType;
+                    let nextTrackingId = lockedAbstract.tracking_id;
+                    if (typeChanged) {
+                        await assertTypeChangeAvailable(tx);
+                        const reservation = await allocateTrackingId(tx, {
+                            eventId: currentAbstract.eventId,
+                            presentationType,
+                        });
+                        nextTrackingId = reservation.trackingId;
+                        await appendTrackingAssignment(tx, {
+                            trackingId: reservation.trackingId,
+                            abstractId,
+                            eventId: currentAbstract.eventId,
+                            presentationType,
+                            previousTrackingId: lockedAbstract.tracking_id,
+                            reason: "presentation_type_change",
+                        });
+                        await appendTrackingAuditEvent(tx, {
+                            eventType: "abstract_tracking.rotated",
+                            eventId: currentAbstract.eventId,
+                            abstractId,
+                            reasonCode: "presentation_type_change",
+                            requestId: request.id,
+                            beforeState: {
+                                trackingId: lockedAbstract.tracking_id,
+                                presentationType: lockedAbstract.presentation_type,
+                            },
+                            afterState: {
+                                trackingId: reservation.trackingId,
+                                presentationType,
+                            },
+                        });
+                    }
+
                     const [updated] = await tx
                         .update(abstracts)
                         .set({
                             title,
                             categoryId: resolvedCategoryId,
                             presentationType,
+                            trackingId: nextTrackingId,
                             keywords,
                             background,
                             objective,
@@ -578,7 +692,7 @@ export default async function (fastify: FastifyInstance) {
                             ),
                         );
 
-                    return { updatedAbstract: updated, insertedFiles: newFiles };
+                    return { updatedAbstract: updated, insertedFiles: newFiles, trackingId: nextTrackingId };
                 })
                 .catch(async (error) => {
                     await cleanupUploadedFiles(uploadedFiles, fastify.log);
@@ -591,7 +705,7 @@ export default async function (fastify: FastifyInstance) {
                 success: true,
                 abstract: {
                     id: updatedAbstract.id,
-                    trackingId: updatedAbstract.trackingId,
+                    trackingId,
                     title: updatedAbstract.title,
                     status: updatedAbstract.status,
                     fullPaperUrl,
@@ -601,10 +715,18 @@ export default async function (fastify: FastifyInstance) {
                 message: "Abstract resubmitted successfully",
             });
         } catch (error) {
+            if (error instanceof ApiError) {
+                return reply.status(error.statusCode).send({
+                    ...error.toJSON(),
+                    requestId: request.id,
+                });
+            }
             fastify.log.error(error);
             return reply.status(500).send({
                 success: false,
+                code: "INTERNAL_ERROR",
                 error: "Failed to resubmit abstract",
+                requestId: request.id,
             });
         }
     });

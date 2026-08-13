@@ -1581,6 +1581,18 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
       const isAddonOnly = !packageId || packageId === "";
 
       try {
+        const [eventState] = await db
+          .select({ status: events.status, archivedAt: events.archivedAt })
+          .from(events)
+          .where(eq(events.id, eventId))
+          .limit(1);
+        if (!eventState || eventState.archivedAt) {
+          return reply.status(409).send({ success: false, code: "EVENT_ARCHIVED", error: "Registration is disabled for this event" });
+        }
+        if (eventState.status !== "published") {
+          return reply.status(400).send({ success: false, code: "EVENT_NOT_AVAILABLE", error: "Event is not available for registration" });
+        }
+
         let effectiveStudentLevel: string | null = null;
         if (
           !isAddonOnly &&
@@ -1740,6 +1752,18 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
       );
 
       try {
+        const [eventState] = await db
+          .select({ status: events.status, archivedAt: events.archivedAt })
+          .from(events)
+          .where(eq(events.id, eventId))
+          .limit(1);
+        if (!eventState || eventState.archivedAt) {
+          return reply.status(409).send({ success: false, code: "EVENT_ARCHIVED", error: "Registration is disabled for this event" });
+        }
+        if (eventState.status !== "published") {
+          return reply.status(400).send({ success: false, code: "EVENT_NOT_AVAILABLE", error: "Event is not available for registration" });
+        }
+
         let effectiveStudentLevel: string | null = null;
         if (
           !isAddonOnly &&

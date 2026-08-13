@@ -74,7 +74,7 @@ EXPOSE 3002
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD if [ "$SERVICE_ROLE" = "worker" ]; then node dist/modules/team-registrations/jobs-runner.js --healthcheck; else wget --no-verbose --tries=1 --spider http://localhost:3002/health; fi
+    CMD if [ "$SERVICE_ROLE" = "worker" ]; then node dist/modules/team-registrations/jobs-runner.js --healthcheck; else wget --no-verbose --tries=1 --spider http://localhost:3002/health/ready; fi
 
 # Run server (run db:push manually via DBeaver or Railway CLI)
 CMD ["node", "dist/index.js"]

@@ -45,6 +45,7 @@ export async function getEventByIdOrCode(identifier: string | number) {
       endDate: events.endDate,
       location: events.location,
       status: events.status,
+      archivedAt: events.archivedAt,
       imageUrl: events.imageUrl,
       coverImage: events.coverImage,
       videoUrl: events.videoUrl,

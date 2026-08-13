@@ -6,6 +6,9 @@ import multipart from "@fastify/multipart";
 import jwt from "@fastify/jwt";
 import rateLimit from "@fastify/rate-limit";
 import { ApiError } from "./errors/ApiError.js";
+import { db } from "./database/index.js";
+import { abstractTrackingRuntime } from "./database/schema.js";
+import { eq } from "drizzle-orm";
 import fastifyStatic from "@fastify/static";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -27,6 +30,10 @@ if (!JWT_SECRET) {
 }
 
 const fastify = Fastify({ logger: true });
+
+fastify.addHook("onSend", async (request, reply) => {
+  reply.header("X-Request-Id", request.id);
+});
 
 fastify.addHook("onClose", async () => {
   await closeAbstractWordCountWorker();
@@ -98,6 +105,7 @@ fastify.decorate("authenticate", async function (request: FastifyRequest, reply:
       success: false,
       code: "AUTH_UNAUTHORIZED",
       error: "Unauthorized - Invalid or missing token",
+      requestId: request.id,
     });
   }
 });
@@ -168,6 +176,7 @@ import backofficeEventsRoutes from "./routes/backoffice/events.js";
 import backofficeSpeakersRoutes from "./routes/backoffice/speakers.js";
 import backofficeRegistrationsRoutes from "./routes/backoffice/registrations.js";
 import backofficeAbstractsRoutes from "./routes/backoffice/abstracts.js";
+import backofficeAbstractIdentifiersRoutes from "./routes/backoffice/abstract-identifiers.js";
 import backofficeCheckinsRoutes from "./routes/backoffice/checkins.js";
 import backofficeTicketsRoutes from "./routes/backoffice/tickets.js";
 import backofficeSessionsRoutes from "./routes/backoffice/sessions.js";
@@ -271,6 +280,7 @@ fastify.register(async (protectedRoutes) => {
   protectedRoutes.register(backofficeSpeakersRoutes, { prefix: "/speakers" });
   protectedRoutes.register(backofficeRegistrationsRoutes, { prefix: "/registrations" });
   protectedRoutes.register(backofficeAbstractsRoutes, { prefix: "/abstracts" });
+  protectedRoutes.register(backofficeAbstractIdentifiersRoutes, { prefix: "/abstract-identifiers" });
   protectedRoutes.register(backofficeCheckinsRoutes, { prefix: "/checkins" });
   protectedRoutes.register(backofficeTicketsRoutes, { prefix: "/tickets" });
   protectedRoutes.register(backofficeSessionsRoutes, { prefix: "/sessions" });
@@ -305,6 +315,77 @@ fastify.get("/health", async () => {
     timestamp: new Date().toISOString(),
     worker: { teamRegistrations },
   };
+});
+
+fastify.get("/health/live", async (request) => ({
+  status: "live",
+  requestId: request.id,
+}));
+
+fastify.get("/health/ready", async (request, reply) => {
+  try {
+    const [runtime] = await db
+      .select()
+      .from(abstractTrackingRuntime)
+      .where(eq(abstractTrackingRuntime.singleton, true))
+      .limit(1);
+
+    if (!runtime || !runtime.allocatorEnabled || !runtime.historyReady) {
+      return reply.status(503).send({
+        status: "not_ready",
+        components: {
+          database: "ok",
+          trackingAllocator: runtime?.allocatorEnabled ? "initializing" : runtime ? "uninitialized" : "unavailable",
+          abstractWrites: runtime?.abstractWritesPaused ? "paused" : "enabled",
+        },
+        requestId: request.id,
+      });
+    }
+
+    return reply.send({
+      status: "ready",
+      components: {
+        database: "ok",
+        trackingAllocator: "ok",
+        abstractWrites: runtime.abstractWritesPaused ? "paused" : "enabled",
+      },
+      requestId: request.id,
+    });
+  } catch {
+    return reply.status(503).send({
+      status: "not_ready",
+      components: {
+        database: "unavailable",
+        trackingAllocator: "unavailable",
+        abstractWrites: "enabled",
+      },
+      requestId: request.id,
+    });
+  }
+});
+
+fastify.get("/metrics", async (request, reply) => {
+  const configuredToken = process.env.METRICS_AUTH_TOKEN;
+  if (!configuredToken || request.headers["x-metrics-token"] !== configuredToken) {
+    return reply.status(404).send({ success: false, code: "NOT_FOUND", error: "Not found", requestId: request.id });
+  }
+  try {
+    const [runtime] = await db
+      .select()
+      .from(abstractTrackingRuntime)
+      .where(eq(abstractTrackingRuntime.singleton, true))
+      .limit(1);
+    const body = [
+      "# TYPE conference_tracking_allocator_ready gauge",
+      `conference_tracking_allocator_ready ${runtime?.allocatorEnabled && runtime.historyReady ? 1 : 0}`,
+      "# TYPE conference_abstract_writes_paused gauge",
+      `conference_abstract_writes_paused ${runtime?.abstractWritesPaused ? 1 : 0}`,
+      "",
+    ].join("\n");
+    return reply.type("text/plain; version=0.0.4").send(body);
+  } catch {
+    return reply.status(503).send({ error: "Metrics unavailable", requestId: request.id });
+  }
 });
 
 fastify.get("/", async () => ({

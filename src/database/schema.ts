@@ -14,6 +14,7 @@ import {
   char,
   bigserial,
   bigint,
+  primaryKey,
   uniqueIndex,
   index,
   check,
@@ -81,6 +82,20 @@ export const abstractStatusEnum = pgEnum("abstract_status", [
   "accepted",
   "rejected",
   "revision",
+]);
+export const abstractTrackingIdentifierOriginEnum = pgEnum("abstract_tracking_identifier_origin", [
+  "native",
+  "legacy_structured",
+  "legacy_opaque",
+  "recovery_tombstone",
+]);
+export const abstractTrackingAssignmentReasonEnum = pgEnum("abstract_tracking_assignment_reason", [
+  "initial_submission",
+  "presentation_type_change",
+  "legacy_import",
+  "migration_assignment",
+  "migration_normalization",
+  "admin_correction",
 ]);
 export const speakerTypeEnum = pgEnum("speaker_type", [
   "keynote",
@@ -266,6 +281,10 @@ export const events = pgTable("events", {
     .$type<{ name: string; url: string }[]>()
     .default([]),
   createdBy: integer("created_by").references(() => users.id),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archivedBy: integer("archived_by").references(() => backofficeUsers.id, { onDelete: "set null" }),
+  archiveReason: varchar("archive_reason", { length: 40 }),
+  archiveNote: text("archive_note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -814,7 +833,7 @@ export const eventSpeakers = pgTable("event_speakers", {
 
 export const abstracts = pgTable("abstracts", {
   id: serial("id").primaryKey(),
-  trackingId: varchar("tracking_id", { length: 20 }).unique(),
+  trackingId: varchar("tracking_id", { length: 80 }).unique(),
   userId: integer("user_id").references(() => users.id),
   eventId: integer("event_id")
     .notNull()
@@ -837,8 +856,123 @@ export const abstracts = pgTable("abstracts", {
   confirmedAt: timestamp("confirmed_at"),
   reviewComment: text("review_comment"),
   reviewedBy: integer("reviewed_by").references(() => backofficeUsers.id),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archivedBy: integer("archived_by").references(() => backofficeUsers.id, { onDelete: "set null" }),
+  archiveReason: varchar("archive_reason", { length: 40 }),
+  archiveNote: text("archive_note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Durable tracking state. Raw migration 0028 adds the full trigger/FK contract;
+// these definitions keep application queries and Drizzle types aligned.
+export const abstractTrackingNamespaces = pgTable("abstract_tracking_namespaces", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "restrict" }),
+  prefix: varchar("prefix", { length: 50 }).notNull(),
+  paddingWidth: smallint("padding_width").notNull().default(3),
+  lockedAt: timestamp("locked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("abstract_tracking_namespaces_event_unique").on(table.eventId),
+  uniqueIndex("abstract_tracking_namespaces_prefix_ci_unique").on(sql`lower(${table.prefix})`),
+  check("abstract_tracking_namespaces_prefix_check", sql`${table.prefix} <> '' AND ${table.prefix} = btrim(${table.prefix})`),
+  check("abstract_tracking_namespaces_width_check", sql`${table.paddingWidth} BETWEEN 1 AND 12`),
+]);
+
+export const abstractTrackingCounters = pgTable(
+  "abstract_tracking_counters",
+  {
+    namespaceId: bigint("namespace_id", { mode: "number" })
+      .notNull()
+      .references(() => abstractTrackingNamespaces.id, { onDelete: "restrict" }),
+    presentationType: presentationTypeEnum("presentation_type").notNull(),
+    lastIssuedNumber: bigint("last_issued_number", { mode: "number" }).notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.namespaceId, table.presentationType] })],
+);
+
+export const abstractTrackingAllocations = pgTable("abstract_tracking_allocations", {
+  trackingId: varchar("tracking_id", { length: 80 }).primaryKey(),
+  eventId: integer("event_id").references(() => events.id, { onDelete: "restrict" }),
+  presentationType: presentationTypeEnum("presentation_type"),
+  sequenceNumber: bigint("sequence_number", { mode: "number" }),
+  identifierOrigin: abstractTrackingIdentifierOriginEnum("identifier_origin").notNull(),
+  allocatedAt: timestamp("allocated_at", { withTimezone: true }).notNull().defaultNow(),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+}, (table) => [
+  uniqueIndex("abstract_tracking_allocations_tuple_unique").on(table.eventId, table.presentationType, table.sequenceNumber),
+  check("abstract_tracking_allocations_structured_check", sql`(
+    ${table.identifierOrigin} = 'recovery_tombstone'
+    OR (${table.identifierOrigin} = 'legacy_opaque' AND ${table.eventId} IS NOT NULL)
+    OR (${table.eventId} IS NOT NULL AND ${table.presentationType} IS NOT NULL AND ${table.sequenceNumber} > 0)
+  )`),
+]);
+
+export const abstractTrackingIdentifiers = pgTable("abstract_tracking_identifiers", {
+  trackingId: varchar("tracking_id", { length: 80 })
+    .primaryKey()
+    .references(() => abstractTrackingAllocations.trackingId, { onDelete: "restrict" }),
+  abstractId: integer("abstract_id")
+    .notNull()
+    .references(() => abstracts.id, { onDelete: "restrict" }),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "restrict" }),
+  presentationTypeAtAssignment: presentationTypeEnum("presentation_type_at_assignment").notNull(),
+  previousTrackingId: varchar("previous_tracking_id", { length: 80 }),
+  reason: abstractTrackingAssignmentReasonEnum("reason").notNull(),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("abstract_tracking_identifiers_abstract_tracking_unique").on(table.abstractId, table.eventId, table.presentationTypeAtAssignment, table.trackingId),
+  uniqueIndex("abstract_tracking_identifiers_one_root_unique").on(table.abstractId).where(sql`${table.previousTrackingId} IS NULL`),
+  uniqueIndex("abstract_tracking_identifiers_one_successor_unique").on(table.previousTrackingId).where(sql`${table.previousTrackingId} IS NOT NULL`),
+  check("abstract_tracking_identifiers_not_self_check", sql`${table.previousTrackingId} IS NULL OR ${table.previousTrackingId} <> ${table.trackingId}`),
+]);
+
+export const abstractTrackingRuntime = pgTable("abstract_tracking_runtime", {
+  singleton: boolean("singleton").primaryKey().default(true),
+  allocatorEnabled: boolean("allocator_enabled").notNull().default(false),
+  allocatorVersion: smallint("allocator_version").notNull().default(1),
+  historyReady: boolean("history_ready").notNull().default(false),
+  legacyBridgeEnabled: boolean("legacy_bridge_enabled").notNull().default(true),
+  abstractWritesPaused: boolean("abstract_writes_paused").notNull().default(false),
+  writePauseReason: varchar("write_pause_reason", { length: 64 }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  check("abstract_tracking_runtime_pause_reason_check", sql`(
+    (${table.abstractWritesPaused} = true AND ${table.writePauseReason} IS NOT NULL)
+    OR (${table.abstractWritesPaused} = false AND ${table.writePauseReason} IS NULL)
+  )`),
+]);
+
+export const abstractTrackingAuditEvents = pgTable("abstract_tracking_audit_events", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  eventType: varchar("event_type", { length: 64 }).notNull(),
+  eventId: integer("event_id").references(() => events.id, { onDelete: "set null" }),
+  abstractId: integer("abstract_id").references(() => abstracts.id, { onDelete: "set null" }),
+  actorType: varchar("actor_type", { length: 24 }).notNull(),
+  actorId: integer("actor_id"),
+  requestId: varchar("request_id", { length: 128 }),
+  reasonCode: varchar("reason_code", { length: 64 }),
+  beforeState: jsonb("before_state").$type<Record<string, unknown>>(),
+  afterState: jsonb("after_state").$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const abstractSubmissionIdempotencyKeys = pgTable("abstract_submission_idempotency_keys", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+  requestFingerprint: varchar("request_fingerprint", { length: 64 }).notNull(),
+  abstractId: integer("abstract_id").notNull().references(() => abstracts.id, { onDelete: "restrict" }),
+  responseBody: jsonb("response_body").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex("abstract_submission_idempotency_user_key_unique").on(table.userId, table.idempotencyKey)]);
 
 // Token rows for the approval-confirmation flow.
 // Raw token is sent only via email; only the SHA-256 hash is stored here.

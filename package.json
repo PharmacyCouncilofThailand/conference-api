@@ -11,6 +11,8 @@
     "benchmark:abstract-word-count": "tsx src/scripts/benchmark-abstract-word-count.ts",
     "test:team-registrations": "tsx --test src/modules/team-registrations/**/*.test.ts",
     "test:team-registrations:integration": "tsx --test src/modules/team-registrations/payment.integration.test.ts",
+    "test:abstract-tracking": "tsx --test src/modules/abstracts/**/*.test.ts",
+    "test:abstract-tracking:integration": "tsx --test src/modules/abstracts/tracking.integration.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",

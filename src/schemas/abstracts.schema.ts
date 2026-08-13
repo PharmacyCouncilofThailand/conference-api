@@ -93,6 +93,9 @@ export const abstractListSchema = z.object({
     status: abstractStatusSchema.optional(),
     categoryId: z.coerce.number().optional(),
     presentationType: z.enum(['oral', 'poster']).optional(),
+    trackingId: z.string().min(1).max(80).optional(),
+    trackingMatch: z.enum(['any', 'canonical', 'alias']).default('any'),
+    archived: z.enum(['exclude', 'include', 'only']).default('exclude'),
 });
 
 // Backoffice: Update abstract status

@@ -99,12 +99,13 @@ export default async function studentEligibilityRoutes(fastify: FastifyInstance)
             location: events.location,
             websiteUrl: events.websiteUrl,
             shortName: events.shortName,
+            archivedAt: events.archivedAt,
           })
           .from(events)
           .where(eq(events.eventCode, eventCode))
           .limit(1);
 
-        if (!event) {
+        if (!event || event.archivedAt) {
           return reply.status(404).send({
             success: false,
             code: "EVENT_NOT_FOUND",
@@ -180,12 +181,13 @@ export default async function studentEligibilityRoutes(fastify: FastifyInstance)
             location: events.location,
             websiteUrl: events.websiteUrl,
             shortName: events.shortName,
+            archivedAt: events.archivedAt,
           })
           .from(events)
           .where(eq(events.eventCode, eventCode))
           .limit(1);
 
-        if (!event) {
+        if (!event || event.archivedAt) {
           return reply.status(404).send({
             success: false,
             code: "EVENT_NOT_FOUND",
