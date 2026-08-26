@@ -611,7 +611,12 @@ export const promoCodes = pgTable("promo_codes", {
   validUntil: timestamp("valid_until"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  percentageDiscountRange: check(
+    "promo_codes_percentage_discount_range_check",
+    sql`${table.discountType} <> 'percentage' OR (${table.discountValue} >= 0 AND ${table.discountValue} <= 100)`,
+  ),
+}));
 
 // Rule sets: which ticket combinations a promo code applies to
 export const promoCodeRuleSets = pgTable("promo_code_rule_sets", {
@@ -649,7 +654,17 @@ export const promoCodeUsages = pgTable("promo_code_usages", {
   expiresAt: timestamp("expires_at").notNull(),
   usedAt: timestamp("used_at"),
   cancelledAt: timestamp("cancelled_at"),
-});
+}, (table) => ({
+  orderUnique: uniqueIndex("promo_code_usages_order_unique")
+    .on(table.orderId)
+    .where(sql`${table.orderId} IS NOT NULL`),
+  activePromoIdx: index("promo_code_usages_active_promo_idx")
+    .on(table.promoCodeId, table.status)
+    .where(sql`${table.status} IN ('pending', 'used')`),
+  activeUserIdx: index("promo_code_usages_active_user_idx")
+    .on(table.promoCodeId, table.userId, table.status)
+    .where(sql`${table.status} IN ('pending', 'used')`),
+}));
 
 // --------------------------------------------------------------------------
 // 5. ORDERS & PAYMENTS
