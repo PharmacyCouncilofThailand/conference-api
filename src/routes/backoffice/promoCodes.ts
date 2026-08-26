@@ -4,6 +4,7 @@ import { promoCodes, events, staffEventAssignments, promoCodeRuleSets, promoCode
 import { eq, desc, ilike, and, count, inArray, or, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { normalizePromoCode } from "../../utils/promoCodeNormalization.js";
+import { createPromoSchema, updatePromoSchema } from "../../schemas/promoCode.schema.js";
 
 const promoQuerySchema = z.object({
     page: z.coerce.number().min(1).default(1),
@@ -12,31 +13,6 @@ const promoQuerySchema = z.object({
     eventId: z.coerce.number().optional(),
     status: z.enum(['active', 'inactive', 'expired']).optional(),
 });
-
-const ruleSetSchema = z.object({
-    matchType: z.enum(['all', 'any', 'only']).default('all'),
-    ticketTypeIds: z.array(z.number().int().positive()).min(1),
-});
-
-const createPromoSchema = z.object({
-    eventId: z.number().nullable().optional(),
-    code: z.string().trim().min(1).max(50),
-    description: z.string().optional(),
-    discountType: z.enum(['percentage', 'fixed']),
-    discountValue: z.number().min(0).default(0),
-    fixedValueThb: z.number().min(0).nullable().optional(),
-    fixedValueUsd: z.number().min(0).nullable().optional(),
-    minPurchase: z.number().min(0).default(0),
-    maxDiscount: z.number().nullable().optional(),
-    maxUses: z.number().min(1).default(100),
-    maxUsesPerUser: z.number().min(1).default(1),
-    validFrom: z.string().optional(),
-    validUntil: z.string().optional(),
-    isActive: z.boolean().default(true),
-    ruleSets: z.array(ruleSetSchema).optional(),
-});
-
-const updatePromoSchema = createPromoSchema.partial();
 
 export default async function (fastify: FastifyInstance) {
     // List All Promo Codes

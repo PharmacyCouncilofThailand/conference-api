@@ -7,6 +7,7 @@ import {
 } from "../database/schema.js";
 import { eq, and, or, count, lt, sql } from "drizzle-orm";
 import { normalizePromoCode, promoAppliesToEvent } from "./promoCodeNormalization.js";
+import { calculatePromoDiscount } from "./promoDiscount.js";
 
 // TTL for pending promo reservations (configurable via env, default 15 min)
 const PROMO_PENDING_TTL_MS = parseInt(process.env.PROMO_PENDING_TTL_MINUTES || "15", 10) * 60 * 1000;
@@ -166,46 +167,22 @@ export async function validatePromoCode(
     }
   }
 
-  // 9. Calculate discount
-  let discountAmount: number;
-  let discountValue: number;
-
-  if (promo.discountType === "percentage") {
-    discountValue = Number(promo.discountValue);
-    discountAmount = Math.round(subtotal * discountValue / 100 * 100) / 100;
-
-    // Apply maxDiscount cap
-    if (promo.maxDiscount) {
-      const maxDisc = Number(promo.maxDiscount);
-      if (discountAmount > maxDisc) {
-        discountAmount = maxDisc;
-      }
-    }
-  } else {
-    // fixed discount — use currency-specific value
-    if (currency === "THB") {
-      discountValue = Number(promo.fixedValueThb || promo.discountValue || 0);
-    } else {
-      discountValue = Number(promo.fixedValueUsd || promo.discountValue || 0);
-    }
-    discountAmount = discountValue;
-  }
-
-  // Don't let discount exceed subtotal
-  if (discountAmount > subtotal) {
-    discountAmount = subtotal;
-  }
-
-  discountAmount = Math.round(discountAmount * 100) / 100;
-  const netAmount = Math.round((subtotal - discountAmount) * 100) / 100;
+  // 9. Calculate discount through the canonical pure calculator
+  const discount = calculatePromoDiscount({
+    discountType: promo.discountType as "percentage" | "fixed",
+    discountValue: Number(promo.discountValue),
+    fixedValueThb: promo.fixedValueThb == null ? null : Number(promo.fixedValueThb),
+    fixedValueUsd: promo.fixedValueUsd == null ? null : Number(promo.fixedValueUsd),
+    maxDiscount: promo.maxDiscount == null ? null : Number(promo.maxDiscount),
+    currency,
+    subtotal,
+  });
 
   return {
     valid: true,
     promoCodeId: promo.id,
     discountType: promo.discountType as "percentage" | "fixed",
-    discountValue,
-    discountAmount,
-    netAmount,
+    ...discount,
   };
 }
 
