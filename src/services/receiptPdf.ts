@@ -17,10 +17,12 @@ export interface ReceiptTaxInvoiceInfo {
   taxFullAddress: string | null;
 }
 
+export type ReceiptPaymentChannel = "promptpay" | "card" | "free";
+
 export interface ReceiptData {
   orderNumber: string;
   paidAt: Date;
-  paymentChannel: "promptpay" | "card";
+  paymentChannel: ReceiptPaymentChannel;
   currency: string;
   items: ReceiptItem[];
   subtotal: number;
@@ -66,7 +68,8 @@ function formatThaiTime(d: Date): string {
     .replace(":", ".");
 }
 
-function paymentChannelLabel(ch: "promptpay" | "card"): string {
+function paymentChannelLabel(ch: ReceiptPaymentChannel): string {
+  if (ch === "free") return "ยกเว้นค่าลงทะเบียน / Promo Code";
   return ch === "promptpay"
     ? "พร้อมเพย์ / QR Code (PromptPay)"
     : "บัตรเครดิต / เดบิต (Credit/Debit Card)";
@@ -94,7 +97,7 @@ const FOOTER_NOTE =
   "สิ่งพิมพ์ออกจากระบบรับส่งอิเล็กทรอนิกส์ของสภาเภสัชกรรม ถือเป็นเอกสารที่สภาเภสัชกรรมให้การรับรอง";
 
 /** Map the public ReceiptData into the view model the template expects. */
-function toReceiptViewData(data: ReceiptData): ReceiptViewData {
+export function toReceiptViewData(data: ReceiptData): ReceiptViewData {
   const discount = data.discount && data.discount > 0 ? data.discount : 0;
   const fee = data.fee > 0 ? data.fee : 0;
 

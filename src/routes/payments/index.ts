@@ -3895,7 +3895,11 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         const pdfStream = await generateReceiptPdf({
           orderNumber: order.orderNumber,
           paidAt: payment?.paidAt || new Date(),
-          paymentChannel: (payment?.paymentChannel === "promptpay" ? "promptpay" : "card") as "promptpay" | "card",
+          paymentChannel: payment?.paymentChannel === "free"
+            ? "free"
+            : payment?.paymentChannel === "promptpay"
+              ? "promptpay"
+              : "card",
           currency: order.currency,
           eventName: event?.eventName || undefined,
           items: sortedItems.map((i) => ({
