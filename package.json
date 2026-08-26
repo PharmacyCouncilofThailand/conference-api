@@ -8,6 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "tsx --test src/**/*.test.ts",
+    "test:payments": "tsx --test src/modules/payments/**/*.test.ts",
+    "test:payments:integration": "tsx --test src/modules/payments/free-checkout.integration.test.ts",
     "benchmark:abstract-word-count": "tsx src/scripts/benchmark-abstract-word-count.ts",
     "test:team-registrations": "tsx --test src/modules/team-registrations/**/*.test.ts",
     "test:team-registrations:integration": "tsx --test src/modules/team-registrations/payment.integration.test.ts",
