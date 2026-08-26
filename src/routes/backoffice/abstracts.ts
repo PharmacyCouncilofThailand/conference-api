@@ -10,6 +10,7 @@ import {
   abstractTrackingIdentifiers,
   events,
   users,
+  staffEventAssignments,
 } from "../../database/schema.js";
 import {
   abstractListSchema,
@@ -102,6 +103,23 @@ async function cleanupRevisionAttachment(
   }
 }
 
+async function organizerCanAccessAbstract(staffId: number, abstractId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ id: abstracts.id })
+    .from(abstracts)
+    .innerJoin(
+      staffEventAssignments,
+      and(
+        eq(staffEventAssignments.eventId, abstracts.eventId),
+        eq(staffEventAssignments.staffId, staffId),
+      ),
+    )
+    .where(eq(abstracts.id, abstractId))
+    .limit(1);
+
+  return Boolean(row);
+}
+
 export default async function (fastify: FastifyInstance) {
   const archiveSchema = z.object({
     reason: z.enum(["manual", "withdrawn", "duplicate_submission"]),
@@ -109,6 +127,9 @@ export default async function (fastify: FastifyInstance) {
   }).strict();
 
   fastify.put("/:id/archival", async (request, reply) => {
+    if (request.user.role === "organizer") {
+      return reply.status(403).send({ error: "Read-only access" });
+    }
     const abstractId = Number((request.params as { id: string }).id);
     const parsed = archiveSchema.safeParse(request.body);
     if (!Number.isInteger(abstractId) || !parsed.success) {
@@ -161,6 +182,9 @@ export default async function (fastify: FastifyInstance) {
   });
 
   fastify.delete("/:id/archival", async (request, reply) => {
+    if (request.user.role === "organizer") {
+      return reply.status(403).send({ error: "Read-only access" });
+    }
     const abstractId = Number((request.params as { id: string }).id);
     if (!Number.isInteger(abstractId)) {
       return reply.status(400).send({ success: false, code: "VALIDATION_ERROR", error: "Invalid abstract id" });
@@ -277,7 +301,25 @@ export default async function (fastify: FastifyInstance) {
         }
         // If no presentation types assigned, reviewer can see all presentation types
       }
-      // Admin and other roles see all abstracts (no category filter applied)
+
+      // Organizer sees every abstract in assigned events, without reviewer category/type filters.
+      if (user.role === "organizer") {
+        const assignments = await db
+          .select({ eventId: staffEventAssignments.eventId })
+          .from(staffEventAssignments)
+          .where(eq(staffEventAssignments.staffId, user.id));
+        const assignedEventIds = assignments.map((assignment) => assignment.eventId);
+
+        if (assignedEventIds.length === 0 || (eventId && !assignedEventIds.includes(eventId))) {
+          return reply.send({
+            abstracts: [],
+            pagination: { page, limit, total: 0, totalPages: 0 },
+          });
+        }
+
+        conditions.push(inArray(abstracts.eventId, assignedEventIds));
+      }
+      // Admin and other roles see all abstracts unless scoped above.
 
       if (eventId) conditions.push(eq(abstracts.eventId, eventId));
       if (status) conditions.push(eq(abstracts.status, status));
@@ -456,8 +498,22 @@ export default async function (fastify: FastifyInstance) {
   // Get Single Abstract by ID
   fastify.get("/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
+    const user = request.user;
 
     try {
+      const detailConditions = [eq(abstracts.id, parseInt(id))];
+      if (user.role === "organizer") {
+        const assignments = await db
+          .select({ eventId: staffEventAssignments.eventId })
+          .from(staffEventAssignments)
+          .where(eq(staffEventAssignments.staffId, user.id));
+        const assignedEventIds = assignments.map((assignment) => assignment.eventId);
+        if (assignedEventIds.length === 0) {
+          return reply.status(404).send({ error: "Abstract not found" });
+        }
+        detailConditions.push(inArray(abstracts.eventId, assignedEventIds));
+      }
+
       const [abstractData] = await db
         .select({
           id: abstracts.id,
@@ -497,7 +553,7 @@ export default async function (fastify: FastifyInstance) {
         .leftJoin(users, eq(abstracts.userId, users.id))
         .leftJoin(events, eq(abstracts.eventId, events.id))
         .leftJoin(abstractCategories, eq(abstracts.categoryId, abstractCategories.id))
-        .where(eq(abstracts.id, parseInt(id)));
+        .where(and(...detailConditions));
 
       if (abstractData) {
         abstractData.category = abstractData.categoryName || abstractData.category;
@@ -556,6 +612,10 @@ export default async function (fastify: FastifyInstance) {
 
     if (Number.isNaN(abstractId)) {
       return reply.status(400).send({ error: "Invalid abstract id" });
+    }
+
+    if (request.user.role === "organizer" && !(await organizerCanAccessAbstract(request.user.id, abstractId))) {
+      return reply.status(404).send({ error: "Abstract not found" });
     }
 
     try {
@@ -768,6 +828,13 @@ export default async function (fastify: FastifyInstance) {
   // Update Abstract Status
   fastify.patch("/:id/status", async (request, reply) => {
     const { id } = request.params as { id: string };
+    const abstractId = parseInt(id, 10);
+    if (Number.isNaN(abstractId)) {
+      return reply.status(400).send({ error: "Invalid abstract id" });
+    }
+    if (request.user.role === "organizer" && !(await organizerCanAccessAbstract(request.user.id, abstractId))) {
+      return reply.status(404).send({ error: "Abstract not found" });
+    }
     const result = updateAbstractStatusSchema.safeParse(request.body);
 
     if (!result.success) {
@@ -902,6 +969,9 @@ export default async function (fastify: FastifyInstance) {
     const { id } = request.params as { id: string };
     const abstractId = parseInt(id, 10);
     if (Number.isNaN(abstractId)) return reply.status(400).send({ error: "Invalid abstract id" });
+    if (request.user.role === "organizer" && !(await organizerCanAccessAbstract(request.user.id, abstractId))) {
+      return reply.status(404).send({ error: "Abstract not found" });
+    }
 
     try {
       const [abs] = await db
@@ -990,6 +1060,9 @@ export default async function (fastify: FastifyInstance) {
     const { id } = request.params as { id: string };
     const abstractId = parseInt(id, 10);
     if (Number.isNaN(abstractId)) return reply.status(400).send({ error: "Invalid abstract id" });
+    if (request.user.role === "organizer" && !(await organizerCanAccessAbstract(request.user.id, abstractId))) {
+      return reply.status(404).send({ error: "Abstract not found" });
+    }
 
     try {
       const [abs] = await db

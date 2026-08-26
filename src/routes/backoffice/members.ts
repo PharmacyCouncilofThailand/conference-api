@@ -13,6 +13,8 @@ import {
   abstractReviews,
   passwordResetTokens,
   verificationRejectionHistory,
+  staffEventAssignments,
+  events,
 } from "../../database/schema.js";
 import { eq, desc, ilike, or, count, and, SQL, inArray, exists, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -28,6 +30,10 @@ const listMembersQuerySchema = z.object({
   eventId: z.coerce.number().int().positive().optional(),
 });
 
+const memberStatsQuerySchema = z.object({
+  eventId: z.coerce.number().int().positive().optional(),
+});
+
 export default async function (fastify: FastifyInstance) {
   // List Members (users from users table)
   fastify.get("", async (request, reply) => {
@@ -38,6 +44,7 @@ export default async function (fastify: FastifyInstance) {
 
     const { page, limit, search, role, status, eventId } = queryResult.data;
     const offset = (page - 1) * limit;
+    const staffUser = (request as any).user;
 
     try {
       const conditions: SQL[] = [];
@@ -52,19 +59,52 @@ export default async function (fastify: FastifyInstance) {
         conditions.push(eq(users.status, status));
       }
 
-      // Filter by event (users with confirmed registration in that event)
-      if (eventId) {
-        conditions.push(
-          exists(
-            db.select({ id: registrations.id })
-              .from(registrations)
-              .where(and(
-                eq(registrations.userId, users.id),
-                eq(registrations.eventId, eventId),
-                eq(registrations.status, "confirmed"),
-              ))
-          )
-        );
+      // Scope non-admin users to accounts created from their assigned events.
+      // Member identity is based on users.registeredFromEvent, not ticket registration.
+      if (staffUser.role !== "admin") {
+        const assignments = await db
+          .select({ eventId: staffEventAssignments.eventId })
+          .from(staffEventAssignments)
+          .where(eq(staffEventAssignments.staffId, staffUser.id));
+        const assignedEventIds = assignments.map((assignment) => assignment.eventId);
+
+        if (assignedEventIds.length === 0 || (eventId && !assignedEventIds.includes(eventId))) {
+          return reply.send({
+            members: [],
+            pagination: { page, limit, total: 0, totalPages: 0 },
+          });
+        }
+
+        const scopedEventIds = eventId ? [eventId] : assignedEventIds;
+        const scopedEvents = await db
+          .select({ eventCode: events.eventCode })
+          .from(events)
+          .where(inArray(events.id, scopedEventIds));
+        const scopedEventCodes = scopedEvents.map((event) => event.eventCode);
+
+        if (scopedEventCodes.length === 0) {
+          return reply.send({
+            members: [],
+            pagination: { page, limit, total: 0, totalPages: 0 },
+          });
+        }
+
+        conditions.push(inArray(users.registeredFromEvent, scopedEventCodes));
+      } else if (eventId) {
+        const [selectedEvent] = await db
+          .select({ eventCode: events.eventCode })
+          .from(events)
+          .where(eq(events.id, eventId))
+          .limit(1);
+
+        if (!selectedEvent) {
+          return reply.send({
+            members: [],
+            pagination: { page, limit, total: 0, totalPages: 0 },
+          });
+        }
+
+        conditions.push(eq(users.registeredFromEvent, selectedEvent.eventCode));
       }
 
       // Search by name or email
@@ -124,8 +164,32 @@ export default async function (fastify: FastifyInstance) {
   // Get single member by ID
   fastify.get("/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
+    const staffUser = (request as any).user;
 
     try {
+      const memberConditions: SQL[] = [eq(users.id, parseInt(id))];
+      if (staffUser.role !== "admin") {
+        const assignments = await db
+          .select({ eventId: staffEventAssignments.eventId })
+          .from(staffEventAssignments)
+          .where(eq(staffEventAssignments.staffId, staffUser.id));
+        const assignedEventIds = assignments.map((assignment) => assignment.eventId);
+        if (assignedEventIds.length === 0) {
+          return reply.status(404).send({ error: "Member not found" });
+        }
+
+        const assignedEvents = await db
+          .select({ eventCode: events.eventCode })
+          .from(events)
+          .where(inArray(events.id, assignedEventIds));
+        const assignedEventCodes = assignedEvents.map((event) => event.eventCode);
+        if (assignedEventCodes.length === 0) {
+          return reply.status(404).send({ error: "Member not found" });
+        }
+
+        memberConditions.push(inArray(users.registeredFromEvent, assignedEventCodes));
+      }
+
       const [member] = await db
         .select({
           id: users.id,
@@ -146,7 +210,7 @@ export default async function (fastify: FastifyInstance) {
           createdAt: users.createdAt,
         })
         .from(users)
-        .where(eq(users.id, parseInt(id)));
+        .where(and(...memberConditions));
 
       if (!member) {
         return reply.status(404).send({ error: "Member not found" });
@@ -161,32 +225,109 @@ export default async function (fastify: FastifyInstance) {
 
   // Get member statistics
   fastify.get("/stats/summary", async (request, reply) => {
+    const queryResult = memberStatsQuerySchema.safeParse(request.query);
+    if (!queryResult.success) {
+      return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
+    }
+
+    const { eventId } = queryResult.data;
+    const staffUser = (request as any).user;
+
     try {
-      // Count by role
+      let scopeCondition: SQL | undefined;
+      let purchaseEventIds: number[] | undefined;
+
+      if (staffUser.role !== "admin") {
+        const assignments = await db
+          .select({ eventId: staffEventAssignments.eventId })
+          .from(staffEventAssignments)
+          .where(eq(staffEventAssignments.staffId, staffUser.id));
+        const assignedEventIds = assignments.map((assignment) => assignment.eventId);
+
+        if (assignedEventIds.length === 0 || (eventId && !assignedEventIds.includes(eventId))) {
+          return reply.send({ total: 0, purchased: 0, notPurchased: 0, byRole: [], byStatus: [] });
+        }
+
+        const scopedEventIds = eventId ? [eventId] : assignedEventIds;
+        const scopedEvents = await db
+          .select({ eventCode: events.eventCode })
+          .from(events)
+          .where(inArray(events.id, scopedEventIds));
+        const scopedEventCodes = scopedEvents.map((event) => event.eventCode);
+
+        if (scopedEventCodes.length === 0) {
+          return reply.send({ total: 0, purchased: 0, notPurchased: 0, byRole: [], byStatus: [] });
+        }
+
+        scopeCondition = inArray(users.registeredFromEvent, scopedEventCodes);
+        purchaseEventIds = scopedEventIds;
+      } else if (eventId) {
+        const [selectedEvent] = await db
+          .select({ eventCode: events.eventCode })
+          .from(events)
+          .where(eq(events.id, eventId))
+          .limit(1);
+
+        if (!selectedEvent) {
+          return reply.send({ total: 0, purchased: 0, notPurchased: 0, byRole: [], byStatus: [] });
+        }
+
+        scopeCondition = eq(users.registeredFromEvent, selectedEvent.eventCode);
+        purchaseEventIds = [eventId];
+      }
+
+      // Count by role inside the authenticated event scope.
       const roleStats = await db
         .select({
           role: users.role,
           count: count(),
         })
         .from(users)
+        .where(scopeCondition)
         .groupBy(users.role);
 
-      // Count by status
+      // Count by status inside the authenticated event scope.
       const statusStats = await db
         .select({
           status: users.status,
           count: count(),
         })
         .from(users)
+        .where(scopeCondition)
         .groupBy(users.status);
 
-      // Total count
+      // Total count inside the authenticated event scope.
       const [{ total }] = await db
         .select({ total: count() })
-        .from(users);
+        .from(users)
+        .where(scopeCondition);
+
+      const registrationConditions: SQL[] = [
+        eq(registrations.userId, users.id),
+        eq(registrations.status, "confirmed"),
+      ];
+      if (purchaseEventIds) {
+        registrationConditions.push(inArray(registrations.eventId, purchaseEventIds));
+      }
+
+      const hasPurchasedTicket = exists(
+        db.select({ id: registrations.id })
+          .from(registrations)
+          .where(and(...registrationConditions))
+      );
+      const purchasedWhere = scopeCondition
+        ? and(scopeCondition, hasPurchasedTicket)
+        : hasPurchasedTicket;
+
+      const [{ purchased }] = await db
+        .select({ purchased: count() })
+        .from(users)
+        .where(purchasedWhere);
 
       return reply.send({
         total,
+        purchased,
+        notPurchased: Math.max(total - purchased, 0),
         byRole: roleStats,
         byStatus: statusStats,
       });
@@ -200,6 +341,10 @@ export default async function (fastify: FastifyInstance) {
   fastify.delete("/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const userId = parseInt(id);
+    const staffUser = (request as any).user;
+    if (staffUser.role !== "admin") {
+      return reply.status(403).send({ error: "Admin access required" });
+    }
 
     try {
       // Check if user exists

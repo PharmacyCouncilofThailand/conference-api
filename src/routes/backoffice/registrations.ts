@@ -127,8 +127,24 @@ export default async function (fastify: FastifyInstance) {
     // Get Registration Detail
     fastify.get("/:id", async (request, reply) => {
         const { id } = request.params as { id: string };
+        const user = (request as any).user;
 
         try {
+            const registrationConditions = [eq(registrations.id, parseInt(id))];
+
+            if (user.role !== "admin") {
+                const assignments = await db
+                    .select({ eventId: staffEventAssignments.eventId })
+                    .from(staffEventAssignments)
+                    .where(eq(staffEventAssignments.staffId, user.id));
+                const assignedEventIds = assignments.map((assignment) => assignment.eventId);
+
+                if (assignedEventIds.length === 0) {
+                    return reply.status(404).send({ error: "Registration not found" });
+                }
+                registrationConditions.push(inArray(registrations.eventId, assignedEventIds));
+            }
+
             // Get registration with related data
             const [reg] = await db
                 .select({
@@ -164,7 +180,7 @@ export default async function (fastify: FastifyInstance) {
                 .innerJoin(ticketTypes, eq(registrations.ticketTypeId, ticketTypes.id))
                 .leftJoin(users, eq(registrations.userId, users.id))
                 .leftJoin(backofficeUsers, eq(registrations.addedBy, backofficeUsers.id))
-                .where(eq(registrations.id, parseInt(id)))
+                .where(and(...registrationConditions))
                 .limit(1);
 
             if (!reg) {
@@ -213,6 +229,10 @@ export default async function (fastify: FastifyInstance) {
     // Update Registration
     fastify.patch("/:id", async (request, reply) => {
         const { id } = request.params as { id: string };
+        const staffUser = (request as any).user;
+        if (staffUser.role !== "admin") {
+            return reply.status(403).send({ error: "Admin access required" });
+        }
         const result = updateRegistrationSchema.safeParse(request.body);
 
         if (!result.success) {
@@ -237,6 +257,9 @@ export default async function (fastify: FastifyInstance) {
     // ── Manual Add Registration ──────────────────────────
     fastify.post("/manual", async (request, reply) => {
         const staffUser = (request as any).user;
+        if (staffUser.role !== "admin") {
+            return reply.status(403).send({ error: "Admin access required" });
+        }
         const result = manualRegistrationSchema.safeParse(request.body);
         if (!result.success) {
             return reply.status(400).send({ error: "Invalid input", details: result.error.flatten() });
@@ -416,6 +439,9 @@ export default async function (fastify: FastifyInstance) {
     // ── Add Sessions to Existing Registration ────────────
     fastify.post("/:id/sessions", async (request, reply) => {
         const staffUser = (request as any).user;
+        if (staffUser.role !== "admin") {
+            return reply.status(403).send({ error: "Admin access required" });
+        }
         const { id } = request.params as { id: string };
         const result = addSessionsSchema.safeParse(request.body);
         if (!result.success) {
@@ -490,6 +516,10 @@ export default async function (fastify: FastifyInstance) {
     // Primary tickets: block if user has ANY primary ticket for this event
     // Add-on tickets: block only if user has this specific ticket
     fastify.get("/registered-users", async (request, reply) => {
+        const staffUser = (request as any).user;
+        if (staffUser.role !== "admin") {
+            return reply.status(403).send({ error: "Admin access required" });
+        }
         const queryResult = checkRegisteredUsersSchema.safeParse(request.query);
         if (!queryResult.success) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
@@ -594,6 +624,9 @@ export default async function (fastify: FastifyInstance) {
     // ── Batch Manual Add Registration ─────────────────────
     fastify.post("/manual/batch", async (request, reply) => {
         const staffUser = (request as any).user;
+        if (staffUser.role !== "admin") {
+            return reply.status(403).send({ error: "Admin access required" });
+        }
         const result = batchManualRegistrationSchema.safeParse(request.body);
         if (!result.success) {
             return reply.status(400).send({ error: "Invalid input", details: result.error.flatten() });
