@@ -218,6 +218,7 @@ async function buildPaymentResults(
           ? { taxName: order.taxName, taxId: order.taxId, taxFullAddress: order.taxFullAddress }
           : undefined,
         reg?.regCode,
+        { discount, promoCode: order.promoCode },
       );
       results.push({ id: orderId, email: user.email, name: fullName, type: "payment-receipt", status: "sent", reason: `Order: ${order.orderNumber}` });
     } catch (err) {

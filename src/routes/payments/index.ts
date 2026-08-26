@@ -1307,7 +1307,8 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
                       taxFullAddress: order.taxFullAddress,
                     }
                     : undefined,
-                  regCode
+                  regCode,
+                  { discount: emailDiscount, promoCode: order.promoCode },
                 );
               } catch (emailErr) {
                 fastify.log.error(
@@ -2203,6 +2204,10 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
                     }
                   : undefined,
                 freeResult.regCode,
+                {
+                  discount: freeResult.discountAmount,
+                  promoCode: promoCode?.trim().toUpperCase() || null,
+                },
               );
             } catch (emailErr) {
               fastify.log.error(emailErr, `[CREATE-INTENT] Failed to send free registration email for order ${freeResult.orderId}`);
@@ -2387,6 +2392,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
                     }
                   : undefined,
                 regCode,
+                { discount: Number(order.discountAmount || 0), promoCode: order.promoCode },
               );
             } catch (emailErr) {
               fastify.log.error(emailErr, "[CREATE-INTENT] Failed to send free registration email");
@@ -2938,7 +2944,8 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
                     taxFullAddress: order.taxFullAddress,
                   }
                   : undefined,
-                regCode
+                regCode,
+                { discount: emailDiscount, promoCode: order.promoCode },
               );
             } catch (emailErr) {
               fastify.log.error(`[PAYSOLUTIONS-POSTBACK] Failed to send receipt email for order ${payment.orderId}: ${emailErr}`);
@@ -3136,7 +3143,8 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
                     taxFullAddress: order.taxFullAddress,
                   }
                   : undefined,
-                regCode
+                regCode,
+                { discount: emailDiscount, promoCode: order.promoCode },
               );
 
             } catch (emailErr) {
@@ -3493,7 +3501,8 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
                     taxFullAddress: order.taxFullAddress,
                   }
                   : undefined,
-                verifyRegCode
+                verifyRegCode,
+                { discount: verifyDiscount, promoCode: order.promoCode },
               );
             } catch (emailErr) {
               fastify.log.error(`[VERIFY] Failed to send receipt email for order ${order.id}: ${emailErr}`);

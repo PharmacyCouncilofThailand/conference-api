@@ -269,6 +269,7 @@ async function buildPaymentMessage(
     ctx,
     taxInvoice,
     reg?.regCode,
+    { discount, promoCode: order.promoCode },
   );
 
   return {
@@ -294,6 +295,7 @@ async function buildPaymentMessage(
         ctx,
         taxInvoice,
         reg?.regCode,
+        { discount, promoCode: order.promoCode },
       ),
   };
 }

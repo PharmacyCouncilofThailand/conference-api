@@ -294,6 +294,11 @@ interface TaxInvoiceEmailInfo {
   taxFullAddress: string | null;
 }
 
+export interface ReceiptPromotionInfo {
+  discount: number;
+  promoCode: string | null;
+}
+
 export function buildEventPaymentReceiptEmailContent(
   firstName: string,
   lastName: string,
@@ -308,11 +313,15 @@ export function buildEventPaymentReceiptEmailContent(
   receiptDownloadUrl: string,
   ctx: EventEmailContext,
   taxInvoice?: TaxInvoiceEmailInfo,
-  regCode?: string
+  regCode?: string,
+  promotion?: ReceiptPromotionInfo,
 ): EventEmailContent {
   const currencySymbol = currency === "THB" ? "\u0E3F" : "$";
-  const methodLabel =
-    paymentChannel === "promptpay" ? "PromptPay (QR)" : "Credit/Debit Card";
+  const methodLabel = paymentChannel === "free"
+    ? promotion?.promoCode ? "Free registration / Promo code" : "Free registration"
+    : paymentChannel === "promptpay"
+      ? "PromptPay (QR)"
+      : "Credit/Debit Card";
 
   const dateStr = paidAt.toLocaleDateString("en-US", {
     year: "numeric",
@@ -326,6 +335,10 @@ export function buildEventPaymentReceiptEmailContent(
   const itemLines = items
     .map((item) => `  - ${item.name}: ${currencySymbol}${item.price.toLocaleString()}`)
     .join("\n");
+
+  const discountLineText = promotion && promotion.discount > 0
+    ? `  - Discount${promotion.promoCode ? ` (${promotion.promoCode})` : ""}: -${currencySymbol}${promotion.discount.toLocaleString()}\n`
+    : "";
 
   const feeLineText =
     fee > 0
@@ -357,7 +370,7 @@ Payment Method: ${methodLabel}
 
 Items:
 ${itemLines}
-${feeLineText}
+${discountLineText}${feeLineText}
 Total Paid: ${currencySymbol}${total.toLocaleString()}
 ${taxInvoiceText}
 ${regCode ? `\nRegistration Code: ${regCode}\nPresent this QR code at the event for check-in.` : ""}
@@ -409,11 +422,12 @@ export async function sendEventPaymentReceiptEmail(
   receiptDownloadUrl: string,
   ctx: EventEmailContext,
   taxInvoice?: TaxInvoiceEmailInfo,
-  regCode?: string
+  regCode?: string,
+  promotion?: ReceiptPromotionInfo,
 ): Promise<void> {
   const { subject, html } = buildEventPaymentReceiptEmailContent(
     firstName, lastName, orderNumber, paidAt, paymentChannel, items,
-    subtotal, fee, total, currency, receiptDownloadUrl, ctx, taxInvoice, regCode,
+    subtotal, fee, total, currency, receiptDownloadUrl, ctx, taxInvoice, regCode, promotion,
   );
 
   try {

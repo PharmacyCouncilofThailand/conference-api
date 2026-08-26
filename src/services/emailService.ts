@@ -431,12 +431,13 @@ export async function sendPaymentReceiptEmail(
   currency: string,
   receiptDownloadUrl: string,
   taxInvoice?: TaxInvoiceEmailInfo,
-  regCode?: string
+  regCode?: string,
+  promotion?: { discount: number; promoCode: string | null },
 ): Promise<void> {
   const ctx = getDefaultEventEmailContext();
   await sendEventPaymentReceiptEmail(
     email, firstName, lastName, orderNumber, paidAt, paymentChannel,
-    items, subtotal, fee, total, currency, receiptDownloadUrl, ctx, taxInvoice, regCode
+    items, subtotal, fee, total, currency, receiptDownloadUrl, ctx, taxInvoice, regCode, promotion
   );
 }
 
