@@ -57,6 +57,7 @@ import { validatePromoCode, settlePromoUsageSuccess, cancelPromoUsage } from "..
 import { processSuccessfulPayment as processSuccessfulPaymentService } from "../../modules/payments/registration-settlement.service.js";
 import { completeFreeCheckout, FreeCheckoutError } from "../../modules/payments/free-checkout.service.js";
 import { PromoReservationConflict, reservePromoUsageLocked } from "../../modules/payments/promo-usage.service.js";
+import { freeCheckoutResponse, promoReservationConflictResponse } from "../../modules/payments/api-contract.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -2213,31 +2214,22 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
               fastify.log.error(emailErr, `[CREATE-INTENT] Failed to send free registration email for order ${freeResult.orderId}`);
             }
 
-            return reply.send({
-              success: true,
-              data: {
-                free: true,
-                gateway: null,
-                redirectForm: null,
-                refno: null,
-                orderRef: null,
-                orderId: freeResult.orderId,
-                orderNumber: freeResult.orderNumber,
-                regCode: freeResult.regCode,
-                subtotal: subtotalBeforeDiscount,
-                discountAmount: freeResult.discountAmount,
-                discountType: freeResult.discountType,
-                discountValue: freeResult.discountValue,
-                netAmount: 0,
-                fee: 0,
-                total: 0,
-                currency,
-                feeMethod: null,
-                paymentChannel: "free",
-              },
-            });
+            return reply.send(freeCheckoutResponse({
+              orderId: freeResult.orderId,
+              orderNumber: freeResult.orderNumber,
+              regCode: freeResult.regCode,
+              subtotal: subtotalBeforeDiscount,
+              discountAmount: freeResult.discountAmount,
+              discountType: freeResult.discountType,
+              discountValue: freeResult.discountValue,
+              currency,
+            }));
           } catch (error) {
-            if (error instanceof PromoReservationConflict || error instanceof FreeCheckoutError) {
+            if (error instanceof PromoReservationConflict) {
+              const mapped = promoReservationConflictResponse(error);
+              return reply.status(mapped.statusCode).send(mapped.body);
+            }
+            if (error instanceof FreeCheckoutError) {
               return reply.status(error.statusCode).send({
                 success: false,
                 code: error.code,
@@ -2691,11 +2683,8 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         });
       } catch (error) {
         if (error instanceof PromoReservationConflict) {
-          return reply.status(error.statusCode).send({
-            success: false,
-            code: error.code,
-            error: error.message,
-          });
+          const mapped = promoReservationConflictResponse(error);
+          return reply.status(mapped.statusCode).send(mapped.body);
         }
         fastify.log.error(error);
         return reply.status(500).send({
