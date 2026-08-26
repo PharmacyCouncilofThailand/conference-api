@@ -23,3 +23,23 @@ test("free promo receipt shows free registration method and zero total", () => {
   assert.equal(view.promoCode, "FREE100");
   assert.equal(view.paymentMethod, "ยกเว้นค่าลงทะเบียน / Promo Code");
 });
+
+test("receipt view preserves long promo code exactly", () => {
+  const promoCode = "V15BUSUPV15BUSUPV15BUSUPV15BUSUPV";
+  const view = toReceiptViewData({
+    orderNumber: "CONF-LONG-PROMO",
+    paidAt: new Date("2026-08-26T10:00:00Z"),
+    paymentChannel: "free",
+    currency: "THB",
+    items: [{ name: "Conference Ticket", type: "ticket", price: 500, quantity: 1 }],
+    subtotal: 500,
+    discount: 500,
+    promoCode,
+    fee: 0,
+    total: 0,
+    customerName: "Receipt User",
+    customerEmail: "receipt@example.test",
+  });
+
+  assert.equal(view.promoCode, promoCode);
+});

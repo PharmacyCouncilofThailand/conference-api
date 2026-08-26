@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet } from "@react-pdf/renderer";
 import { theme, fmtMoney } from "../theme.js";
 import { ReceiptItem } from "../types.js";
+import { formatPromoCodeForReceipt } from "../promoCodeDisplay.js";
 
 const styles = StyleSheet.create({
   table: {
@@ -64,6 +65,21 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     fontSize: 16,
     color: theme.colors.primary,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  promoRowBlank: {
+    width: "60%",
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+  promoRowText: {
+    width: "40%",
+    textAlign: "left",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    fontSize: 14,
+    color: theme.colors.secondary,
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
@@ -203,13 +219,21 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
             <Text style={styles.summaryValue}>{fmtMoney(subtotal)}</Text>
           </View>
           {discount > 0 ? (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryBlank}> </Text>
-              <Text style={styles.summaryLabel}>
-                ส่วนลด{promoCode ? ` (${promoCode})` : ""}
-              </Text>
-              <Text style={styles.summaryValue}>-{fmtMoney(discount)}</Text>
-            </View>
+            <>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryBlank}> </Text>
+                <Text style={styles.summaryLabel}>ส่วนลด</Text>
+                <Text style={styles.summaryValue}>-{fmtMoney(discount)}</Text>
+              </View>
+              {promoCode ? (
+                <View style={styles.summaryRow}>
+                  <Text style={styles.promoRowBlank}> </Text>
+                  <Text style={styles.promoRowText}>
+                    Promo Code: {formatPromoCodeForReceipt(promoCode)}
+                  </Text>
+                </View>
+              ) : null}
+            </>
           ) : null}
           {fee > 0 ? (
             <View style={styles.summaryRow}>
