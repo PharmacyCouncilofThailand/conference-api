@@ -54,6 +54,7 @@ import { sendPaymentReceiptEmail } from "../../services/emailService.js";
 import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
 import { resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
 import { validatePromoCode, reservePromoUsage, settlePromoUsageSuccess, cancelPromoUsage } from "../../utils/promoEngine.js";
+import { processSuccessfulPayment as processSuccessfulPaymentService } from "../../modules/payments/registration-settlement.service.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -732,7 +733,7 @@ async function countConfirmedWorkshopEnrollments(eventId: number, sessionId: num
  * Used by both webhook and verify endpoint.
  * Returns { order, user } for email sending, or null if order not found.
  */
-async function processSuccessfulPayment(
+async function processSuccessfulPaymentLegacy(
   fastify: {
     log: {
       info: (...args: any[]) => void;
@@ -1031,6 +1032,35 @@ async function processSuccessfulPayment(
     fastify.log.info(`${isAddonOnlyOrder ? "Addon-only" : "Created 1 registration"} + ${totalSessionLinks} session links + updated soldCount for order ${orderId}`);
 
     return { order: { ...order, status: "paid" as string }, user, regCode };
+  });
+}
+
+async function processSuccessfulPayment(
+  fastify: {
+    log: {
+      info: (...args: any[]) => void;
+      error: (...args: any[]) => void;
+      warn?: (...args: any[]) => void;
+    };
+  },
+  orderId: number,
+  providerRef: string,
+  workshopSessionId: number | null,
+  receiptUrl: string | null,
+  paymentChannel: string,
+  paymentProvider: "stripe" | "pay_solutions" | "ktb_fastpay" = "stripe",
+  providerStatus: string = "PAID",
+  paymentDetails: Record<string, unknown> | null = null,
+) {
+  return processSuccessfulPaymentService(fastify.log, {
+    orderId,
+    providerRef,
+    workshopSessionId,
+    receiptUrl,
+    paymentChannel,
+    paymentProvider,
+    providerStatus,
+    paymentDetails,
   });
 }
 
