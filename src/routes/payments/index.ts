@@ -53,10 +53,10 @@ import { generateReceiptPdf } from "../../services/receiptPdf.js";
 import { sendPaymentReceiptEmail } from "../../services/emailService.js";
 import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
 import { resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
-import { validatePromoCode, reservePromoUsage, settlePromoUsageSuccess, cancelPromoUsage } from "../../utils/promoEngine.js";
+import { validatePromoCode, settlePromoUsageSuccess, cancelPromoUsage } from "../../utils/promoEngine.js";
 import { processSuccessfulPayment as processSuccessfulPaymentService } from "../../modules/payments/registration-settlement.service.js";
 import { completeFreeCheckout, FreeCheckoutError } from "../../modules/payments/free-checkout.service.js";
-import { PromoReservationConflict } from "../../modules/payments/promo-usage.service.js";
+import { PromoReservationConflict, reservePromoUsageLocked } from "../../modules/payments/promo-usage.service.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -2318,11 +2318,11 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             },
           });
 
-          // Settle promo usage
+          // This legacy zero-total branch is unreachable because the atomic free
+          // checkout returns before the paid-flow order is created. Fail closed
+          // if future control-flow changes ever make it reachable.
           if (promoResult.promoCodeId) {
-            await reservePromoUsage(promoResult.promoCodeId, userId, order.id, discountAmount);
-            await settlePromoUsageSuccess(order.id);
-            fastify.log.info(`[CREATE-INTENT] Promo settled for free order ${order.id}`);
+            throw new Error("Legacy free promo settlement path must not execute");
           }
 
           // Process registration (reuse shared helper)
@@ -2486,31 +2486,58 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             orderRef2: orderNumber,
           });
 
-          await db.insert(payments).values({
-            orderId: order.id,
-            amount: String(chargeAmount),
-            status: "pending",
-            paymentChannel: paymentMethod === "qr" ? "qr" : "card",
-            paymentProvider: "ktb_fastpay",
-            providerRef: ktbOrderRef,
-            providerStatus: "PENDING",
-            paymentDetails: {
-              requestedMethod: paymentMethod,
-              workshopSessionId: workshopSessionId || null,
-              optionalSessionIds: validatedOptionalSessionIds,
-              processingFee: 0,
-              processingVat: 0,
-              ktb: {
-                request: ktbPayload.fields,
-                actionUrl: ktbPayload.actionUrl,
-                orderRef: ktbOrderRef,
+          await db.transaction(async (tx) => {
+            if (promoCode && promoCode.trim()) {
+              const authoritativePromo = await reservePromoUsageLocked(tx, {
+                code: promoCode.trim(),
+                eventId,
+                userId,
+                currency,
+                subtotal: subtotalBeforeDiscount,
+                selectedTicketTypeIds,
+                orderId: order.id,
+              });
+              if (authoritativePromo.netAmount !== chargeAmount) {
+                throw new PromoReservationConflict(
+                  "PROMO_CHECKOUT_CHANGED",
+                  "Checkout total changed; refresh pricing and try again",
+                );
+              }
+              await tx.update(orders).set({
+                discountAmount: String(authoritativePromo.discountAmount),
+                promoCodeId: authoritativePromo.promoCodeId,
+                promoCode: promoCode.trim().toUpperCase(),
+                promoDiscountType: authoritativePromo.discountType,
+                promoDiscountValue: String(authoritativePromo.discountValue),
+                totalAmount: String(authoritativePromo.netAmount),
+              }).where(eq(orders.id, order.id));
+            }
+
+            await tx.insert(payments).values({
+              orderId: order.id,
+              amount: String(chargeAmount),
+              status: "pending",
+              paymentChannel: paymentMethod === "qr" ? "qr" : "card",
+              paymentProvider: "ktb_fastpay",
+              providerRef: ktbOrderRef,
+              providerStatus: "PENDING",
+              paymentDetails: {
+                requestedMethod: paymentMethod,
+                workshopSessionId: workshopSessionId || null,
+                optionalSessionIds: validatedOptionalSessionIds,
+                processingFee: 0,
+                processingVat: 0,
+                ktb: {
+                  request: ktbPayload.fields,
+                  actionUrl: ktbPayload.actionUrl,
+                  orderRef: ktbOrderRef,
+                },
               },
-            },
+            });
           });
 
           if (promoResult.promoCodeId) {
-            await reservePromoUsage(promoResult.promoCodeId, userId, order.id, discountAmount);
-            fastify.log.info(`[CREATE-INTENT] Reserved promo usage for order ${order.id}, promoId=${promoResult.promoCodeId}`);
+            fastify.log.info(`[CREATE-INTENT] Authoritative promo reservation committed for order ${order.id}, promoId=${promoResult.promoCodeId}`);
           }
 
           fastify.log.info(
@@ -2572,32 +2599,60 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           throw new Error("Failed to build Pay Solutions form payload");
         }
 
-        // 9. Create Payment record
-        await db.insert(payments).values({
-          orderId: order.id,
-          amount: String(chargeAmount),
-          status: "pending",
-          paymentChannel: paySolutionsChannel,
-          paymentProvider: "pay_solutions",
-          providerRef: paySolutionsRefno,
-          providerStatus: "PENDING",
-          paySolutionsRefno,
-          paySolutionsChannel,
-          paymentDetails: {
-            requestedMethod: paymentMethod,
-            workshopSessionId: workshopSessionId || null,
-            optionalSessionIds: validatedOptionalSessionIds,
-            processingFee: 0,
-            processingVat: 0,
-            formSubmitActionUrl: formSubmitPayload.actionUrl,
-            formSubmitFields: formSubmitPayload.fields,
-          },
+        // 9-10. Final promo reservation + payment persistence are one transaction.
+        await db.transaction(async (tx) => {
+          if (promoCode && promoCode.trim()) {
+            const authoritativePromo = await reservePromoUsageLocked(tx, {
+              code: promoCode.trim(),
+              eventId,
+              userId,
+              currency,
+              subtotal: subtotalBeforeDiscount,
+              selectedTicketTypeIds,
+              orderId: order.id,
+            });
+
+            if (authoritativePromo.netAmount !== chargeAmount) {
+              throw new PromoReservationConflict(
+                "PROMO_CHECKOUT_CHANGED",
+                "Checkout total changed; refresh pricing and try again",
+              );
+            }
+
+            await tx.update(orders).set({
+              discountAmount: String(authoritativePromo.discountAmount),
+              promoCodeId: authoritativePromo.promoCodeId,
+              promoCode: promoCode.trim().toUpperCase(),
+              promoDiscountType: authoritativePromo.discountType,
+              promoDiscountValue: String(authoritativePromo.discountValue),
+              totalAmount: String(authoritativePromo.netAmount),
+            }).where(eq(orders.id, order.id));
+          }
+
+          await tx.insert(payments).values({
+            orderId: order.id,
+            amount: String(chargeAmount),
+            status: "pending",
+            paymentChannel: paySolutionsChannel,
+            paymentProvider: "pay_solutions",
+            providerRef: paySolutionsRefno,
+            providerStatus: "PENDING",
+            paySolutionsRefno,
+            paySolutionsChannel,
+            paymentDetails: {
+              requestedMethod: paymentMethod,
+              workshopSessionId: workshopSessionId || null,
+              optionalSessionIds: validatedOptionalSessionIds,
+              processingFee: 0,
+              processingVat: 0,
+              formSubmitActionUrl: formSubmitPayload.actionUrl,
+              formSubmitFields: formSubmitPayload.fields,
+            },
+          });
         });
 
-        // 10. Reserve promo usage (pending) if promo was applied
         if (promoResult.promoCodeId) {
-          await reservePromoUsage(promoResult.promoCodeId, userId, order.id, discountAmount);
-          fastify.log.info(`[CREATE-INTENT] Reserved promo usage for order ${order.id}, promoId=${promoResult.promoCodeId}`);
+          fastify.log.info(`[CREATE-INTENT] Authoritative promo reservation committed for order ${order.id}, promoId=${promoResult.promoCodeId}`);
         }
 
         // 11. Return form-submit payload + fee breakdown + discount info
@@ -2624,6 +2679,13 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           },
         });
       } catch (error) {
+        if (error instanceof PromoReservationConflict) {
+          return reply.status(error.statusCode).send({
+            success: false,
+            code: error.code,
+            error: error.message,
+          });
+        }
         fastify.log.error(error);
         return reply.status(500).send({
           success: false,

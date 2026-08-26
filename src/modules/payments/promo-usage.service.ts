@@ -21,7 +21,8 @@ export type PromoReservationErrorCode =
   | "PROMO_MIN_PURCHASE"
   | "PROMO_TICKET_MISMATCH"
   | "PROMO_USAGE_LIMIT_REACHED"
-  | "PROMO_USER_LIMIT_REACHED";
+  | "PROMO_USER_LIMIT_REACHED"
+  | "PROMO_CHECKOUT_CHANGED";
 
 export class PromoReservationConflict extends Error {
   readonly statusCode = 409;

@@ -194,6 +194,73 @@ test("proves free checkout atomicity, promo concurrency, and idempotent settleme
         (SELECT count(*)::int FROM registrations WHERE event_id = ${race.eventId} AND status = 'confirmed') AS registrations
     `;
     assert.deepEqual(raceState, { usages: 1, used_count: 1, paid_orders: 1, registrations: 1 });
+
+    // Paid promo reservations use the same authoritative lock and cannot
+    // create two pending payments when maxUses=1.
+    const paidRace = await seedFixture(sql, 1);
+    await sql`UPDATE promo_codes SET discount_value = 10 WHERE id = ${paidRace.promoId}`;
+    const { db } = await import("../../database/index.js");
+    const { orders, payments } = await import("../../database/schema.js");
+    const { reservePromoUsageLocked } = await import("./promo-usage.service.js");
+
+    const createPaidReservation = async (userId: number) => db.transaction(async (tx) => {
+      const orderNumber = `TEST-PAID-${randomUUID().slice(0, 10)}`;
+      const [order] = await tx.insert(orders).values({
+        userId,
+        eventId: paidRace.eventId,
+        orderNumber,
+        subtotalAmount: "5000",
+        discountAmount: "500",
+        promoCodeId: paidRace.promoId,
+        promoCode: paidRace.promoCode,
+        promoDiscountType: "percentage",
+        promoDiscountValue: "10",
+        totalAmount: "4500",
+        currency: "THB",
+        status: "pending",
+        needTaxInvoice: false,
+      }).returning();
+
+      const promo = await reservePromoUsageLocked(tx, {
+        code: paidRace.promoCode,
+        eventId: paidRace.eventId,
+        userId,
+        currency: "THB",
+        subtotal: 5000,
+        selectedTicketTypeIds: [paidRace.ticketId],
+        orderId: order.id,
+      });
+      assert.equal(promo.netAmount, 4500);
+
+      await tx.insert(payments).values({
+        orderId: order.id,
+        amount: "4500",
+        status: "pending",
+        paymentChannel: "card",
+        paymentProvider: "pay_solutions",
+        providerRef: `TEST-${order.id}`,
+        providerStatus: "PENDING",
+      });
+
+      return order.id;
+    });
+
+    const paidResults = await Promise.allSettled([
+      createPaidReservation(paidRace.userIds[0]),
+      createPaidReservation(paidRace.userIds[1]),
+    ]);
+    assert.equal(paidResults.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(paidResults.filter((result) => result.status === "rejected").length, 1);
+
+    const [paidRaceState] = await sql<Array<{ pending_usages: number; pending_payments: number }>>`
+      SELECT
+        (SELECT count(*)::int FROM promo_code_usages WHERE promo_code_id = ${paidRace.promoId} AND status = 'pending') AS pending_usages,
+        (SELECT count(*)::int
+           FROM payments p
+           JOIN orders o ON o.id = p.order_id
+          WHERE o.event_id = ${paidRace.eventId} AND p.status = 'pending') AS pending_payments
+    `;
+    assert.deepEqual(paidRaceState, { pending_usages: 1, pending_payments: 1 });
   } finally {
     await resetFixtures(sql);
     await sql.end({ timeout: 2 });
