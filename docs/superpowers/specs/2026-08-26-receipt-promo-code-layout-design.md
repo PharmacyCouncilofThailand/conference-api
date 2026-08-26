@@ -1,7 +1,7 @@
 # Receipt Promo Code Layout Design
 
 Date: 2026-08-26
-Status: Approved in chat; pending written-spec review
+Status: Approved
 
 ## Goal
 
