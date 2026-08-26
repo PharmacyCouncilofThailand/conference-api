@@ -55,6 +55,8 @@ import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticke
 import { resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
 import { validatePromoCode, reservePromoUsage, settlePromoUsageSuccess, cancelPromoUsage } from "../../utils/promoEngine.js";
 import { processSuccessfulPayment as processSuccessfulPaymentService } from "../../modules/payments/registration-settlement.service.js";
+import { completeFreeCheckout, FreeCheckoutError } from "../../modules/payments/free-checkout.service.js";
+import { PromoReservationConflict } from "../../modules/payments/promo-usage.service.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -2107,7 +2109,136 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         // 6. Charge ticket price only — no payment processing fee pass-through
         const chargeAmount = totalAmount;
 
-        // 7. Create Order record (with orderNumber + promo info)
+        // Zero-total checkout is completed atomically before the paid-order path
+        // creates any persistent order state.
+        if (chargeAmount === 0) {
+          try {
+            const freeResult = await completeFreeCheckout({
+              logger: fastify.log,
+              orderNumber: generateOrderNumber(),
+              userId,
+              eventId,
+              currency,
+              subtotal: subtotalBeforeDiscount,
+              preliminaryDiscountAmount: discountAmount,
+              preliminaryDiscountType: (promoResult.discountType as "percentage" | "fixed" | undefined) ?? null,
+              preliminaryDiscountValue: promoResult.discountValue ?? null,
+              promoCode: promoCode?.trim() || null,
+              selectedTicketTypeIds,
+              items: [
+                ...(primaryTicket ? [{
+                  itemType: "ticket" as const,
+                  ticketTypeId: primaryTicket.id,
+                  price: primaryTicket.price,
+                  quantity: 1,
+                }] : []),
+                ...resolvedAddOns.map((addon) => ({
+                  itemType: "addon" as const,
+                  ticketTypeId: addon.id,
+                  price: addon.price,
+                  quantity: 1,
+                })),
+              ],
+              workshopSessionId: workshopSessionId || null,
+              optionalSessionIds: validatedOptionalSessionIds,
+              taxInvoice: {
+                needTaxInvoice: taxInvoice.needTaxInvoice,
+                taxName: taxInvoice.taxName ?? null,
+                taxId: taxInvoice.taxId ?? null,
+                taxAddress: taxInvoice.taxAddress ?? null,
+                taxSubDistrict: taxInvoice.taxSubDistrict ?? null,
+                taxDistrict: taxInvoice.taxDistrict ?? null,
+                taxProvince: taxInvoice.taxProvince ?? null,
+                taxPostalCode: taxInvoice.taxPostalCode ?? null,
+                taxFullAddress: taxInvoice.taxFullAddress ?? null,
+              },
+            });
+
+            fastify.log.info(
+              `[CREATE-INTENT] zero-total checkout committed for order ${freeResult.orderId}`
+            );
+
+            // Email is intentionally best-effort and runs only after DB commit.
+            try {
+              const apiBaseUrl = getPublicApiBaseUrl();
+              const receiptToken = generateReceiptToken(freeResult.orderId);
+              const receiptDownloadUrl = `${apiBaseUrl}/api/payments/receipt/${receiptToken}`;
+              const emailItems = await db
+                .select({
+                  name: ticketTypes.name,
+                  price: ticketTypes.price,
+                  category: ticketTypes.category,
+                })
+                .from(orderItems)
+                .innerJoin(ticketTypes, eq(orderItems.ticketTypeId, ticketTypes.id))
+                .where(eq(orderItems.orderId, freeResult.orderId));
+
+              await sendPaymentReceiptEmail(
+                freeResult.user.email,
+                freeResult.user.firstName,
+                freeResult.user.lastName,
+                freeResult.orderNumber,
+                new Date(),
+                "free",
+                emailItems.map((item) => ({
+                  name: item.name,
+                  type: item.category,
+                  price: Number(item.price),
+                })),
+                subtotalBeforeDiscount,
+                0,
+                0,
+                currency,
+                receiptDownloadUrl,
+                taxInvoice.needTaxInvoice
+                  ? {
+                      taxName: taxInvoice.taxName || "",
+                      taxId: taxInvoice.taxId || "",
+                      taxFullAddress: taxInvoice.taxFullAddress || "",
+                    }
+                  : undefined,
+                freeResult.regCode,
+              );
+            } catch (emailErr) {
+              fastify.log.error(emailErr, `[CREATE-INTENT] Failed to send free registration email for order ${freeResult.orderId}`);
+            }
+
+            return reply.send({
+              success: true,
+              data: {
+                free: true,
+                gateway: null,
+                redirectForm: null,
+                refno: null,
+                orderRef: null,
+                orderId: freeResult.orderId,
+                orderNumber: freeResult.orderNumber,
+                regCode: freeResult.regCode,
+                subtotal: subtotalBeforeDiscount,
+                discountAmount: freeResult.discountAmount,
+                discountType: freeResult.discountType,
+                discountValue: freeResult.discountValue,
+                netAmount: 0,
+                fee: 0,
+                total: 0,
+                currency,
+                feeMethod: null,
+                paymentChannel: "free",
+              },
+            });
+          } catch (error) {
+            if (error instanceof PromoReservationConflict || error instanceof FreeCheckoutError) {
+              return reply.status(error.statusCode).send({
+                success: false,
+                code: error.code,
+                error: error.message,
+              });
+            }
+            throw error;
+          }
+        }
+
+        // 7. Create Order record (paid flow only, chargeAmount > 0)
         const orderNumber = generateOrderNumber();
         const [order] = await db
           .insert(orders)
