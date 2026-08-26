@@ -8,6 +8,10 @@ import {
 import { eq, and, or, count, lt, sql } from "drizzle-orm";
 import { normalizePromoCode, promoAppliesToEvent } from "./promoCodeNormalization.js";
 import { calculatePromoDiscount } from "./promoDiscount.js";
+import {
+  cancelPromoUsage as cancelPromoUsageTransactional,
+  settlePromoUsageSuccess as settlePromoUsageSuccessTransactional,
+} from "../modules/payments/promo-usage.service.js";
 
 // TTL for pending promo reservations (configurable via env, default 15 min)
 const PROMO_PENDING_TTL_MS = parseInt(process.env.PROMO_PENDING_TTL_MINUTES || "15", 10) * 60 * 1000;
@@ -213,62 +217,12 @@ export async function reservePromoUsage(
 }
 
 /**
- * Settle a promo code usage after successful payment (idempotent).
- * Increments usedCount on the promo_codes table.
+ * Backward-compatible wrappers around the transaction-aware promo usage service.
  */
 export async function settlePromoUsageSuccess(orderId: number): Promise<void> {
-  // Find pending usage for this order
-  const [usage] = await db
-    .select()
-    .from(promoCodeUsages)
-    .where(
-      and(
-        eq(promoCodeUsages.orderId, orderId),
-        eq(promoCodeUsages.status, "pending")
-      )
-    )
-    .limit(1);
-
-  if (!usage) return; // Already settled or no promo used
-
-  const now = new Date();
-
-  // Mark as used
-  await db
-    .update(promoCodeUsages)
-    .set({ status: "used", usedAt: now })
-    .where(eq(promoCodeUsages.id, usage.id));
-
-  // Increment usedCount on promo_codes
-  const [promo] = await db
-    .select({ usedCount: promoCodes.usedCount })
-    .from(promoCodes)
-    .where(eq(promoCodes.id, usage.promoCodeId))
-    .limit(1);
-
-  if (promo) {
-    await db
-      .update(promoCodes)
-      .set({ usedCount: promo.usedCount + 1 })
-      .where(eq(promoCodes.id, usage.promoCodeId));
-  }
+  await settlePromoUsageSuccessTransactional(orderId);
 }
 
-/**
- * Cancel a promo code usage (when order is cancelled/failed).
- */
 export async function cancelPromoUsage(orderId: number): Promise<void> {
-  const now = new Date();
-  await db
-    .update(promoCodeUsages)
-    .set({ status: "cancelled", cancelledAt: now })
-    .where(
-      and(
-        eq(promoCodeUsages.orderId, orderId),
-        or(
-          eq(promoCodeUsages.status, "pending"),
-          eq(promoCodeUsages.status, "expired")
-        )
-      )
-    );
+  await cancelPromoUsageTransactional(orderId);
 }
