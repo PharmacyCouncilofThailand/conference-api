@@ -5,7 +5,8 @@ import {
   promoCodeRuleItems,
   promoCodeUsages,
 } from "../database/schema.js";
-import { eq, and, or, count, lt } from "drizzle-orm";
+import { eq, and, or, count, lt, sql } from "drizzle-orm";
+import { normalizePromoCode, promoAppliesToEvent } from "./promoCodeNormalization.js";
 
 // TTL for pending promo reservations (configurable via env, default 15 min)
 const PROMO_PENDING_TTL_MS = parseInt(process.env.PROMO_PENDING_TTL_MINUTES || "15", 10) * 60 * 1000;
@@ -42,6 +43,7 @@ export async function cleanupExpiredUsages(): Promise<void> {
  */
 export async function validatePromoCode(
   code: string,
+  eventId: number,
   userId: number,
   currency: "THB" | "USD",
   subtotal: number,
@@ -50,15 +52,20 @@ export async function validatePromoCode(
   // 1. Clean up expired pending usages first
   await cleanupExpiredUsages();
 
-  // 2. Find the promo code
+  // 2. Find the promo code using canonical comparison for legacy padded/mixed-case rows
+  const normalizedCode = normalizePromoCode(code);
   const [promo] = await db
     .select()
     .from(promoCodes)
-    .where(eq(promoCodes.code, code.toUpperCase()))
+    .where(sql`upper(trim(${promoCodes.code})) = ${normalizedCode}`)
     .limit(1);
 
   if (!promo) {
     return { valid: false, error: "Promo code not found" };
+  }
+
+  if (!promoAppliesToEvent(promo.eventId, eventId)) {
+    return { valid: false, error: "Promo code is not valid for this event" };
   }
 
   // 3. Check isActive

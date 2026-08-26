@@ -1649,6 +1649,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         if (promoCode && promoCode.trim()) {
           const result = await validatePromoCode(
             promoCode.trim(),
+            eventId,
             userId,
             currency,
             subtotal,
@@ -2047,6 +2048,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         if (promoCode && promoCode.trim()) {
           const validation = await validatePromoCode(
             promoCode.trim(),
+            eventId,
             userId,
             currency,
             subtotalBeforeDiscount,

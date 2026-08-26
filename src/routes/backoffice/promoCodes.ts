@@ -1,8 +1,9 @@
 import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
 import { promoCodes, events, staffEventAssignments, promoCodeRuleSets, promoCodeRuleItems, ticketTypes } from "../../database/schema.js";
-import { eq, desc, ilike, and, count, inArray, or } from "drizzle-orm";
+import { eq, desc, ilike, and, count, inArray, or, ne, sql } from "drizzle-orm";
 import { z } from "zod";
+import { normalizePromoCode } from "../../utils/promoCodeNormalization.js";
 
 const promoQuerySchema = z.object({
     page: z.coerce.number().min(1).default(1),
@@ -19,7 +20,7 @@ const ruleSetSchema = z.object({
 
 const createPromoSchema = z.object({
     eventId: z.number().nullable().optional(),
-    code: z.string().min(1).max(50),
+    code: z.string().trim().min(1).max(50),
     description: z.string().optional(),
     discountType: z.enum(['percentage', 'fixed']),
     discountValue: z.number().min(0).default(0),
@@ -212,11 +213,13 @@ export default async function (fastify: FastifyInstance) {
         const data = parseResult.data;
 
         try {
-            // Check if code already exists
+            const normalizedCode = normalizePromoCode(data.code);
+
+            // Check if code already exists using canonical comparison for legacy rows
             const [existing] = await db
                 .select()
                 .from(promoCodes)
-                .where(eq(promoCodes.code, data.code.toUpperCase()));
+                .where(sql`upper(trim(${promoCodes.code})) = ${normalizedCode}`);
 
             if (existing) {
                 return reply.status(400).send({ error: "Promo code already exists" });
@@ -224,7 +227,7 @@ export default async function (fastify: FastifyInstance) {
 
             const [newPromo] = await db.insert(promoCodes).values({
                 eventId: data.eventId || null,
-                code: data.code.toUpperCase(),
+                code: normalizedCode,
                 description: data.description || null,
                 discountType: data.discountType,
                 discountValue: data.discountValue.toString(),
@@ -287,7 +290,25 @@ export default async function (fastify: FastifyInstance) {
             // Build update object
             const updates: any = {};
             if (data.eventId !== undefined) updates.eventId = data.eventId;
-            if (data.code) updates.code = data.code.toUpperCase();
+            if (data.code) {
+                const normalizedCode = normalizePromoCode(data.code);
+                const [duplicate] = await db
+                    .select({ id: promoCodes.id })
+                    .from(promoCodes)
+                    .where(
+                        and(
+                            sql`upper(trim(${promoCodes.code})) = ${normalizedCode}`,
+                            ne(promoCodes.id, parseInt(id))
+                        )
+                    )
+                    .limit(1);
+
+                if (duplicate) {
+                    return reply.status(400).send({ error: "Promo code already exists" });
+                }
+
+                updates.code = normalizedCode;
+            }
             if (data.description !== undefined) updates.description = data.description;
             if (data.discountType) updates.discountType = data.discountType;
             if (data.discountValue !== undefined) updates.discountValue = data.discountValue.toString();
