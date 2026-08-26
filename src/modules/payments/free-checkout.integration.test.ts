@@ -3,7 +3,9 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { openPaymentsTestDatabase, validatePaymentsTestDatabaseUrl } from "./test-database.js";
 
-const integrationRunRequested = process.env.npm_lifecycle_event === "test:payments:integration";
+const integrationRunRequested =
+  process.env.npm_lifecycle_event === "test:payments:integration"
+  || process.env.PAYMENTS_RUN_INTEGRATION?.trim().toLowerCase() === "true";
 const PREFIX = "__payments_test__";
 
 async function resetFixtures(sql: Awaited<ReturnType<typeof openPaymentsTestDatabase>>) {
@@ -111,6 +113,14 @@ test("payments integration database guard requires an isolated test target", () 
   assert.throws(
     () => validatePaymentsTestDatabaseUrl({ TEST_DATABASE_URL: "postgresql://user:pass@localhost/conference" }),
     /must contain test/,
+  );
+  assert.equal(
+    validatePaymentsTestDatabaseUrl({
+      TEST_DATABASE_URL: "postgresql://user:pass@localhost/confer_db",
+      DATABASE_URL: "postgresql://user:pass@localhost/railway",
+      PAYMENTS_ALLOW_UNMARKED_TEST_DATABASE: "true",
+    }),
+    "postgresql://user:pass@localhost/confer_db",
   );
 });
 

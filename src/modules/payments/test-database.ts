@@ -50,7 +50,8 @@ export function validatePaymentsTestDatabaseUrl(environment: NodeJS.ProcessEnv =
   const parsed = parsePostgresUrl(value);
   const database = decodeURIComponent(parsed.pathname.replace(/^\/+/, "")).toLowerCase();
   const schema = schemaIdentity(parsed);
-  if (!database.includes("test") && !schema.includes("test")) {
+  const allowUnmarkedTestDatabase = environment.PAYMENTS_ALLOW_UNMARKED_TEST_DATABASE?.trim().toLowerCase() === "true";
+  if (!database.includes("test") && !schema.includes("test") && !allowUnmarkedTestDatabase) {
     throw new PaymentsTestDatabaseError("TEST_DATABASE_MARKER_REQUIRED", "Payment integration database name or schema must contain test");
   }
 
