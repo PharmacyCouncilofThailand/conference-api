@@ -231,14 +231,19 @@ function getRequestedKtbLang(request: FastifyRequest): "T" | "E" {
   return normalizeKtbLang(requestedLocale || referer);
 }
 
-function mapGatewayFromPaymentProvider(paymentProvider?: string | null): "ktb" | "pay_solutions" | "stripe" {
+function mapGatewayFromPaymentProvider(
+  paymentProvider?: string | null,
+): "ktb" | "pay_solutions" | "stripe" | null {
   switch (paymentProvider) {
     case "ktb_fastpay":
       return "ktb";
     case "pay_solutions":
       return "pay_solutions";
-    default:
+    case "stripe":
       return "stripe";
+    case "internal":
+    default:
+      return null;
   }
 }
 
