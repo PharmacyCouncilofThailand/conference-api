@@ -29,6 +29,7 @@ import {
     formatAbstractWordCountIssue,
     validateAbstractWords,
 } from "../../../utils/abstractWordCount.js";
+import { summarizeAbstractValidationIssues } from "./validation.js";
 
 const ALLOWED_MIME_TYPES = ["application/pdf"];
 const MAX_FILE_SIZE = 30 * 1024 * 1024;
@@ -419,10 +420,20 @@ export default async function (fastify: FastifyInstance) {
                 coAuthors: coAuthorsData,
             });
             if (!result.success) {
+                request.log.warn(
+                    {
+                        requestId: request.id,
+                        validationIssues: summarizeAbstractValidationIssues(result.error),
+                    },
+                    "Abstract resubmission validation failed",
+                );
+
                 return reply.status(400).send({
                     success: false,
+                    code: "VALIDATION_ERROR",
                     error: result.error.errors[0].message,
                     details: result.error.errors,
+                    requestId: request.id,
                 });
             }
 

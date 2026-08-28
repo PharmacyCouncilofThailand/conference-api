@@ -29,6 +29,7 @@ import {
   formatAbstractWordCountIssue,
   validateAbstractWords,
 } from "../../../utils/abstractWordCount.js";
+import { summarizeAbstractValidationIssues } from "./validation.js";
 
 // Allowed file types for abstract documents
 const ALLOWED_MIME_TYPES = ["application/pdf"];
@@ -217,10 +218,20 @@ export default async function (fastify: FastifyInstance) {
       // Validate form fields using schema
       const result = abstractSubmissionSchema.safeParse(dataToValidate);
       if (!result.success) {
+        request.log.warn(
+          {
+            requestId: request.id,
+            validationIssues: summarizeAbstractValidationIssues(result.error),
+          },
+          "Abstract submission validation failed",
+        );
+
         return reply.status(400).send({
           success: false,
+          code: "VALIDATION_ERROR",
           error: result.error.errors[0].message,
           details: result.error.errors,
+          requestId: request.id,
         });
       }
 
