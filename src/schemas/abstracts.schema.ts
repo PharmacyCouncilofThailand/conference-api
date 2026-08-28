@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+const normalizedEmailSchema = z
+    .string()
+    .trim()
+    .email('Invalid email address');
+
 export const abstractStatusSchema = z.enum(['pending', 'accepted', 'rejected', 'revision']);
 
 export const abstractRevisionTopicSchema = z.enum([
@@ -18,7 +23,7 @@ export const abstractRevisionTopicSchema = z.enum([
 export const coAuthorSchema = z.object({
     firstName: z.string().min(1, 'First name is required'),
     lastName: z.string().min(1, 'Last name is required'),
-    email: z.string().email('Invalid email address'),
+    email: normalizedEmailSchema,
     institution: z.string().min(1, 'Institution is required'),
     country: z.string().optional(),
 });
@@ -28,7 +33,7 @@ export const abstractSubmissionSchema = z.object({
     // Author Information
     firstName: z.string().min(1, 'First name is required'),
     lastName: z.string().min(1, 'Last name is required'),
-    email: z.string().email('Invalid email address'),
+    email: normalizedEmailSchema,
     affiliation: z.string().min(1, 'Affiliation is required'),
     country: z.string().optional(),
     phone: z.string().optional(),
