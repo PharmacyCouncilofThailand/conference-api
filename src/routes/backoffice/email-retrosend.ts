@@ -59,7 +59,16 @@ import {
   buildEventAbstractAcceptedEmailContent,
   buildEventAbstractRejectedEmailContent,
   buildEventRegistrationEmailContent,
+  type AbstractAcceptedConfirmation,
+  type RegistrationRateNotice,
 } from "../../services/emailTemplates.js";
+import {
+  buildConfirmationUrl,
+  getConfirmDeadlineDays,
+  issueConfirmationToken,
+  supersedeActiveTokens,
+} from "../../services/abstractConfirmation.js";
+import { resolvePris2026AbstractResultRateNotice } from "../../modules/pris2026/email-rate-notice.js";
 import { generateReceiptToken } from "../../utils/receiptToken.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +120,57 @@ function sortOrderItemsPrimaryFirst<T extends { type: string }>(items: T[]): T[]
 }
 
 const resolveEventContext = resolveEventEmailContext;
+
+export function buildRetrosendPreviewConfirmation(
+  ctx: EventEmailContext,
+  now: Date = new Date(),
+): AbstractAcceptedConfirmation {
+  return {
+    confirmUrl: buildConfirmationUrl(
+      "PREVIEW-ONLY",
+      "en",
+      ctx.websiteUrl || undefined,
+    ),
+    deadline: new Date(
+      now.getTime() + getConfirmDeadlineDays() * 24 * 60 * 60 * 1000,
+    ),
+  };
+}
+
+export function buildRetrosendAbstractResultContent(input: {
+  status: "accepted" | "rejected";
+  presentationType: "poster" | "oral" | null;
+  firstName: string;
+  lastName: string;
+  title: string;
+  ctx: EventEmailContext;
+  comment?: string;
+  registrationRateNotice?: RegistrationRateNotice;
+  confirmation?: AbstractAcceptedConfirmation;
+}) {
+  if (input.status === "rejected") {
+    return buildEventAbstractRejectedEmailContent(
+      input.firstName,
+      input.lastName,
+      input.title,
+      input.ctx,
+      input.comment,
+      input.registrationRateNotice,
+    );
+  }
+
+  const presentation = input.presentationType === "oral" ? "oral" : "poster";
+  return buildEventAbstractAcceptedEmailContent(
+    input.firstName,
+    input.lastName,
+    input.title,
+    presentation,
+    input.ctx,
+    input.comment,
+    input.confirmation,
+    input.registrationRateNotice,
+  );
+}
 
 
 /**
@@ -451,6 +511,7 @@ async function buildAbstractStatusResults(
       title: abstracts.title,
       status: abstracts.status,
       presentationType: abstracts.presentationType,
+      reviewComment: abstracts.reviewComment,
       userId: abstracts.userId,
       eventId: abstracts.eventId,
     })
@@ -495,10 +556,28 @@ async function buildAbstractStatusResults(
     }
 
     const ctx = await resolveEventContext(ab.eventId);
-    const subject =
-      emailType === "abstract-rejected"
-        ? `Abstract Submission Update - ${ctx.shortName}`
-        : `Congratulations! Abstract Accepted (${ab.presentationType === "oral" ? "Oral" : "Poster"}) - ${ctx.shortName}`;
+    const registrationRateNotice = await resolvePris2026AbstractResultRateNotice({
+      userId: ab.userId,
+      eventId: ab.eventId,
+    });
+    const previewConfirmation =
+      ab.status === "accepted"
+        ? buildRetrosendPreviewConfirmation(ctx)
+        : undefined;
+    const previewContent = buildRetrosendAbstractResultContent({
+      status: ab.status,
+      presentationType: ab.presentationType,
+      firstName: author.firstName,
+      lastName: author.lastName,
+      title: ab.title,
+      ctx,
+      comment: ab.reviewComment ?? undefined,
+      registrationRateNotice,
+      confirmation: previewConfirmation,
+    });
+    const subject = ab.status === "accepted"
+      ? `[Action Required] Abstract Accepted (${ab.presentationType === "oral" ? "Oral" : "Poster"}) - ${ctx.shortName}`
+      : previewContent.subject;
 
     const statusPreview = {
       subject,
@@ -529,6 +608,17 @@ async function buildAbstractStatusResults(
     try {
       if (ab.status === "accepted") {
         const presentation: "poster" | "oral" = ab.presentationType === "oral" ? "oral" : "poster";
+        try {
+          await supersedeActiveTokens(ab.id);
+        } catch (error) {
+          console.warn("Failed to supersede previous confirmation tokens", error);
+        }
+        const issued = await issueConfirmationToken(ab.id);
+        const confirmUrl = buildConfirmationUrl(
+          issued.rawToken,
+          "en",
+          ctx.websiteUrl || undefined,
+        );
         await sendEventAbstractAcceptedEmail(
           author.email,
           author.firstName,
@@ -536,6 +626,9 @@ async function buildAbstractStatusResults(
           ab.title,
           presentation,
           ctx,
+          ab.reviewComment ?? undefined,
+          { confirmUrl, deadline: issued.expiresAt },
+          registrationRateNotice,
         );
       } else {
         await sendEventAbstractRejectedEmail(
@@ -544,6 +637,8 @@ async function buildAbstractStatusResults(
           author.lastName,
           ab.title,
           ctx,
+          ab.reviewComment ?? undefined,
+          registrationRateNotice,
         );
       }
       results.push({ id: ab.id, email: author.email, name: fullName, type: emailType, status: "sent", reason: `TrackingID: ${ab.trackingId}` });
@@ -919,6 +1014,7 @@ export default async function (fastify: FastifyInstance) {
             title: abstracts.title,
             status: abstracts.status,
             presentationType: abstracts.presentationType,
+            reviewComment: abstracts.reviewComment,
             userId: abstracts.userId,
             eventId: abstracts.eventId,
           })
@@ -935,24 +1031,24 @@ export default async function (fastify: FastifyInstance) {
         if (!author) return reply.status(404).send({ success: false, error: "Author not found" });
 
         const ctx = await resolveEventContext(ab.eventId);
-        let content: { subject: string; html: string };
-        if (ab.status === "accepted") {
-          const presentation: "poster" | "oral" = ab.presentationType === "oral" ? "oral" : "poster";
-          content = buildEventAbstractAcceptedEmailContent(
-            author.firstName,
-            author.lastName,
-            ab.title,
-            presentation,
-            ctx,
-          );
-        } else {
-          content = buildEventAbstractRejectedEmailContent(
-            author.firstName,
-            author.lastName,
-            ab.title,
-            ctx,
-          );
-        }
+        const registrationRateNotice = await resolvePris2026AbstractResultRateNotice({
+          userId: ab.userId!,
+          eventId: ab.eventId,
+        });
+        const confirmation = ab.status === "accepted"
+          ? buildRetrosendPreviewConfirmation(ctx)
+          : undefined;
+        const content = buildRetrosendAbstractResultContent({
+          status: ab.status === "accepted" ? "accepted" : "rejected",
+          presentationType: ab.presentationType,
+          firstName: author.firstName,
+          lastName: author.lastName,
+          title: ab.title,
+          ctx,
+          comment: ab.reviewComment ?? undefined,
+          registrationRateNotice,
+          confirmation,
+        });
         return reply.send({ success: true, to: author.email, ...content });
       }
 

@@ -41,6 +41,7 @@ import {
   PRIS_2026_NOTICE_DEADLINE,
   resolvePris2026ManualReminderEligibility,
 } from "../../modules/pris2026/manual-reminder.js";
+import { resolvePris2026AbstractResultRateNotice } from "../../modules/pris2026/email-rate-notice.js";
 import { PRIS_2026_EVENT_CODE } from "../../modules/pris2026/pricing-policy.js";
 import {
   EventEmailContextError,
@@ -433,6 +434,41 @@ async function buildPris2026EarlyBirdReminderMessage(
   };
 }
 
+export function buildManualAbstractResultContent(input: {
+  template: "abstract-accepted-poster" | "abstract-accepted-oral" | "abstract-rejected";
+  firstName: string;
+  lastName: string;
+  title: string;
+  ctx: Awaited<ReturnType<typeof resolveEventEmailContext>>;
+  comment?: string;
+  registrationRateNotice?: RegistrationRateNotice;
+}) {
+  if (input.template === "abstract-rejected") {
+    return buildEventAbstractRejectedEmailContent(
+      input.firstName,
+      input.lastName,
+      input.title,
+      input.ctx,
+      input.comment,
+      input.registrationRateNotice,
+    );
+  }
+
+  const presentationType =
+    input.template === "abstract-accepted-oral" ? "oral" : "poster";
+
+  return buildEventAbstractAcceptedEmailContent(
+    input.firstName,
+    input.lastName,
+    input.title,
+    presentationType,
+    input.ctx,
+    input.comment,
+    undefined,
+    input.registrationRateNotice,
+  );
+}
+
 async function buildAbstractMessage(
   eventId: number,
   template: Extract<
@@ -527,14 +563,21 @@ async function buildAbstractMessage(
     };
   }
 
+  const registrationRateNotice = await resolvePris2026AbstractResultRateNotice({
+    userId: ab.userId,
+    eventId,
+  });
+
   if (template === "abstract-rejected") {
-    const content = buildEventAbstractRejectedEmailContent(
-      author.firstName,
-      author.lastName,
-      ab.title,
+    const content = buildManualAbstractResultContent({
+      template,
+      firstName: author.firstName,
+      lastName: author.lastName,
+      title: ab.title,
       ctx,
       comment,
-    );
+      registrationRateNotice,
+    });
     return {
       id: ab.id,
       email: author.email,
@@ -549,19 +592,21 @@ async function buildAbstractMessage(
           ab.title,
           ctx,
           comment,
+          registrationRateNotice,
         ),
     };
   }
 
   const presentationType = template === "abstract-accepted-oral" ? "oral" : "poster";
-  const content = buildEventAbstractAcceptedEmailContent(
-    author.firstName,
-    author.lastName,
-    ab.title,
-    presentationType,
+  const content = buildManualAbstractResultContent({
+    template,
+    firstName: author.firstName,
+    lastName: author.lastName,
+    title: ab.title,
     ctx,
     comment,
-  );
+    registrationRateNotice,
+  });
 
   return {
     id: ab.id,
@@ -578,6 +623,8 @@ async function buildAbstractMessage(
         presentationType,
         ctx,
         comment,
+        undefined,
+        registrationRateNotice,
       ),
   };
 }

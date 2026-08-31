@@ -24,7 +24,6 @@ import {
   sendEventAbstractAcceptedEmail,
   sendEventAbstractRejectedEmail,
   sendEventAbstractRevisionRequestedEmail,
-  type RegistrationRateNotice,
 } from "../../services/emailTemplates.js";
 import {
   buildConfirmationUrl,
@@ -36,10 +35,7 @@ import {
   buildEventEmailContext,
   getDefaultEventEmailContext,
 } from "../../services/emailTemplates.types.js";
-import {
-  PRIS_2026_EXTENSION_END,
-  resolvePris2026Pricing,
-} from "../../modules/pris2026/pricing-policy.js";
+import { resolvePris2026AbstractResultRateNotice } from "../../modules/pris2026/email-rate-notice.js";
 import {
   deleteFromGoogleDrive,
   extractFileIdFromUrl,
@@ -913,24 +909,11 @@ export default async function (fastify: FastifyInstance) {
             .where(eq(events.id, updatedAbstract.eventId))
             .limit(1);
 
-          const pricing = await resolvePris2026Pricing({
+          const registrationRateNotice = await resolvePris2026AbstractResultRateNotice({
             userId: updatedAbstract.userId,
             eventId: updatedAbstract.eventId,
-            currency: "THB",
             now,
           });
-          const registrationRateNotice: RegistrationRateNotice | undefined =
-            pricing.applies &&
-            pricing.phase === "extended_early_bird" &&
-            pricing.qualifiedForExtension &&
-            pricing.effectivePriority === "early_bird"
-              ? {
-                  rateAmount: 1250,
-                  currency: "THB",
-                  deadline: new Date(PRIS_2026_EXTENSION_END.getTime() - 60_000),
-                  regularAmount: 2500,
-                }
-              : undefined;
 
           if (status === "accepted") {
             if (eventResult && (updatedAbstract.presentationType === "poster" || updatedAbstract.presentationType === "oral")) {
@@ -1049,6 +1032,11 @@ export default async function (fastify: FastifyInstance) {
         .limit(1);
       if (!event) return reply.status(400).send({ error: "Event not found." });
 
+      const registrationRateNotice = await resolvePris2026AbstractResultRateNotice({
+        userId: abs.userId,
+        eventId: abs.eventId,
+      });
+
       await supersedeActiveTokens(abs.id);
       const issued = await issueConfirmationToken(abs.id);
       const confirmUrl = buildConfirmationUrl(
@@ -1066,6 +1054,7 @@ export default async function (fastify: FastifyInstance) {
         buildEventEmailContext(event),
         abs.reviewComment ?? undefined,
         { confirmUrl, deadline: issued.expiresAt },
+        registrationRateNotice,
       );
 
       return reply.send({

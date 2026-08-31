@@ -11,8 +11,11 @@ import {
   PRIS_2026_EXTENSION_END,
   resolvePris2026Pricing,
 } from "./pricing-policy.js";
+import {
+  PRIS_2026_RESULT_EMAIL_NOTICE_DEADLINE,
+} from "./email-rate-notice.js";
 
-export const PRIS_2026_NOTICE_DEADLINE = new Date("2026-09-15T16:59:00.000Z");
+export const PRIS_2026_NOTICE_DEADLINE = PRIS_2026_RESULT_EMAIL_NOTICE_DEADLINE;
 
 export type Pris2026ManualReminderReason =
   | "eligible"

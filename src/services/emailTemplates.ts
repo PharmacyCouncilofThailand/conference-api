@@ -177,6 +177,19 @@ function textToHtml(text: string): string {
   return text.replace(/\n/g, "<br>\n");
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function isPris2026EmailContext(ctx: EventEmailContext): boolean {
+  return ctx.shortName.trim().toUpperCase() === "PRIS 2026";
+}
+
 /** Build email signature block */
 function signature(_ctx: EventEmailContext): string {
   return `Sincerely,\nThe Pharmacy Council of Thailand`;
@@ -653,6 +666,50 @@ Confirm here / ยืนยันที่นี่: ${confirmation.confirmUrl}
 `;
 }
 
+function buildReviewerCommentsHtml(comment?: string): string {
+  const reviewerComment = comment?.trim();
+  if (!reviewerComment) return "";
+
+  return [
+    `<p><strong>Reviewer Comments</strong></p>`,
+    `<p>${textToHtml(escapeHtml(reviewerComment)).trim()}</p>`,
+  ].join("\n");
+}
+
+function buildPris2026AbstractAcceptedHtml(
+  firstName: string,
+  lastName: string,
+  abstractTitle: string,
+  presentationType: "poster" | "oral",
+  comment?: string,
+  confirmation?: AbstractAcceptedConfirmation,
+  registrationRateNotice?: RegistrationRateNotice,
+): string {
+  const presentationLabel = presentationType === "oral" ? "Oral Presentation" : "Poster Presentation";
+  const presentationArticle = presentationType === "oral" ? "an" : "a";
+  const presenterLabel = presentationType === "oral" ? "oral" : "poster";
+  const reviewerCommentsHtml = buildReviewerCommentsHtml(comment);
+  const confirmationHtml = confirmation
+    ? textToHtml(buildConfirmationBlock(confirmation)).trim()
+    : "";
+  const registrationRateHtml = registrationRateNotice
+    ? textToHtml(buildRegistrationRateNoticeBlock(registrationRateNotice)).trim()
+    : "";
+
+  return [
+    `<p>Dear ${escapeHtml(firstName)} ${escapeHtml(lastName)},</p>`,
+    `<p>Congratulations! We are pleased to inform you that your abstract, titled <em>&quot;${escapeHtml(abstractTitle)}&quot;</em>, has been <strong>accepted as ${presentationArticle} ${presentationLabel}</strong> at PRIS 2026.</p>`,
+    `<p><strong>Conference Details</strong></p>`,
+    `<div style="padding-left: 2em;">- Date: October 29–30, 2026<br>- Venue: Impact Challenger, Jupiter Room 4–13</div>`,
+    reviewerCommentsHtml,
+    `<p>All ${presenterLabel} presenters are required to register for the meeting in order to present. For registration information, please visit: <a href="https://pris.pharmacycouncil.org/">https://pris.pharmacycouncil.org/</a></p>`,
+    confirmationHtml ? `<div>${confirmationHtml}</div><br>` : "",
+    registrationRateHtml ? `<div>${registrationRateHtml}</div>` : "",
+    `<p>We look forward to your presentation. Should you have any questions, please contact <a href="mailto:pr@pharmacycouncil.org">pr@pharmacycouncil.org</a>.</p>`,
+    `<p>Sincerely,</p><p>The Pharmacy Council of Thailand</p>`,
+  ].filter(Boolean).join("\n");
+}
+
 function buildAbstractAcceptedPlainText(
   firstName: string,
   lastName: string,
@@ -696,7 +753,17 @@ export function buildEventAbstractAcceptedEmailContent(
   const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment, confirmation, registrationRateNotice);
   return {
     subject: `Congratulations! Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`,
-    html: textToHtml(plainText),
+    html: isPris2026EmailContext(ctx)
+      ? buildPris2026AbstractAcceptedHtml(
+          firstName,
+          lastName,
+          abstractTitle,
+          presentationType,
+          comment,
+          confirmation,
+          registrationRateNotice,
+        )
+      : textToHtml(plainText),
   };
 }
 
@@ -717,7 +784,23 @@ export async function sendEventAbstractAcceptedEmail(
     : `Congratulations! Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`;
 
   try {
-    await sendNipaMailEmail(email, subject, plainText);
+    if (isPris2026EmailContext(ctx)) {
+      await sendNipaMailHtml(
+        email,
+        subject,
+        buildPris2026AbstractAcceptedHtml(
+          firstName,
+          lastName,
+          abstractTitle,
+          presentationType,
+          comment,
+          confirmation,
+          registrationRateNotice,
+        ),
+      );
+    } else {
+      await sendNipaMailEmail(email, subject, plainText);
+    }
     console.log(`[Generic] Abstract accepted (${presentationType}) email sent to ${email}${confirmation ? " with confirmation link" : ""}`);
   } catch (error) {
     console.error(`[Generic] Error sending abstract accepted (${presentationType}) email:`, error);
@@ -737,8 +820,29 @@ function buildAbstractRejectedPlainText(
   comment?: string,
   registrationRateNotice?: RegistrationRateNotice,
 ): string {
-  const commentText = comment ? `\nComment: ${comment}\n` : "";
   const registrationRateBlock = buildRegistrationRateNoticeBlock(registrationRateNotice);
+
+  if (ctx.shortName.trim().toUpperCase() === "PRIS 2026") {
+    const reviewerComments = comment?.trim()
+      ? `\r\nReviewer Comments\r\n\r\n${comment.trim()}\r\n`
+      : "";
+    return `
+Dear ${firstName} ${lastName},
+
+Thank you for submitting your abstract for consideration in poster or oral presentation at PRIS 2026. After careful review, and due to the high number of quality submissions relative to limited presentation slots, we regret to inform you that your abstract has not been accepted for presentation this year.
+
+Abstract Title: ${abstractTitle}
+${reviewerComments}
+${registrationRateBlock ? `\r\n${registrationRateBlock}\r\n` : ""}
+Thank you so much again for your submission. Looking forward to your abstract at next year's conference.
+
+Sincerely,
+
+The Pharmacy Council of Thailand
+    `.trim();
+  }
+
+  const commentText = comment ? `\nComment: ${comment}\n` : "";
   return `
 Dear ${firstName} ${lastName},
 
@@ -753,6 +857,29 @@ ${signature(ctx)}
   `.trim();
 }
 
+function buildPris2026AbstractRejectedHtml(
+  firstName: string,
+  lastName: string,
+  abstractTitle: string,
+  comment?: string,
+  registrationRateNotice?: RegistrationRateNotice,
+): string {
+  const reviewerCommentsHtml = buildReviewerCommentsHtml(comment);
+  const registrationRateHtml = registrationRateNotice
+    ? textToHtml(buildRegistrationRateNoticeBlock(registrationRateNotice)).trim()
+    : "";
+
+  return [
+    `<p>Dear ${escapeHtml(firstName)} ${escapeHtml(lastName)},</p>`,
+    `<p>Thank you for submitting your abstract for consideration in poster or oral presentation at PRIS 2026. After careful review, and due to the high number of quality submissions relative to limited presentation slots, we regret to inform you that your abstract has not been accepted for presentation this year.</p>`,
+    `<p>Abstract Title: ${escapeHtml(abstractTitle)}</p>`,
+    reviewerCommentsHtml,
+    registrationRateHtml ? `<div>${registrationRateHtml}</div>` : "",
+    `<p>Thank you so much again for your submission. Looking forward to your abstract at next year's conference.</p>`,
+    `<p>Sincerely,</p><p>The Pharmacy Council of Thailand</p>`,
+  ].filter(Boolean).join("\n");
+}
+
 export function buildEventAbstractRejectedEmailContent(
   firstName: string,
   lastName: string,
@@ -763,8 +890,18 @@ export function buildEventAbstractRejectedEmailContent(
 ): EventEmailContent {
   const plainText = buildAbstractRejectedPlainText(firstName, lastName, abstractTitle, ctx, comment, registrationRateNotice);
   return {
-    subject: `Abstract Submission Update - ${ctx.shortName}`,
-    html: textToHtml(plainText),
+    subject: ctx.shortName.trim().toUpperCase() === "PRIS 2026"
+      ? "Abstract Review Result – PRIS 2026"
+      : `Abstract Submission Update - ${ctx.shortName}`,
+    html: isPris2026EmailContext(ctx)
+      ? buildPris2026AbstractRejectedHtml(
+          firstName,
+          lastName,
+          abstractTitle,
+          comment,
+          registrationRateNotice,
+        )
+      : textToHtml(plainText),
   };
 }
 
@@ -780,7 +917,24 @@ export async function sendEventAbstractRejectedEmail(
   const plainText = buildAbstractRejectedPlainText(firstName, lastName, abstractTitle, ctx, comment, registrationRateNotice);
 
   try {
-    await sendNipaMailEmail(email, `Abstract Submission Update - ${ctx.shortName}`, plainText);
+    const subject = ctx.shortName.trim().toUpperCase() === "PRIS 2026"
+      ? "Abstract Review Result – PRIS 2026"
+      : `Abstract Submission Update - ${ctx.shortName}`;
+    if (isPris2026EmailContext(ctx)) {
+      await sendNipaMailHtml(
+        email,
+        subject,
+        buildPris2026AbstractRejectedHtml(
+          firstName,
+          lastName,
+          abstractTitle,
+          comment,
+          registrationRateNotice,
+        ),
+      );
+    } else {
+      await sendNipaMailEmail(email, subject, plainText);
+    }
     console.log(`[Generic] Abstract rejected email sent to ${email}`);
   } catch (error) {
     console.error("[Generic] Error sending abstract rejected email:", error);
@@ -1055,22 +1209,20 @@ export function buildPris2026EarlyBirdReminderEmailContent(
   ctx: EventEmailContext,
   notice: RegistrationRateNotice,
 ): EventEmailContent {
-  const registrationRateBlock = buildRegistrationRateNoticeBlock(notice);
-  const plainText = `
-Dear ${firstName} ${lastName},
-
-This is a PRIS 2026 registration reminder. You qualify for the extended Early Bird rate because both your user account and your PRIS 2026 abstract submission existed before 31 August 2026, 23:59 (Bangkok time). This eligibility is based on the submission timing and is not created by an abstract approval or rejection result.
-
-${registrationRateBlock}
-
-Registration information: ${ctx.websiteUrl}
-
-${signature(ctx)}
-  `.trim();
+  const registrationRateHtml = textToHtml(buildRegistrationRateNoticeBlock(notice)).trim();
+  const registrationUrl = "https://pris.pharmacycouncil.org/";
+  const recipientName = escapeHtml(`${firstName} ${lastName}`.trim());
 
   return {
     subject: "PRIS 2026 Early Bird Registration Reminder - Payment by 15 September 2026",
-    html: textToHtml(plainText),
+    html: [
+      `<p>Dear ${recipientName},</p>`,
+      `<p>This is a reminder regarding your PRIS 2026 registration. You are eligible for the Early Bird registration rate, as both your user account and your PRIS 2026 abstract submission were created before 31 August 2026, 23:59 (Bangkok time). Please note that this eligibility is based solely on submission timing and is independent of your abstract's acceptance or rejection status.</p>`,
+      `<div>${registrationRateHtml}</div>`,
+      `<p>For registration details, please visit: <a href="${registrationUrl}">${registrationUrl}</a></p>`,
+      `<p>Should you have any questions, please feel free to contact us.</p>`,
+      `<p>Sincerely,</p><p>The Pharmacy Council of Thailand</p>`,
+    ].join("\n"),
   };
 }
 
@@ -1082,8 +1234,7 @@ export async function sendPris2026EarlyBirdReminderEmail(
   notice: RegistrationRateNotice,
 ): Promise<void> {
   const content = buildPris2026EarlyBirdReminderEmailContent(firstName, lastName, ctx, notice);
-  const plainText = content.html.replace(/<br>\n/g, "\n");
-  await sendNipaMailEmail(email, content.subject, plainText);
+  await sendNipaMailHtml(email, content.subject, content.html);
 }
 
 // 9. VERIFICATION APPROVED EMAIL
