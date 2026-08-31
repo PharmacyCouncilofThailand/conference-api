@@ -20,6 +20,7 @@ import {
   buildEventAbstractSubmissionEmailContent,
   buildEventPaymentReceiptEmailContent,
   buildEventPendingApprovalEmailContent,
+  buildPris2026EarlyBirdReminderEmailContent,
   buildEventRegistrationEmailContent,
   buildEventReminderEmailContent,
   buildEventSignupNotificationEmailContent,
@@ -28,10 +29,19 @@ import {
   sendEventAbstractSubmissionEmail,
   sendEventPaymentReceiptEmail,
   sendEventPendingApprovalEmail,
+  sendPris2026EarlyBirdReminderEmail,
   sendEventRegistrationEmail,
   sendEventReminderEmail,
   sendEventSignupNotificationEmail,
+  type RegistrationRateNotice,
 } from "../../services/emailTemplates.js";
+import {
+  buildPris2026ManualReminderUserConditions,
+  isPris2026ManualReminderWindowOpen,
+  PRIS_2026_NOTICE_DEADLINE,
+  resolvePris2026ManualReminderEligibility,
+} from "../../modules/pris2026/manual-reminder.js";
+import { PRIS_2026_EVENT_CODE } from "../../modules/pris2026/pricing-policy.js";
 import {
   EventEmailContextError,
   resolveEventEmailContext,
@@ -50,6 +60,12 @@ const TEMPLATE_CONFIG = {
     recipientType: "user" as const,
     requiresComment: false,
     description: "Student document verification pending notification",
+  },
+  "pris-early-bird-reminder": {
+    label: "PRIS Early Bird Reminder",
+    recipientType: "user" as const,
+    requiresComment: false,
+    description: "Eligible PRIS 2026 Round 1 submitters who still have no confirmed primary registration",
   },
   "payment-receipt": {
     label: "Payment Receipt",
@@ -348,6 +364,75 @@ async function buildUserMessage(
   };
 }
 
+function buildPris2026RateNotice(): RegistrationRateNotice {
+  return {
+    rateAmount: 1250,
+    currency: "THB",
+    deadline: PRIS_2026_NOTICE_DEADLINE,
+    regularAmount: 2500,
+  };
+}
+
+async function buildPris2026EarlyBirdReminderMessage(
+  eventId: number,
+  userId: number,
+): Promise<ManualEmailMessage> {
+  const [user] = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      firstName: users.firstName,
+      lastName: users.lastName,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!user) throw new ManualEmailSkip(`User #${userId} not found`);
+
+  const eligibility = await resolvePris2026ManualReminderEligibility({ userId, eventId });
+  if (!eligibility.eligible) {
+    const reason =
+      eligibility.reason === "already_registered"
+        ? "User already has a confirmed primary registration"
+        : eligibility.reason === "expired"
+          ? "Early Bird reminder period has ended"
+          : eligibility.reason === "not_started"
+            ? "Early Bird reminder period has not started"
+            : "User is not eligible for the PRIS 2026 Early Bird extension";
+    throw new ManualEmailSkip(
+      reason,
+      user.email,
+      fullName(user.firstName, user.lastName),
+    );
+  }
+
+  const ctx = await resolveEventEmailContext(eventId, { requireEvent: true });
+  const notice = buildPris2026RateNotice();
+  const content = buildPris2026EarlyBirdReminderEmailContent(
+    user.firstName,
+    user.lastName,
+    ctx,
+    notice,
+  );
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: fullName(user.firstName, user.lastName),
+    type: "pris-early-bird-reminder",
+    ...content,
+    send: () =>
+      sendPris2026EarlyBirdReminderEmail(
+        user.email,
+        user.firstName,
+        user.lastName,
+        ctx,
+        notice,
+      ),
+  };
+}
+
 async function buildAbstractMessage(
   eventId: number,
   template: Extract<
@@ -624,6 +709,9 @@ async function buildManualEmailMessage(
   id: number,
   comment?: string,
 ): Promise<ManualEmailMessage> {
+  if (template === "pris-early-bird-reminder") {
+    return buildPris2026EarlyBirdReminderMessage(eventId, id);
+  }
   if (template === "signup-notification" || template === "pending-approval") {
     return buildUserMessage(eventId, eventCode, template, id);
   }
@@ -667,7 +755,43 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
       const config = TEMPLATE_CONFIG[template];
       let recipients: RecipientRow[] = [];
 
-      if (config.recipientType === "user") {
+      if (template === "pris-early-bird-reminder") {
+        if (event.eventCode !== PRIS_2026_EVENT_CODE || !isPris2026ManualReminderWindowOpen(new Date())) {
+          recipients = [];
+        } else {
+          const rows = await db
+            .select({
+              id: users.id,
+              email: users.email,
+              firstName: users.firstName,
+              lastName: users.lastName,
+              role: users.role,
+            })
+            .from(users)
+            .where(
+              and(
+                ...buildPris2026ManualReminderUserConditions(eventId),
+                search
+                  ? or(
+                      ilike(users.email, `%${search}%`),
+                      ilike(users.firstName, `%${search}%`),
+                      ilike(users.lastName, `%${search}%`),
+                    )
+                  : undefined,
+              ),
+            )
+            .orderBy(desc(users.createdAt))
+            .limit(MAX);
+
+          recipients = rows.map((user) => ({
+            id: user.id,
+            label: fullName(user.firstName, user.lastName),
+            email: user.email,
+            detail: user.role,
+            tag: "Early Bird eligible / unpaid",
+          }));
+        }
+      } else if (config.recipientType === "user") {
         const status = template === "pending-approval" ? "pending_approval" : "active";
         const rows = await db
           .select({

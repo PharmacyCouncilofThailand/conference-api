@@ -17,15 +17,14 @@ import {
   requestAbstractRevisionSchema,
   updateAbstractStatusSchema,
 } from "../../schemas/abstracts.schema.js";
-import { eq, desc, ilike, and, or, count, inArray, isNull, exists, sql } from "drizzle-orm";
+import { eq, desc, ilike, and, or, count, inArray, isNull, exists, sql, gte, lt } from "drizzle-orm";
 import { z } from "zod";
 import { appendTrackingAuditEvent } from "../../modules/abstracts/tracking.repository.js";
 import {
-  sendAbstractRejectedEmail,
-} from "../../services/emailService.js";
-import {
   sendEventAbstractAcceptedEmail,
+  sendEventAbstractRejectedEmail,
   sendEventAbstractRevisionRequestedEmail,
+  type RegistrationRateNotice,
 } from "../../services/emailTemplates.js";
 import {
   buildConfirmationUrl,
@@ -37,6 +36,10 @@ import {
   buildEventEmailContext,
   getDefaultEventEmailContext,
 } from "../../services/emailTemplates.types.js";
+import {
+  PRIS_2026_EXTENSION_END,
+  resolvePris2026Pricing,
+} from "../../modules/pris2026/pricing-policy.js";
 import {
   deleteFromGoogleDrive,
   extractFileIdFromUrl,
@@ -239,7 +242,7 @@ export default async function (fastify: FastifyInstance) {
         .send({ error: "Invalid query", details: queryResult.error.flatten() });
     }
 
-    const { page, limit, search, eventId, status, categoryId, presentationType, trackingId, trackingMatch, archived } =
+    const { page, limit, search, eventId, status, categoryId, presentationType, trackingId, trackingMatch, submittedFrom, submittedBefore, archived } =
       queryResult.data;
     const offset = (page - 1) * limit;
 
@@ -322,6 +325,8 @@ export default async function (fastify: FastifyInstance) {
       // Admin and other roles see all abstracts unless scoped above.
 
       if (eventId) conditions.push(eq(abstracts.eventId, eventId));
+      if (submittedFrom) conditions.push(gte(abstracts.createdAt, new Date(submittedFrom)));
+      if (submittedBefore) conditions.push(lt(abstracts.createdAt, new Date(submittedBefore)));
       if (status) conditions.push(eq(abstracts.status, status));
       if (categoryId) conditions.push(eq(abstracts.categoryId, categoryId));
       if (presentationType)
@@ -893,22 +898,41 @@ export default async function (fastify: FastifyInstance) {
       }
 
       // Send email notification based on status
-      if (author) {
+      if (author && updatedAbstract.userId) {
         try {
-          if (status === "accepted") {
-            const [eventResult] = await db
-              .select({
-                eventName: events.eventName,
-                startDate: events.startDate,
-                endDate: events.endDate,
-                location: events.location,
-                websiteUrl: events.websiteUrl,
-                shortName: events.shortName,
-              })
-              .from(events)
-              .where(eq(events.id, updatedAbstract.eventId))
-              .limit(1);
+          const [eventResult] = await db
+            .select({
+              eventName: events.eventName,
+              startDate: events.startDate,
+              endDate: events.endDate,
+              location: events.location,
+              websiteUrl: events.websiteUrl,
+              shortName: events.shortName,
+            })
+            .from(events)
+            .where(eq(events.id, updatedAbstract.eventId))
+            .limit(1);
 
+          const pricing = await resolvePris2026Pricing({
+            userId: updatedAbstract.userId,
+            eventId: updatedAbstract.eventId,
+            currency: "THB",
+            now,
+          });
+          const registrationRateNotice: RegistrationRateNotice | undefined =
+            pricing.applies &&
+            pricing.phase === "extended_early_bird" &&
+            pricing.qualifiedForExtension &&
+            pricing.effectivePriority === "early_bird"
+              ? {
+                  rateAmount: 1250,
+                  currency: "THB",
+                  deadline: new Date(PRIS_2026_EXTENSION_END.getTime() - 60_000),
+                  regularAmount: 2500,
+                }
+              : undefined;
+
+          if (status === "accepted") {
             if (eventResult && (updatedAbstract.presentationType === "poster" || updatedAbstract.presentationType === "oral")) {
               // Supersede any previous tokens, then issue a new one for this approval.
               try {
@@ -931,18 +955,21 @@ export default async function (fastify: FastifyInstance) {
                 buildEventEmailContext(eventResult),
                 comment,
                 { confirmUrl, deadline: issued.expiresAt },
+                registrationRateNotice,
               );
               fastify.log.info(
                 `Abstract accepted+confirmation email sent to ${author.email} (deadline=${issued.expiresAt.toISOString()}, ${getConfirmDeadlineDays()} days)`,
               );
             }
-          } else if (status === "rejected") {
-            await sendAbstractRejectedEmail(
+          } else if (status === "rejected" && eventResult) {
+            await sendEventAbstractRejectedEmail(
               author.email,
               author.firstName,
               author.lastName,
               updatedAbstract.title,
+              buildEventEmailContext(eventResult),
               comment,
+              registrationRateNotice,
             );
             fastify.log.info(`Abstract rejected email sent to ${author.email}`);
           }

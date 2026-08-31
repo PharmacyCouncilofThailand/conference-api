@@ -165,6 +165,13 @@ export interface EventEmailContent {
   html: string;
 }
 
+export interface RegistrationRateNotice {
+  rateAmount: number;
+  currency: "THB";
+  deadline: Date;
+  regularAmount: number;
+}
+
 /** Convert plain text email to HTML by replacing newlines with <br> */
 function textToHtml(text: string): string {
   return text.replace(/\n/g, "<br>\n");
@@ -181,6 +188,44 @@ function introLine(ctx: EventEmailContext): string {
 }
 
 // ============================================
+function buildRegistrationRateNoticeBlock(notice?: RegistrationRateNotice): string {
+  if (!notice) return "";
+
+  const amount = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(notice.rateAmount);
+  const regularAmount = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(notice.regularAmount);
+  const deadlineEn = new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Bangkok",
+  }).format(notice.deadline).replace(" at ", ", ");
+  const deadlineTh = new Intl.DateTimeFormat("th-TH-u-ca-buddhist", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Bangkok",
+  }).format(notice.deadline);
+
+  return `
+=== IMPORTANT REGISTRATION RATE / ข้อมูลสำคัญเรื่องค่าลงทะเบียน ===
+You are eligible for the PRIS 2026 Early Bird registration rate of ${notice.currency} ${amount}.
+Please complete payment within 5 days after the Round 1 result announcement and no later than ${deadlineEn} (Bangkok time).
+After this deadline, the regular registration rate is ${notice.currency} ${regularAmount}.
+If you have already completed registration/payment, we apologize for the inconvenience and please disregard this payment section.
+
+ท่านมีสิทธิ์ลงทะเบียน PRIS 2026 ในราคา Early Bird ${amount} บาท
+กรุณาดำเนินการชำระเงินภายใน 5 วันหลังประกาศผลรอบที่ 1 และไม่เกินวันที่ ${deadlineTh}
+หลังจากกำหนดดังกล่าว อัตราค่าลงทะเบียนจะเป็นราคาปกติ ${regularAmount} บาท
+หากท่านได้ลงทะเบียนหรือชำระเงินเรียบร้อยแล้ว ทางคณะผู้จัดงานขออภัยในความไม่สะดวก และโปรดละเว้นข้อความส่วนการชำระเงินนี้
+`.trim();
+}
+
 // 1. EVENT REGISTRATION EMAIL (Generic version of sendManualRegistrationEmail)
 // ============================================
 
@@ -616,11 +661,13 @@ function buildAbstractAcceptedPlainText(
   ctx: EventEmailContext,
   comment?: string,
   confirmation?: AbstractAcceptedConfirmation,
+  registrationRateNotice?: RegistrationRateNotice,
 ): string {
   const typeLabel = presentationType === "poster" ? "POSTER PRESENTATION" : "ORAL PRESENTATION";
   const articlePrefix = presentationType === "poster" ? "a" : "an";
   const commentText = comment ? `\nComment: ${comment}\n` : "";
   const confirmationBlock = buildConfirmationBlock(confirmation);
+  const registrationRateBlock = buildRegistrationRateNoticeBlock(registrationRateNotice);
 
   return `
 Dear ${firstName} ${lastName},
@@ -629,6 +676,7 @@ Congratulations! Your abstract, titled "${abstractTitle}", is ACCEPTED as ${arti
 ${commentText}
 All ${presentationType} presenters must be registered for the meeting in order to present${presentationType === "poster" ? " their poster" : ""}. For registration information and details go to ${ctx.websiteUrl}
 ${confirmationBlock}
+${registrationRateBlock ? `\r\n${registrationRateBlock}\r\n` : ""}
 We look forward to your presentation. If you have any questions, please contact pr@pharmacycouncil.org
 
 ${signature(ctx)}
@@ -643,8 +691,9 @@ export function buildEventAbstractAcceptedEmailContent(
   ctx: EventEmailContext,
   comment?: string,
   confirmation?: AbstractAcceptedConfirmation,
+  registrationRateNotice?: RegistrationRateNotice,
 ): EventEmailContent {
-  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment, confirmation);
+  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment, confirmation, registrationRateNotice);
   return {
     subject: `Congratulations! Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`,
     html: textToHtml(plainText),
@@ -660,8 +709,9 @@ export async function sendEventAbstractAcceptedEmail(
   ctx: EventEmailContext,
   comment?: string,
   confirmation?: AbstractAcceptedConfirmation,
+  registrationRateNotice?: RegistrationRateNotice,
 ): Promise<void> {
-  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment, confirmation);
+  const plainText = buildAbstractAcceptedPlainText(firstName, lastName, abstractTitle, presentationType, ctx, comment, confirmation, registrationRateNotice);
   const subject = confirmation
     ? `[Action Required] Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`
     : `Congratulations! Abstract Accepted (${presentationType === "poster" ? "Poster" : "Oral"}) - ${ctx.shortName}`;
@@ -684,9 +734,11 @@ function buildAbstractRejectedPlainText(
   lastName: string,
   abstractTitle: string,
   ctx: EventEmailContext,
-  comment?: string
+  comment?: string,
+  registrationRateNotice?: RegistrationRateNotice,
 ): string {
   const commentText = comment ? `\nComment: ${comment}\n` : "";
+  const registrationRateBlock = buildRegistrationRateNoticeBlock(registrationRateNotice);
   return `
 Dear ${firstName} ${lastName},
 
@@ -694,6 +746,7 @@ Thank you very much for submitting your abstract for poster or oral presentation
 
 Abstract Title: ${abstractTitle}
 ${commentText}
+${registrationRateBlock ? `\r\n${registrationRateBlock}\r\n` : ""}
 Thank you so much again for your submission. Looking forward to your abstract at next year's conference.
 
 ${signature(ctx)}
@@ -705,9 +758,10 @@ export function buildEventAbstractRejectedEmailContent(
   lastName: string,
   abstractTitle: string,
   ctx: EventEmailContext,
-  comment?: string
+  comment?: string,
+  registrationRateNotice?: RegistrationRateNotice,
 ): EventEmailContent {
-  const plainText = buildAbstractRejectedPlainText(firstName, lastName, abstractTitle, ctx, comment);
+  const plainText = buildAbstractRejectedPlainText(firstName, lastName, abstractTitle, ctx, comment, registrationRateNotice);
   return {
     subject: `Abstract Submission Update - ${ctx.shortName}`,
     html: textToHtml(plainText),
@@ -720,9 +774,10 @@ export async function sendEventAbstractRejectedEmail(
   lastName: string,
   abstractTitle: string,
   ctx: EventEmailContext,
-  comment?: string
+  comment?: string,
+  registrationRateNotice?: RegistrationRateNotice,
 ): Promise<void> {
-  const plainText = buildAbstractRejectedPlainText(firstName, lastName, abstractTitle, ctx, comment);
+  const plainText = buildAbstractRejectedPlainText(firstName, lastName, abstractTitle, ctx, comment, registrationRateNotice);
 
   try {
     await sendNipaMailEmail(email, `Abstract Submission Update - ${ctx.shortName}`, plainText);
@@ -994,6 +1049,43 @@ export async function sendEventReminderEmail(
 }
 
 // ============================================
+export function buildPris2026EarlyBirdReminderEmailContent(
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext,
+  notice: RegistrationRateNotice,
+): EventEmailContent {
+  const registrationRateBlock = buildRegistrationRateNoticeBlock(notice);
+  const plainText = `
+Dear ${firstName} ${lastName},
+
+This is a PRIS 2026 registration reminder. You qualify for the extended Early Bird rate because both your user account and your PRIS 2026 abstract submission existed before 31 August 2026, 23:59 (Bangkok time). This eligibility is based on the submission timing and is not created by an abstract approval or rejection result.
+
+${registrationRateBlock}
+
+Registration information: ${ctx.websiteUrl}
+
+${signature(ctx)}
+  `.trim();
+
+  return {
+    subject: "PRIS 2026 Early Bird Registration Reminder - Payment by 15 September 2026",
+    html: textToHtml(plainText),
+  };
+}
+
+export async function sendPris2026EarlyBirdReminderEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  ctx: EventEmailContext,
+  notice: RegistrationRateNotice,
+): Promise<void> {
+  const content = buildPris2026EarlyBirdReminderEmailContent(firstName, lastName, ctx, notice);
+  const plainText = content.html.replace(/<br>\n/g, "\n");
+  await sendNipaMailEmail(email, content.subject, plainText);
+}
+
 // 9. VERIFICATION APPROVED EMAIL
 // ============================================
 

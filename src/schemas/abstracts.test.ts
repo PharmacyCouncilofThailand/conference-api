@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  abstractListSchema,
   abstractResubmissionSchema,
   abstractSubmissionSchema,
 } from "./abstracts.schema.js";
@@ -101,4 +102,25 @@ test("resubmission trims co-author email whitespace", () => {
   const result = abstractResubmissionSchema.parse(input);
 
   assert.equal(result.coAuthors[0].email, "coauthor@example.com");
+});
+
+test("abstract list accepts submitted date range", () => {
+  const parsed = abstractListSchema.parse({
+    submittedFrom: "2026-08-31T17:00:00.000Z",
+    submittedBefore: "2026-09-20T17:00:00.000Z",
+  });
+
+  assert.equal(parsed.submittedFrom, "2026-08-31T17:00:00.000Z");
+  assert.equal(parsed.submittedBefore, "2026-09-20T17:00:00.000Z");
+});
+
+test("abstract list rejects malformed submitted date range", () => {
+  assert.equal(
+    abstractListSchema.safeParse({ submittedFrom: "31/08/2026" }).success,
+    false,
+  );
+  assert.equal(
+    abstractListSchema.safeParse({ submittedBefore: "not-a-date" }).success,
+    false,
+  );
 });

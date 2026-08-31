@@ -3,7 +3,9 @@ import test from "node:test";
 import { evaluateAbstractSubmissionWindow } from "./submission-window.js";
 
 const startDate = new Date("2026-07-01T03:00:00.000Z");
-const endDate = new Date("2026-09-20T16:59:59.999Z");
+const ROUND_1_END_EXCLUSIVE = new Date("2026-08-31T17:00:00.000Z");
+const ROUND_2_END_EXCLUSIVE = new Date("2026-09-20T17:00:00.000Z");
+const endDate = new Date(ROUND_2_END_EXCLUSIVE.getTime() - 1);
 
 test("closes before configured abstract start", () => {
   assert.deepEqual(
@@ -28,7 +30,7 @@ test("stays open across Round 1 to Round 2 transition", () => {
     evaluateAbstractSubmissionWindow({
       startDate,
       endDate,
-      now: new Date("2026-08-31T17:00:00.000Z"),
+      now: ROUND_1_END_EXCLUSIVE,
     }),
     { open: true },
   );

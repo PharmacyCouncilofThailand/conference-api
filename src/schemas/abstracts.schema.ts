@@ -100,6 +100,8 @@ export const abstractListSchema = z.object({
     presentationType: z.enum(['oral', 'poster']).optional(),
     trackingId: z.string().min(1).max(80).optional(),
     trackingMatch: z.enum(['any', 'canonical', 'alias']).default('any'),
+    submittedFrom: z.string().datetime().optional(),
+    submittedBefore: z.string().datetime().optional(),
     archived: z.enum(['exclude', 'include', 'only']).default('exclude'),
 });
 

@@ -199,6 +199,43 @@ test("pricing response serializer preserves exact cross-repo contract", () => {
   ]);
 });
 
+test("final PRIS pricing matrix locks the exact Bangkok cutoff boundaries", () => {
+  const originalLastMillisecond = evaluatePris2026Pricing({
+    ...base,
+    hasQualifyingAbstractBeforeCutoff: false,
+    now: new Date("2026-08-31T16:59:59.999Z"),
+  });
+  const oldRound2OnlyAtCutoff = evaluatePris2026Pricing({
+    ...base,
+    hasQualifyingAbstractBeforeCutoff: false,
+    now: new Date("2026-08-31T17:00:00.000Z"),
+  });
+  const qualifiedAtCutoff = evaluatePris2026Pricing({
+    ...base,
+    now: new Date("2026-08-31T17:00:00.000Z"),
+  });
+  const newAccountAtCutoff = evaluatePris2026Pricing({
+    ...base,
+    accountCreatedAt: new Date("2026-08-31T17:00:00.000Z"),
+    now: new Date("2026-08-31T17:00:00.000Z"),
+  });
+  const extensionLastMillisecond = evaluatePris2026Pricing({
+    ...base,
+    now: new Date("2026-09-15T16:59:59.999Z"),
+  });
+  const extensionExpired = evaluatePris2026Pricing({
+    ...base,
+    now: new Date("2026-09-15T17:00:00.000Z"),
+  });
+
+  assert.equal(originalLastMillisecond.effectivePriority, "early_bird");
+  assert.equal(oldRound2OnlyAtCutoff.effectivePriority, "regular");
+  assert.equal(qualifiedAtCutoff.effectivePriority, "early_bird");
+  assert.equal(newAccountAtCutoff.effectivePriority, "regular");
+  assert.equal(extensionLastMillisecond.effectivePriority, "early_bird");
+  assert.equal(extensionExpired.effectivePriority, "regular");
+});
+
 test("candidate filter keeps only effective priority when policy applies", () => {
   const result = filterTicketCandidatesByPrisDecision(
     [
