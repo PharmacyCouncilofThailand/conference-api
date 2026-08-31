@@ -30,6 +30,7 @@ import {
   validateAbstractWords,
 } from "../../../utils/abstractWordCount.js";
 import { summarizeAbstractValidationIssues } from "./validation.js";
+import { evaluateAbstractSubmissionWindow } from "../../../modules/abstracts/submission-window.js";
 
 // Allowed file types for abstract documents
 const ALLOWED_MIME_TYPES = ["application/pdf"];
@@ -310,6 +311,8 @@ export default async function (fastify: FastifyInstance) {
       // ── Resolve event by eventCode ──────────────────────────────────────
       let finalEventId = DEFAULT_EVENT_ID;
       let resolvedEventCode = eventCode || "";
+      let abstractStartDate: Date | null = null;
+      let abstractEndDate: Date | null = null;
 
       let eventEmailRow: EventEmailRow | null = null;
 
@@ -322,6 +325,8 @@ export default async function (fastify: FastifyInstance) {
             shortName: events.shortName,
             startDate: events.startDate,
             endDate: events.endDate,
+            abstractStartDate: events.abstractStartDate,
+            abstractEndDate: events.abstractEndDate,
             location: events.location,
             websiteUrl: events.websiteUrl,
           })
@@ -337,7 +342,47 @@ export default async function (fastify: FastifyInstance) {
         }
         finalEventId = eventRow.id;
         resolvedEventCode = eventRow.eventCode;
+        abstractStartDate = eventRow.abstractStartDate;
+        abstractEndDate = eventRow.abstractEndDate;
         eventEmailRow = eventRow as EventEmailRow;
+      } else {
+        const [defaultEventRow] = await db
+          .select({
+            id: events.id,
+            eventCode: events.eventCode,
+            abstractStartDate: events.abstractStartDate,
+            abstractEndDate: events.abstractEndDate,
+          })
+          .from(events)
+          .where(eq(events.id, finalEventId))
+          .limit(1);
+
+        if (!defaultEventRow) {
+          return reply.status(400).send({
+            success: false,
+            error: "Invalid default event",
+          });
+        }
+
+        resolvedEventCode = defaultEventRow.eventCode;
+        abstractStartDate = defaultEventRow.abstractStartDate;
+        abstractEndDate = defaultEventRow.abstractEndDate;
+      }
+
+      const submissionWindow = evaluateAbstractSubmissionWindow({
+        startDate: abstractStartDate,
+        endDate: abstractEndDate,
+        now: new Date(),
+      });
+      if (!submissionWindow.open) {
+        const isClosed = submissionWindow.code === "ABSTRACT_SUBMISSION_CLOSED";
+        return reply.status(409).send({
+          success: false,
+          code: submissionWindow.code,
+          error: isClosed
+            ? "Abstract submission is closed for this event"
+            : "Abstract submission is not open for this event",
+        });
       }
 
       // ── Validate category against abstract_categories table ─────────

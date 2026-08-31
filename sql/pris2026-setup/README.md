@@ -26,6 +26,7 @@
 | 13 | `13_verify_tickets_and_links.sql` | ตรวจผล |
 | 14 | `14_update_opt_in_session_descriptions.sql` | อัปเดต description opt-in (ถ้ารัน seed เก่า) |
 | 15 | `15_fix_timestamps_utc.sql` | แก้เวลาเป็น UTC (ถ้ารัน seed แบบ `+07` ไปแล้ว) |
+| 16 | `16_update_round2_pricing_and_abstract_deadline.sql` | Corrective state ปัจจุบัน: ขยาย Early Bird ถึง 15 ก.ย., Regular ฿2,500, ปิด Late, ขยาย Abstract ถึง 20 ก.ย. |
 
 ## แก้ก่อนรัน
 
@@ -37,6 +38,15 @@
 - คอลัมน์ `timestamp` ใน DB เก็บเป็น **UTC** (ไม่มี offset)
 - ค่าในไฟล์ SQL เป็น UTC แล้ว — comment `-- Bangkok ...` บอกเวลาไทยอ้างอิง
 - หน้าเว็บ/API แปลงแสดงเป็น UTC+7 เอง (สอดคล้องกับ `events.start_date` เช่น `2026-10-29 02:30:00` = 09:30 ไทย)
+
+## สถานะปัจจุบันหลังรันไฟล์ 16
+
+- `06`–`10` เป็น historical seed steps; ค่าปัจจุบันของ General pricing ให้ยึด corrective script `16_update_round2_pricing_and_abstract_deadline.sql`.
+- Early Bird General = ฿1,250 และแถว ticket ถูกเปิดถึง 15 กันยายน 2569 เวลา 23:59:59.999 น. (Bangkok). สิทธิ์ขยายราคาจริงยังถูกบังคับแบบราย user ใน `conference-api`.
+- Regular General = ฿2,500 ตั้งแต่ 1 กันยายน 2569 และสิ้นสุดตาม `events.end_date`.
+- Late General = `is_active = false`; ไม่ลบ row/enum.
+- Abstract submission สิ้นสุด 20 กันยายน 2569 เวลา 23:59:59.999 น. (Bangkok).
+- Postgraduate/Undergraduate **ไม่ถูกแก้ราคาโดยไฟล์ 16**; ให้คงค่าที่ระบบมีอยู่ก่อน corrective script.
 
 ## หมายเหตุ
 

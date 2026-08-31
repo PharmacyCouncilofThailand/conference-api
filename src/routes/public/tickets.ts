@@ -3,6 +3,10 @@ import { db } from "../../database/index.js";
 import { ticketTypes, events, ticketSessions, sessions, registrations, registrationSessions } from "../../database/schema.js";
 import { eq, and, inArray, count } from "drizzle-orm";
 import { ticketAllowsRole, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
+import {
+    resolvePris2026Pricing,
+    toPricingEligibilityResponseData,
+} from "../../modules/pris2026/pricing-policy.js";
 
 // Query params interface
 interface TicketQuery {
@@ -53,6 +57,36 @@ interface TicketWithAvailability {
 }
 
 export default async function publicTicketsRoutes(fastify: FastifyInstance) {
+    fastify.get(
+        "/pricing-eligibility",
+        { preHandler: [fastify.authenticate] },
+        async (request, reply) => {
+            const { eventId, currency = "THB" } = request.query as {
+                eventId?: string;
+                currency?: string;
+            };
+            const parsedEventId = Number(eventId);
+
+            if (!Number.isInteger(parsedEventId) || parsedEventId <= 0) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "eventId is required",
+                });
+            }
+
+            const resolved = await resolvePris2026Pricing({
+                userId: request.user.id,
+                eventId: parsedEventId,
+                currency,
+            });
+
+            return reply.send({
+                success: true,
+                data: toPricingEligibilityResponseData(resolved),
+            });
+        },
+    );
+
     // List all public tickets for published events
     fastify.get("", async (request, reply) => {
         try {

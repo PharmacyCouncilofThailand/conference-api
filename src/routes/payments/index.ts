@@ -58,6 +58,10 @@ import { processSuccessfulPayment as processSuccessfulPaymentService } from "../
 import { completeFreeCheckout, FreeCheckoutError } from "../../modules/payments/free-checkout.service.js";
 import { PromoReservationConflict, reservePromoUsageLocked } from "../../modules/payments/promo-usage.service.js";
 import { freeCheckoutResponse, promoReservationConflictResponse } from "../../modules/payments/api-contract.js";
+import {
+  filterTicketCandidatesByPrisDecision,
+  resolvePris2026Pricing,
+} from "../../modules/pris2026/pricing-policy.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -409,11 +413,21 @@ function buildTaxInvoiceInfo(data: {
  */
 type ResolvedTicket = { id: number; price: string; eventId: number };
 
+class TicketNotEligibleError extends Error {
+  code = "TICKET_NOT_ELIGIBLE" as const;
+
+  constructor() {
+    super("Selected ticket is not available for your current PRIS 2026 registration rate");
+    this.name = "TicketNotEligibleError";
+  }
+}
+
 type TicketLookupRow = {
   id: number;
   price: string;
   currency: string;
   category: string;
+  priority: "early_bird" | "regular" | "late" | "onsite";
   groupName: string | null;
   name: string;
   allowedRoles: string | null;
@@ -474,7 +488,8 @@ async function resolveTicketId(
   eventId: number,
   currency: string,
   category: "primary" | "addon",
-  studentLevel?: string | null
+  studentLevel?: string | null,
+  userId?: number
 ): Promise<ResolvedTicket | null> {
   const allTickets = await db
     .select({
@@ -482,6 +497,7 @@ async function resolveTicketId(
       price: ticketTypes.price,
       currency: ticketTypes.currency,
       category: ticketTypes.category,
+      priority: ticketTypes.priority,
       groupName: ticketTypes.groupName,
       name: ticketTypes.name,
       allowedRoles: ticketTypes.allowedRoles,
@@ -513,6 +529,12 @@ async function resolveTicketId(
     return true;
   });
 
+  const pricing =
+    category === "primary" && userId
+      ? await resolvePris2026Pricing({ userId, eventId, currency, now })
+      : null;
+  const personalizedActive = filterTicketCandidatesByPrisDecision(active, pricing);
+
   const pickBestMatch = (matched: TicketLookupRow[]): ResolvedTicket | null => {
     if (matched.length === 0) return null;
     matched.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
@@ -522,11 +544,26 @@ async function resolveTicketId(
   if (category === "primary") {
     const normalizedPackageId = packageId.trim().toLowerCase();
     const parsedTicketId = parseInt(packageId, 10);
+    const rejectIfPolicyRemovedMatch = (
+      allMatches: TicketLookupRow[],
+      eligibleMatches: TicketLookupRow[],
+    ) => {
+      if (pricing?.applies && allMatches.length > 0 && eligibleMatches.length === 0) {
+        throw new TicketNotEligibleError();
+      }
+    };
 
     // 1) Direct ticket type ID from checkout UI
     if (Number.isInteger(parsedTicketId) && parsedTicketId > 0) {
-      const byId = active.find((t) => t.id === parsedTicketId);
-      if (byId && primaryTicketMatchesStudentLevel(byId, packageId, studentLevel)) {
+      const allById = active.filter(
+        (t) => t.id === parsedTicketId && primaryTicketMatchesStudentLevel(t, packageId, studentLevel),
+      );
+      const eligibleById = personalizedActive.filter(
+        (t) => t.id === parsedTicketId && primaryTicketMatchesStudentLevel(t, packageId, studentLevel),
+      );
+      rejectIfPolicyRemovedMatch(allById, eligibleById);
+      const byId = eligibleById[0];
+      if (byId) {
         return { id: byId.id, price: byId.price, eventId: byId.eventId };
       }
     }
@@ -540,25 +577,31 @@ async function resolveTicketId(
     };
     const roles = roleMap[packageId];
     if (roles) {
-      const matched = active.filter((t) => {
+      const matchRole = (t: TicketLookupRow) => {
         if (!t.allowedRoles) return false;
         const roleMatches = roles.some((r) => allowedListIncludes(t.allowedRoles, r));
         if (!roleMatches) return false;
         return primaryTicketMatchesStudentLevel(t, packageId, studentLevel);
-      });
-      return pickBestMatch(matched);
+      };
+      const allMatches = active.filter(matchRole);
+      const eligibleMatches = personalizedActive.filter(matchRole);
+      rejectIfPolicyRemovedMatch(allMatches, eligibleMatches);
+      return pickBestMatch(eligibleMatches);
     }
 
     // 3) Match by groupName or ticket name shown in checkout
-    const matchedByLabel = active.filter((t) => {
+    const matchLabel = (t: TicketLookupRow) => {
       const groupName = (t.groupName || "").trim().toLowerCase();
       const name = (t.name || "").trim().toLowerCase();
       const labelMatches =
         groupName === normalizedPackageId || name === normalizedPackageId;
       if (!labelMatches) return false;
       return primaryTicketMatchesStudentLevel(t, packageId, studentLevel);
-    });
-    return pickBestMatch(matchedByLabel);
+    };
+    const allMatches = active.filter(matchLabel);
+    const eligibleMatches = personalizedActive.filter(matchLabel);
+    rejectIfPolicyRemovedMatch(allMatches, eligibleMatches);
+    return pickBestMatch(eligibleMatches);
   }
 
   // Addon: match by groupName
@@ -1652,7 +1695,14 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         // Resolve primary ticket
         let primaryTicket: ResolvedTicket | null = null;
         if (!isAddonOnly) {
-          primaryTicket = await resolveTicketId(packageId, eventId, currency, "primary", effectiveStudentLevel);
+          primaryTicket = await resolveTicketId(
+            packageId,
+            eventId,
+            currency,
+            "primary",
+            effectiveStudentLevel,
+            userId,
+          );
           if (!primaryTicket) {
             return reply.status(404).send({
               success: false,
@@ -1724,6 +1774,13 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           },
         });
       } catch (error) {
+        if (error instanceof TicketNotEligibleError) {
+          return reply.status(409).send({
+            success: false,
+            code: error.code,
+            error: error.message,
+          });
+        }
         fastify.log.error(error);
         return reply.status(500).send({ success: false, error: "Failed to preview pricing" });
       }
@@ -1895,7 +1952,14 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         // ── Resolve primary ticket (if not addon-only) ──────
         let primaryTicket: ResolvedTicket | null = null;
         if (!isAddonOnly) {
-          primaryTicket = await resolveTicketId(packageId, eventId, currency, "primary", effectiveStudentLevel);
+          primaryTicket = await resolveTicketId(
+            packageId,
+            eventId,
+            currency,
+            "primary",
+            effectiveStudentLevel,
+            userId,
+          );
           if (!primaryTicket) {
             return reply.status(404).send({
               success: false,
@@ -2682,6 +2746,13 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           },
         });
       } catch (error) {
+        if (error instanceof TicketNotEligibleError) {
+          return reply.status(409).send({
+            success: false,
+            code: error.code,
+            error: error.message,
+          });
+        }
         if (error instanceof PromoReservationConflict) {
           const mapped = promoReservationConflictResponse(error);
           return reply.status(mapped.statusCode).send(mapped.body);
