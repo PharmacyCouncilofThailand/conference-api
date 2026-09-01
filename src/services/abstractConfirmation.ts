@@ -22,6 +22,12 @@ export function getConfirmPath(): string {
   return process.env.ABSTRACT_CONFIRM_PATH || "/abstracts/confirm";
 }
 
+export function getConfirmationLocaleForEvent(
+  shortName: string | null | undefined,
+): "en" | "th" {
+  return shortName?.trim().toUpperCase() === "PRIS 2026" ? "th" : "en";
+}
+
 export function hashToken(rawToken: string): string {
   return crypto.createHash("sha256").update(rawToken, "utf8").digest("hex");
 }

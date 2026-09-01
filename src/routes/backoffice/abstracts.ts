@@ -27,6 +27,7 @@ import {
 } from "../../services/emailTemplates.js";
 import {
   buildConfirmationUrl,
+  getConfirmationLocaleForEvent,
   getConfirmDeadlineDays,
   issueConfirmationToken,
   supersedeActiveTokens,
@@ -926,7 +927,7 @@ export default async function (fastify: FastifyInstance) {
               const issued = await issueConfirmationToken(updatedAbstract.id);
               const confirmUrl = buildConfirmationUrl(
                 issued.rawToken,
-                "en",
+                getConfirmationLocaleForEvent(eventResult.shortName),
                 eventResult.websiteUrl ?? undefined,
               );
               await sendEventAbstractAcceptedEmail(
@@ -1041,7 +1042,7 @@ export default async function (fastify: FastifyInstance) {
       const issued = await issueConfirmationToken(abs.id);
       const confirmUrl = buildConfirmationUrl(
         issued.rawToken,
-        "en",
+        getConfirmationLocaleForEvent(event.shortName),
         event.websiteUrl ?? undefined,
       );
 

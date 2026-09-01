@@ -64,6 +64,7 @@ import {
 } from "../../services/emailTemplates.js";
 import {
   buildConfirmationUrl,
+  getConfirmationLocaleForEvent,
   getConfirmDeadlineDays,
   issueConfirmationToken,
   supersedeActiveTokens,
@@ -128,7 +129,7 @@ export function buildRetrosendPreviewConfirmation(
   return {
     confirmUrl: buildConfirmationUrl(
       "PREVIEW-ONLY",
-      "en",
+      getConfirmationLocaleForEvent(ctx.shortName),
       ctx.websiteUrl || undefined,
     ),
     deadline: new Date(
@@ -616,7 +617,7 @@ async function buildAbstractStatusResults(
         const issued = await issueConfirmationToken(ab.id);
         const confirmUrl = buildConfirmationUrl(
           issued.rawToken,
-          "en",
+          getConfirmationLocaleForEvent(ctx.shortName),
           ctx.websiteUrl || undefined,
         );
         await sendEventAbstractAcceptedEmail(
