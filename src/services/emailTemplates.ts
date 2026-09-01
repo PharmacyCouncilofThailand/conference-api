@@ -186,6 +186,8 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+const PRIS_2026_REGISTRATION_URL = "https://pris.pharmacycouncil.org/th/registration";
+
 function isPris2026EmailContext(ctx: EventEmailContext): boolean {
   return ctx.shortName.trim().toUpperCase() === "PRIS 2026";
 }
@@ -702,7 +704,7 @@ function buildPris2026AbstractAcceptedHtml(
     `<p><strong>Conference Details</strong></p>`,
     `<div style="padding-left: 2em;">- Date: October 29–30, 2026<br>- Venue: Impact Challenger, Jupiter Room 4–13</div>`,
     reviewerCommentsHtml,
-    `<p>All ${presenterLabel} presenters are required to register for the meeting in order to present. For registration information, please visit: <a href="https://pris.pharmacycouncil.org/">https://pris.pharmacycouncil.org/</a></p>`,
+    `<p>All ${presenterLabel} presenters are required to register for the meeting in order to present. For registration information, please visit: <a href="${PRIS_2026_REGISTRATION_URL}">${PRIS_2026_REGISTRATION_URL}</a></p>`,
     confirmationHtml ? `<div>${confirmationHtml}</div><br>` : "",
     registrationRateHtml ? `<div>${registrationRateHtml}</div>` : "",
     `<p>We look forward to your presentation. Should you have any questions, please contact <a href="mailto:pr@pharmacycouncil.org">pr@pharmacycouncil.org</a>.</p>`,
@@ -725,13 +727,16 @@ function buildAbstractAcceptedPlainText(
   const commentText = comment ? `\nComment: ${comment}\n` : "";
   const confirmationBlock = buildConfirmationBlock(confirmation);
   const registrationRateBlock = buildRegistrationRateNoticeBlock(registrationRateNotice);
+  const registrationUrl = isPris2026EmailContext(ctx)
+    ? PRIS_2026_REGISTRATION_URL
+    : ctx.websiteUrl;
 
   return `
 Dear ${firstName} ${lastName},
 
 Congratulations! Your abstract, titled "${abstractTitle}", is ACCEPTED as ${articlePrefix} ${typeLabel} at the ${ctx.eventName}. ${introLine(ctx)}
 ${commentText}
-All ${presentationType} presenters must be registered for the meeting in order to present${presentationType === "poster" ? " their poster" : ""}. For registration information and details go to ${ctx.websiteUrl}
+All ${presentationType} presenters must be registered for the meeting in order to present${presentationType === "poster" ? " their poster" : ""}. For registration information and details go to ${registrationUrl}
 ${confirmationBlock}
 ${registrationRateBlock ? `\r\n${registrationRateBlock}\r\n` : ""}
 We look forward to your presentation. If you have any questions, please contact pr@pharmacycouncil.org
@@ -833,6 +838,7 @@ Thank you for submitting your abstract for consideration in poster or oral prese
 
 Abstract Title: ${abstractTitle}
 ${reviewerComments}
+For registration information, please visit: ${PRIS_2026_REGISTRATION_URL}
 ${registrationRateBlock ? `\r\n${registrationRateBlock}\r\n` : ""}
 Thank you so much again for your submission. Looking forward to your abstract at next year's conference.
 
@@ -874,6 +880,7 @@ function buildPris2026AbstractRejectedHtml(
     `<p>Thank you for submitting your abstract for consideration in poster or oral presentation at PRIS 2026. After careful review, and due to the high number of quality submissions relative to limited presentation slots, we regret to inform you that your abstract has not been accepted for presentation this year.</p>`,
     `<p>Abstract Title: ${escapeHtml(abstractTitle)}</p>`,
     reviewerCommentsHtml,
+    `<p>For registration information, please visit: <a href="${PRIS_2026_REGISTRATION_URL}">${PRIS_2026_REGISTRATION_URL}</a></p>`,
     registrationRateHtml ? `<div>${registrationRateHtml}</div>` : "",
     `<p>Thank you so much again for your submission. Looking forward to your abstract at next year's conference.</p>`,
     `<p>Sincerely,</p><p>The Pharmacy Council of Thailand</p>`,
@@ -1210,7 +1217,7 @@ export function buildPris2026EarlyBirdReminderEmailContent(
   notice: RegistrationRateNotice,
 ): EventEmailContent {
   const registrationRateHtml = textToHtml(buildRegistrationRateNoticeBlock(notice)).trim();
-  const registrationUrl = "https://pris.pharmacycouncil.org/";
+  const registrationUrl = PRIS_2026_REGISTRATION_URL;
   const recipientName = escapeHtml(`${firstName} ${lastName}`.trim());
 
   return {

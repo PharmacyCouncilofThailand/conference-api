@@ -76,7 +76,7 @@ test("PRIS accepted oral email keeps its subject and uses the approved body", ()
     { ...ctx, shortName: "PRIS 2026", eventName: "PRIS 2026", websiteUrl: "https://pris.pharmacycouncil.org/" },
     "Please strengthen the discussion section before presentation.",
     {
-      confirmUrl: "https://pris.pharmacycouncil.org/en/abstract-confirm/test-token",
+      confirmUrl: "https://pris.pharmacycouncil.org/th/abstracts/confirm?token=test-token",
       deadline: new Date("2026-09-05T16:59:00.000Z"),
     },
     earlyBirdNotice,
@@ -96,9 +96,9 @@ test("PRIS accepted oral email keeps its subject and uses the approved body", ()
     /Impact Challenger, Jupiter Room 4–13<\/div>\s*<p><strong>Reviewer Comments<\/strong><\/p>\s*<p>Please strengthen the discussion section before presentation\.<\/p>\s*<p>All oral presenters/,
   );
   assert.match(result.html, /All oral presenters are required to register for the meeting in order to present\./);
-  assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/"/);
+  assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/th\/registration"/);
   assert.match(result.html, /ACTION REQUIRED \/ กรุณายืนยันการเข้าร่วม/);
-  assert.match(result.html, /abstract-confirm\/test-token<br><\/div><br>\s*<div>=== IMPORTANT REGISTRATION RATE/);
+  assert.match(result.html, /th\/abstracts\/confirm\?token=test-token<br><\/div><br>\s*<div>=== IMPORTANT REGISTRATION RATE/);
   assert.match(result.html, /1,250/);
   assert.match(result.html, /2,500/);
   assert.match(result.html, /15 September 2026/);
@@ -145,8 +145,9 @@ test("PRIS rejected abstract email uses the approved subject, body, and optional
   assert.match(result.html, /The study is outside the current presentation scope\./);
   assert.match(
     result.html,
-    /Abstract Title: A useful pharmacy abstract<\/p>\s*<p><strong>Reviewer Comments<\/strong><\/p>\s*<p>The study is outside the current presentation scope\.<\/p>\s*<div>=== IMPORTANT REGISTRATION RATE/,
+    /Abstract Title: A useful pharmacy abstract<\/p>\s*<p><strong>Reviewer Comments<\/strong><\/p>\s*<p>The study is outside the current presentation scope\.<\/p>\s*<p>For registration information, please visit: <a href="https:\/\/pris\.pharmacycouncil\.org\/th\/registration">https:\/\/pris\.pharmacycouncil\.org\/th\/registration<\/a><\/p>\s*<div>=== IMPORTANT REGISTRATION RATE/,
   );
+  assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/th\/registration"/);
   assert.match(result.html, /1,250/);
   assert.match(result.html, /2,500/);
   assert.match(result.html, /15 September 2026/);
@@ -217,7 +218,7 @@ test("manual PRIS reminder keeps its subject and uses the approved reminder body
   assert.match(result.html, /already completed registration\/payment/i);
   assert.match(result.html, /โปรดละเว้นข้อความส่วนการชำระเงินนี้/);
   assert.match(result.html, /For registration details, please visit:/);
-  assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/"/);
+  assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/th\/registration"/);
   assert.match(result.html, /Should you have any questions, please feel free to contact us\./);
   assert.match(result.html, /<p>Sincerely,<\/p><p>The Pharmacy Council of Thailand<\/p>/);
 });

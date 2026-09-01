@@ -86,7 +86,7 @@ Conference Details
 Reviewer Comments
 [reviewer comment]
 
-All oral presenters are required to register for the meeting in order to present. For registration information, please visit: https://pris.pharmacycouncil.org/
+All oral presenters are required to register for the meeting in order to present. For registration information, please visit: https://pris.pharmacycouncil.org/th/registration
 ```
 
 Poster ใช้โครงเดียวกัน โดยเปลี่ยนเป็น:
@@ -157,6 +157,8 @@ Abstract Title: [Title]
 
 Reviewer Comments
 [reviewer comment]
+
+For registration information, please visit: https://pris.pharmacycouncil.org/th/registration
 
 === IMPORTANT REGISTRATION RATE / ข้อมูลสำคัญเรื่องค่าลงทะเบียน ===
 
@@ -236,7 +238,7 @@ If you have already completed registration/payment, we apologize for the inconve
 หลังจากกำหนดดังกล่าว อัตราค่าลงทะเบียนจะเป็นราคาปกติ 2,500 บาท
 หากท่านได้ลงทะเบียนหรือชำระเงินเรียบร้อยแล้ว ทางคณะผู้จัดงานขออภัยในความไม่สะดวก และโปรดละเว้นข้อความส่วนการชำระเงินนี้
 
-For registration details, please visit: https://pris.pharmacycouncil.org/
+For registration details, please visit: https://pris.pharmacycouncil.org/th/registration
 
 Should you have any questions, please feel free to contact us.
 
@@ -248,7 +250,7 @@ The Pharmacy Council of Thailand
 Registration URL ใน HTML เป็นลิงก์ที่คลิกได้จริง:
 
 ```text
-https://pris.pharmacycouncil.org/
+https://pris.pharmacycouncil.org/th/registration
 ```
 
 ---
