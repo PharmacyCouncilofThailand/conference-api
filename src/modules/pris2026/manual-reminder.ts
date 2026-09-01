@@ -8,6 +8,7 @@ import {
 } from "../../database/schema.js";
 import {
   PRIS_2026_CUTOFF,
+  PRIS_2026_EVENT_CODE,
   PRIS_2026_EXTENSION_END,
   resolvePris2026Pricing,
 } from "./pricing-policy.js";
@@ -36,6 +37,7 @@ export function isPris2026ManualReminderWindowOpen(now: Date): boolean {
 export function buildPris2026ManualReminderUserConditions(eventId: number) {
   return [
     inArray(users.role, ["pharmacist", "medical_professional"]),
+    eq(users.registeredFromEvent, PRIS_2026_EVENT_CODE),
     lt(users.createdAt, PRIS_2026_CUTOFF),
     exists(
       db
@@ -77,6 +79,16 @@ export async function resolvePris2026ManualReminderEligibility(input: {
   }
   if (now >= PRIS_2026_EXTENSION_END) {
     return { eligible: false, reason: "expired" };
+  }
+
+  const [user] = await db
+    .select({ registeredFromEvent: users.registeredFromEvent })
+    .from(users)
+    .where(eq(users.id, input.userId))
+    .limit(1);
+
+  if (user?.registeredFromEvent !== PRIS_2026_EVENT_CODE) {
+    return { eligible: false, reason: "pricing_not_eligible" };
   }
 
   const pricing = await resolvePris2026Pricing({
