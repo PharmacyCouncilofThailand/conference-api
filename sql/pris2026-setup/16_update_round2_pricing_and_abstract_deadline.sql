@@ -17,6 +17,39 @@
 
 BEGIN;
 
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM events WHERE event_code = 'PRIS-2026') <> 1 THEN
+    RAISE EXCEPTION 'PRIS-2026 event cardinality mismatch';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM ticket_types t
+    JOIN events e ON e.id = t.event_id
+    WHERE e.event_code = 'PRIS-2026'
+      AND t.category = 'primary'
+      AND t.priority = 'early_bird'
+      AND t.currency = 'THB'
+      AND t.name = 'Early Bird'
+  ) <> 1 THEN
+    RAISE EXCEPTION 'PRIS-2026 Early Bird target cardinality mismatch';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM ticket_types t
+    JOIN events e ON e.id = t.event_id
+    WHERE e.event_code = 'PRIS-2026'
+      AND t.category = 'primary'
+      AND t.priority = 'regular'
+      AND t.currency = 'THB'
+      AND t.name = 'Regular'
+  ) <> 1 THEN
+    RAISE EXCEPTION 'PRIS-2026 Regular target cardinality mismatch';
+  END IF;
+END $$;
+
 UPDATE ticket_types AS t
 SET sale_end_date = TIMESTAMP '2026-09-15 16:59:59.999'
 FROM events AS e
@@ -53,6 +86,54 @@ UPDATE events
 SET abstract_end_date = TIMESTAMP '2026-09-20 16:59:59.999',
     updated_at = NOW()
 WHERE event_code = 'PRIS-2026';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM ticket_types t
+    JOIN events e ON e.id = t.event_id
+    WHERE e.event_code = 'PRIS-2026'
+      AND t.category = 'primary'
+      AND t.priority = 'early_bird'
+      AND t.currency = 'THB'
+      AND t.name = 'Early Bird'
+      AND t.sale_end_date = TIMESTAMP '2026-09-15 16:59:59.999'
+      AND t.is_active = true
+  ) THEN
+    RAISE EXCEPTION 'PRIS-2026 Early Bird postcondition failed';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM ticket_types t
+    JOIN events e ON e.id = t.event_id
+    WHERE e.event_code = 'PRIS-2026'
+      AND t.category = 'primary'
+      AND t.priority = 'regular'
+      AND t.currency = 'THB'
+      AND t.name = 'Regular'
+      AND t.price = 2500.00
+      AND t.sale_start_date = TIMESTAMP '2026-08-31 17:00:00'
+      AND t.sale_end_date = e.end_date
+      AND t.is_active = true
+  ) THEN
+    RAISE EXCEPTION 'PRIS-2026 Regular postcondition failed';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM ticket_types t
+    JOIN events e ON e.id = t.event_id
+    WHERE e.event_code = 'PRIS-2026'
+      AND t.category = 'primary'
+      AND t.priority = 'late'
+      AND t.currency = 'THB'
+      AND t.is_active = true
+  ) THEN
+    RAISE EXCEPTION 'PRIS-2026 Late postcondition failed';
+  END IF;
+END $$;
 
 COMMIT;
 

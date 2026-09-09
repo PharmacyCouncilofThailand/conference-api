@@ -45,3 +45,20 @@ test("regular or non-qualified pricing produces no result-email notice", () => {
     undefined,
   );
 });
+
+test("postgraduate override never emits pharmacist Early Bird result-email notice", () => {
+  assert.equal(
+    registrationRateNoticeFromPricing({
+      ...eligiblePricing,
+      applies: false,
+      policyCode: null,
+      phase: "not_applicable",
+      qualifiedForExtension: false,
+      effectivePriority: null,
+      effectiveTicketTypeId: null,
+      offerExpiresAt: null,
+      reason: "postgraduate_override",
+    }),
+    undefined,
+  );
+});

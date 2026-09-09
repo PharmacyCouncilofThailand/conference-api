@@ -48,6 +48,17 @@
 - Abstract submission สิ้นสุด 20 กันยายน 2569 เวลา 23:59:59.999 น. (Bangkok).
 - Postgraduate/Undergraduate **ไม่ถูกแก้ราคาโดยไฟล์ 16**; ให้คงค่าที่ระบบมีอยู่ก่อน corrective script.
 
+## Local-only rehearsal gate สำหรับไฟล์ 16
+
+1. ห้าม deploy rehearsal นี้ไป Production.
+2. ก่อนรันต้องยืนยัน runtime `DATABASE_URL` ว่าเป็น `localhost`/`127.0.0.1:5432`, database `confer_db`, user `confer_user`.
+3. รัน backend/frontend code gates ใน local ให้ผ่านก่อน.
+4. บันทึก PRIS ticket rows ใน local ก่อน mutation ด้วย read-only `SELECT`.
+5. รันไฟล์ `16_update_round2_pricing_and_abstract_deadline.sql` เฉพาะ local ด้วย `ON_ERROR_STOP=1` หลัง DB identity guard ผ่านแล้วเท่านั้น.
+6. หลังรันให้ verify local event/tickets ทันที และ rerun pricing/bypass authorization matrix.
+7. ถ้าต้อง rollback local ให้ restore จากค่าจริงที่บันทึกไว้ก่อน mutation เท่านั้น; ห้ามเดาหรือ hard-code rollback timestamp จากความจำ.
+8. การ apply/deploy ไป Production เป็น operation แยกในอนาคตและต้องได้รับ explicit approval ก่อนเสมอ.
+
 ## หมายเหตุ
 
 - `quota = 0` = ไม่จำกัดจำนวนตั๋ว

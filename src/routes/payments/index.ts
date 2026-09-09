@@ -51,17 +51,19 @@ import {
 import { generateReceiptToken, verifyReceiptToken } from "../../utils/receiptToken.js";
 import { generateReceiptPdf } from "../../services/receiptPdf.js";
 import { sendPaymentReceiptEmail } from "../../services/emailService.js";
-import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
-import { resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
+import { allowedListIncludes, ticketIsOnSaleAt } from "../../utils/ticketEligibility.js";
+import {
+  resolveEffectiveTicketIdentity,
+  studentPackageEligibilityFromIdentity,
+  type EffectiveTicketIdentity,
+} from "../../utils/studentEligibility.js";
 import { validatePromoCode, settlePromoUsageSuccess, cancelPromoUsage } from "../../utils/promoEngine.js";
 import { processSuccessfulPayment as processSuccessfulPaymentService } from "../../modules/payments/registration-settlement.service.js";
 import { completeFreeCheckout, FreeCheckoutError } from "../../modules/payments/free-checkout.service.js";
 import { PromoReservationConflict, reservePromoUsageLocked } from "../../modules/payments/promo-usage.service.js";
 import { freeCheckoutResponse, promoReservationConflictResponse } from "../../modules/payments/api-contract.js";
-import {
-  filterTicketCandidatesByPrisDecision,
-  resolvePris2026Pricing,
-} from "../../modules/pris2026/pricing-policy.js";
+import { resolvePris2026Pricing } from "../../modules/pris2026/pricing-policy.js";
+import { authorizePrimaryTicketCandidates } from "../../modules/payments/primary-ticket-authorization.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -441,22 +443,6 @@ type TicketLookupRow = {
   saleEndDate: Date | null;
 };
 
-function primaryTicketMatchesStudentLevel(
-  ticket: Pick<TicketLookupRow, "allowedRoles" | "allowedStudentLevels">,
-  packageId: string,
-  studentLevel?: string | null
-): boolean {
-  if (!allowedListIncludes(ticket.allowedRoles, "student")) {
-    return true;
-  }
-
-  if (packageId === "student") {
-    return ticketAllowsStudentLevel(ticket.allowedStudentLevels, studentLevel);
-  }
-
-  return ticketAllowsStudentLevel(ticket.allowedStudentLevels, studentLevel);
-}
-
 async function primaryPackageRequiresStudentEligibility(
   packageId: string,
   eventId: number
@@ -488,8 +474,8 @@ async function resolveTicketId(
   eventId: number,
   currency: string,
   category: "primary" | "addon",
-  studentLevel?: string | null,
-  userId?: number
+  effectiveIdentity?: EffectiveTicketIdentity | null,
+  userId?: number,
 ): Promise<ResolvedTicket | null> {
   const allTickets = await db
     .select({
@@ -520,20 +506,24 @@ async function resolveTicketId(
     );
 
   const now = new Date();
-  const active = allTickets.filter((t) => {
-    if (t.isActive === false) return false;
-    const saleStart = t.saleStartDate ? new Date(t.saleStartDate) : null;
-    const saleEnd = t.saleEndDate ? new Date(t.saleEndDate) : null;
-    if (saleStart && now < saleStart) return false;
-    if (saleEnd && now > saleEnd) return false;
-    return true;
-  });
+  const active = allTickets.filter(
+    (ticket) => ticket.isActive !== false && ticketIsOnSaleAt(ticket, now),
+  );
 
   const pricing =
-    category === "primary" && userId
-      ? await resolvePris2026Pricing({ userId, eventId, currency, now })
+    category === "primary" && userId && effectiveIdentity
+      ? await resolvePris2026Pricing({
+          userId,
+          eventId,
+          currency,
+          now,
+          identity: effectiveIdentity,
+        })
       : null;
-  const personalizedActive = filterTicketCandidatesByPrisDecision(active, pricing);
+  const authorizedActive =
+    category === "primary" && effectiveIdentity
+      ? authorizePrimaryTicketCandidates(active, effectiveIdentity, pricing)
+      : [];
 
   const pickBestMatch = (matched: TicketLookupRow[]): ResolvedTicket | null => {
     if (matched.length === 0) return null;
@@ -544,25 +534,21 @@ async function resolveTicketId(
   if (category === "primary") {
     const normalizedPackageId = packageId.trim().toLowerCase();
     const parsedTicketId = parseInt(packageId, 10);
-    const rejectIfPolicyRemovedMatch = (
-      allMatches: TicketLookupRow[],
-      eligibleMatches: TicketLookupRow[],
+    const rejectIfAuthorizationRemovedMatch = (
+      requestedMatches: TicketLookupRow[],
+      authorizedMatches: TicketLookupRow[],
     ) => {
-      if (pricing?.applies && allMatches.length > 0 && eligibleMatches.length === 0) {
+      if (requestedMatches.length > 0 && authorizedMatches.length === 0) {
         throw new TicketNotEligibleError();
       }
     };
 
     // 1) Direct ticket type ID from checkout UI
     if (Number.isInteger(parsedTicketId) && parsedTicketId > 0) {
-      const allById = active.filter(
-        (t) => t.id === parsedTicketId && primaryTicketMatchesStudentLevel(t, packageId, studentLevel),
-      );
-      const eligibleById = personalizedActive.filter(
-        (t) => t.id === parsedTicketId && primaryTicketMatchesStudentLevel(t, packageId, studentLevel),
-      );
-      rejectIfPolicyRemovedMatch(allById, eligibleById);
-      const byId = eligibleById[0];
+      const requestedById = active.filter((ticket) => ticket.id === parsedTicketId);
+      const authorizedById = authorizedActive.filter((ticket) => ticket.id === parsedTicketId);
+      rejectIfAuthorizationRemovedMatch(requestedById, authorizedById);
+      const byId = authorizedById[0];
       if (byId) {
         return { id: byId.id, price: byId.price, eventId: byId.eventId };
       }
@@ -577,31 +563,26 @@ async function resolveTicketId(
     };
     const roles = roleMap[packageId];
     if (roles) {
-      const matchRole = (t: TicketLookupRow) => {
-        if (!t.allowedRoles) return false;
-        const roleMatches = roles.some((r) => allowedListIncludes(t.allowedRoles, r));
-        if (!roleMatches) return false;
-        return primaryTicketMatchesStudentLevel(t, packageId, studentLevel);
-      };
-      const allMatches = active.filter(matchRole);
-      const eligibleMatches = personalizedActive.filter(matchRole);
-      rejectIfPolicyRemovedMatch(allMatches, eligibleMatches);
-      return pickBestMatch(eligibleMatches);
+      const matchRequestedRole = (ticket: TicketLookupRow) =>
+        !!ticket.allowedRoles &&
+        roles.some((role) => allowedListIncludes(ticket.allowedRoles, role));
+
+      const requestedMatches = active.filter(matchRequestedRole);
+      const authorizedMatches = authorizedActive.filter(matchRequestedRole);
+      rejectIfAuthorizationRemovedMatch(requestedMatches, authorizedMatches);
+      return pickBestMatch(authorizedMatches);
     }
 
     // 3) Match by groupName or ticket name shown in checkout
-    const matchLabel = (t: TicketLookupRow) => {
-      const groupName = (t.groupName || "").trim().toLowerCase();
-      const name = (t.name || "").trim().toLowerCase();
-      const labelMatches =
-        groupName === normalizedPackageId || name === normalizedPackageId;
-      if (!labelMatches) return false;
-      return primaryTicketMatchesStudentLevel(t, packageId, studentLevel);
+    const matchRequestedLabel = (ticket: TicketLookupRow) => {
+      const groupName = (ticket.groupName || "").trim().toLowerCase();
+      const name = (ticket.name || "").trim().toLowerCase();
+      return groupName === normalizedPackageId || name === normalizedPackageId;
     };
-    const allMatches = active.filter(matchLabel);
-    const eligibleMatches = personalizedActive.filter(matchLabel);
-    rejectIfPolicyRemovedMatch(allMatches, eligibleMatches);
-    return pickBestMatch(eligibleMatches);
+    const requestedMatches = active.filter(matchRequestedLabel);
+    const authorizedMatches = authorizedActive.filter(matchRequestedLabel);
+    rejectIfAuthorizationRemovedMatch(requestedMatches, authorizedMatches);
+    return pickBestMatch(authorizedMatches);
   }
 
   // Addon: match by groupName
@@ -1675,21 +1656,36 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           return reply.status(400).send({ success: false, code: "EVENT_NOT_AVAILABLE", error: "Event is not available for registration" });
         }
 
-        let effectiveStudentLevel: string | null = null;
+        const identityResult = !isAddonOnly
+          ? await resolveEffectiveTicketIdentity(userId, eventId)
+          : null;
+
+        if (identityResult && !identityResult.allowed) {
+          return reply.status(403).send({
+            success: false,
+            code: identityResult.code,
+            error: identityResult.error,
+          });
+        }
+
+        const effectiveIdentity = identityResult?.allowed
+          ? identityResult.identity
+          : null;
+
         if (
           !isAddonOnly &&
+          effectiveIdentity &&
           (packageId === "student" ||
             (await primaryPackageRequiresStudentEligibility(packageId, eventId)))
         ) {
-          const eligibility = await resolveStudentPackageEligibility(userId, eventId);
-          if (!eligibility.allowed) {
+          const studentEligibility = studentPackageEligibilityFromIdentity(effectiveIdentity);
+          if (!studentEligibility.allowed) {
             return reply.status(403).send({
               success: false,
-              code: eligibility.code,
-              error: eligibility.error,
+              code: studentEligibility.code,
+              error: studentEligibility.error,
             });
           }
-          effectiveStudentLevel = eligibility.effectiveStudentLevel;
         }
 
         // Resolve primary ticket
@@ -1700,7 +1696,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             eventId,
             currency,
             "primary",
-            effectiveStudentLevel,
+            effectiveIdentity,
             userId,
           );
           if (!primaryTicket) {
@@ -1861,21 +1857,36 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           return reply.status(400).send({ success: false, code: "EVENT_NOT_AVAILABLE", error: "Event is not available for registration" });
         }
 
-        let effectiveStudentLevel: string | null = null;
+        const identityResult = !isAddonOnly
+          ? await resolveEffectiveTicketIdentity(userId, eventId)
+          : null;
+
+        if (identityResult && !identityResult.allowed) {
+          return reply.status(403).send({
+            success: false,
+            code: identityResult.code,
+            error: identityResult.error,
+          });
+        }
+
+        const effectiveIdentity = identityResult?.allowed
+          ? identityResult.identity
+          : null;
+
         if (
           !isAddonOnly &&
+          effectiveIdentity &&
           (packageId === "student" ||
             (await primaryPackageRequiresStudentEligibility(packageId, eventId)))
         ) {
-          const eligibility = await resolveStudentPackageEligibility(userId, eventId);
-          if (!eligibility.allowed) {
+          const studentEligibility = studentPackageEligibilityFromIdentity(effectiveIdentity);
+          if (!studentEligibility.allowed) {
             return reply.status(403).send({
               success: false,
-              code: eligibility.code,
-              error: eligibility.error,
+              code: studentEligibility.code,
+              error: studentEligibility.error,
             });
           }
-          effectiveStudentLevel = eligibility.effectiveStudentLevel;
         }
 
         // ── Duplicate / addon-only guard ─────────────────────
@@ -1957,7 +1968,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             eventId,
             currency,
             "primary",
-            effectiveStudentLevel,
+            effectiveIdentity,
             userId,
           );
           if (!primaryTicket) {

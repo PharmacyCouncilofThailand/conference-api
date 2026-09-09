@@ -1,6 +1,10 @@
 import { and, eq, lt } from "drizzle-orm";
-import { abstracts, events, ticketTypes, users } from "../../database/schema.js";
-import { ticketAllowsRole } from "../../utils/ticketEligibility.js";
+import { abstracts, events, ticketTypes } from "../../database/schema.js";
+import { ticketAllowsRole, ticketIsOnSaleAt } from "../../utils/ticketEligibility.js";
+import {
+  resolveEffectiveTicketIdentity,
+  type EffectiveTicketIdentity,
+} from "../../utils/studentEligibility.js";
 
 export const PRIS_2026_EVENT_CODE = "PRIS-2026";
 export const PRIS_2026_CUTOFF = new Date("2026-08-31T17:00:00.000Z");
@@ -20,6 +24,7 @@ export type Pris2026PricingReason =
   | "account_after_cutoff"
   | "no_qualifying_abstract"
   | "offer_expired"
+  | "postgraduate_override"
   | "not_applicable";
 
 export interface Pris2026PricingDecision {
@@ -45,6 +50,7 @@ export interface Pris2026PricingFacts {
   eventId: number;
   eventCode: string;
   role: string;
+  identitySource: "account" | "pharmacist_event_student_eligibility";
   accountCreatedAt: Date;
   hasQualifyingAbstractBeforeCutoff: boolean;
   ticketIdsByPriority: Partial<Record<"early_bird" | "regular", number>>;
@@ -125,6 +131,20 @@ export function resolvePris2026PricingFromFacts(
   currency: string,
   now: Date,
 ): ResolvedPris2026Pricing {
+  if (facts.identitySource === "pharmacist_event_student_eligibility") {
+    return {
+      eventId: facts.eventId,
+      applies: false,
+      policyCode: null,
+      phase: "not_applicable",
+      qualifiedForExtension: false,
+      effectivePriority: null,
+      effectiveTicketTypeId: null,
+      offerExpiresAt: null,
+      reason: "postgraduate_override",
+    };
+  }
+
   const decision = evaluatePris2026Pricing({
     eventCode: facts.eventCode,
     currency,
@@ -145,11 +165,36 @@ export function resolvePris2026PricingFromFacts(
   };
 }
 
-export function filterTicketCandidatesByPrisDecision<
-  T extends { priority: string },
->(tickets: T[], decision: Pris2026PricingDecision | null): T[] {
-  if (!decision?.applies || !decision.effectivePriority) return tickets;
-  return tickets.filter((ticket) => ticket.priority === decision.effectivePriority);
+export function buildPrisTicketIdsByPriority(
+  tickets: Array<{
+    id: number;
+    priority: string;
+    allowedRoles: string | null;
+    isActive: boolean | null;
+    saleStartDate: Date | null;
+    saleEndDate: Date | null;
+  }>,
+  role: string,
+  now: Date,
+): Partial<Record<"early_bird" | "regular", number>> {
+  const result: Partial<Record<"early_bird" | "regular", number>> = {};
+  for (const ticket of tickets) {
+    if (ticket.isActive === false) continue;
+    if (ticket.priority !== "early_bird" && ticket.priority !== "regular") continue;
+    if (!ticketAllowsRole(ticket.allowedRoles, role)) continue;
+    if (!ticketIsOnSaleAt(ticket, now)) continue;
+    if (result[ticket.priority] === undefined) result[ticket.priority] = ticket.id;
+  }
+  return result;
+}
+
+export function filterTicketCandidatesByPrisDecision<T extends { id: number }>(
+  tickets: T[],
+  decision: ResolvedPris2026Pricing | null,
+): T[] {
+  if (!decision?.applies) return tickets;
+  if (decision.effectiveTicketTypeId == null) return [];
+  return tickets.filter((ticket) => ticket.id === decision.effectiveTicketTypeId);
 }
 
 export function toPricingEligibilityResponseData(result: ResolvedPris2026Pricing) {
@@ -171,22 +216,22 @@ export async function resolvePris2026Pricing(input: {
   eventId: number;
   currency: string;
   now?: Date;
+  identity?: EffectiveTicketIdentity;
 }): Promise<ResolvedPris2026Pricing> {
   const { db } = await import("../../database/index.js");
   const now = input.now ?? new Date();
 
-  const [accountEvent] = await db
-    .select({
-      eventCode: events.eventCode,
-      role: users.role,
-      accountCreatedAt: users.createdAt,
-    })
-    .from(users)
-    .innerJoin(events, eq(events.id, input.eventId))
-    .where(eq(users.id, input.userId))
+  const [eventRow] = await db
+    .select({ eventCode: events.eventCode })
+    .from(events)
+    .where(eq(events.id, input.eventId))
     .limit(1);
 
-  if (!accountEvent) {
+  const identityResult = input.identity
+    ? { allowed: true as const, identity: input.identity }
+    : await resolveEffectiveTicketIdentity(input.userId, input.eventId);
+
+  if (!eventRow || !identityResult.allowed) {
     return {
       eventId: input.eventId,
       applies: false,
@@ -199,6 +244,8 @@ export async function resolvePris2026Pricing(input: {
       reason: "not_applicable",
     };
   }
+
+  const identity = identityResult.identity;
 
   const [qualifyingAbstract] = await db
     .select({ id: abstracts.id })
@@ -218,6 +265,8 @@ export async function resolvePris2026Pricing(input: {
       priority: ticketTypes.priority,
       allowedRoles: ticketTypes.allowedRoles,
       isActive: ticketTypes.isActive,
+      saleStartDate: ticketTypes.saleStartDate,
+      saleEndDate: ticketTypes.saleEndDate,
     })
     .from(ticketTypes)
     .where(
@@ -228,22 +277,19 @@ export async function resolvePris2026Pricing(input: {
       ),
     );
 
-  const ticketIdsByPriority: Partial<Record<"early_bird" | "regular", number>> = {};
-  for (const ticket of ticketRows) {
-    if (ticket.isActive === false) continue;
-    if (ticket.priority !== "early_bird" && ticket.priority !== "regular") continue;
-    if (!ticketAllowsRole(ticket.allowedRoles, accountEvent.role)) continue;
-    if (ticketIdsByPriority[ticket.priority] === undefined) {
-      ticketIdsByPriority[ticket.priority] = ticket.id;
-    }
-  }
+  const ticketIdsByPriority = buildPrisTicketIdsByPriority(
+    ticketRows,
+    identity.effectiveRole,
+    now,
+  );
 
   return resolvePris2026PricingFromFacts(
     {
       eventId: input.eventId,
-      eventCode: accountEvent.eventCode,
-      role: accountEvent.role,
-      accountCreatedAt: accountEvent.accountCreatedAt,
+      eventCode: eventRow.eventCode,
+      role: identity.effectiveRole,
+      identitySource: identity.source,
+      accountCreatedAt: identity.accountCreatedAt,
       hasQualifyingAbstractBeforeCutoff: Boolean(qualifyingAbstract),
       ticketIdsByPriority,
     },
