@@ -194,6 +194,7 @@ import publicStudentEligibilityRoutes from "./routes/public/studentEligibility.j
 import abstractSubmitRoutes from "./routes/public/abstracts/submit.js";
 import abstractWordCountRoutes from "./routes/public/abstracts/word-count.js";
 import abstractConfirmRoutes from "./routes/public/abstracts/confirm.js";
+import abstractAcceptedRoutes from "./routes/public/abstracts/accepted.js";
 import userProfileRoutes from "./routes/public/users/profile.js";
 import userAbstractsRoutes from "./routes/public/abstracts/user.js";
 import publicWorkshopsRoutes from "./routes/public/workshops.js";
@@ -252,6 +253,7 @@ fastify.register(publicSpeakersRoutes, { prefix: "/api/speakers" });
 fastify.register(abstractSubmitRoutes, { prefix: "/api/abstracts" });
 fastify.register(abstractWordCountRoutes, { prefix: "/api/abstracts" });
 fastify.register(abstractConfirmRoutes, { prefix: "/api/abstracts/confirm" });
+fastify.register(abstractAcceptedRoutes, { prefix: "/api/abstracts" });
 fastify.register(userProfileRoutes, { prefix: "/api/users" });
 fastify.register(userAbstractsRoutes, { prefix: "/api/abstracts/user" });
 fastify.register(publicWorkshopsRoutes, { prefix: "/api/workshops" });
