@@ -196,7 +196,7 @@ test("abstract result emails keep old content when no pricing notice is supplied
   assert.doesNotMatch(rejected.html, /IMPORTANT REGISTRATION RATE/);
 });
 
-test("manual PRIS reminder keeps its subject and uses the approved reminder body", () => {
+test("manual PRIS reminder keeps its subject and uses the Thai reminder body", () => {
   const result = buildPris2026EarlyBirdReminderEmailContent(
     "Ada",
     "Lovelace",
@@ -205,20 +205,18 @@ test("manual PRIS reminder keeps its subject and uses the approved reminder body
   );
 
   assert.equal(result.subject, "PRIS 2026 Early Bird Registration Reminder - Payment by 15 September 2026");
-  assert.match(result.html, /Dear Ada Lovelace,/);
+  assert.match(result.html, /<p>เรียน คุณAda Lovelace<\/p>/);
   assert.match(
     result.html,
-    /This is a reminder regarding your PRIS 2026 registration\. You are eligible for the Early Bird registration rate, as both your user account and your PRIS 2026 abstract submission were created before 31 August 2026, 23:59 \(Bangkok time\)\. Please note that this eligibility is based solely on submission timing and is independent of your abstract's acceptance or rejection status\./,
+    /ขอแจ้งให้ทราบว่า ท่านมีสิทธิ์ลงทะเบียนเข้าร่วมงาน PRIS 2026 \(ประกาศผลรอบที่ 1\) ในอัตรา Early Bird ราคา 1,250 บาท/,
   );
-  assert.match(result.html, /IMPORTANT REGISTRATION RATE \/ ข้อมูลสำคัญเรื่องค่าลงทะเบียน/);
-  assert.match(result.html, /1,250/);
-  assert.match(result.html, /2,500/);
-  assert.match(result.html, /15 September 2026/);
-  assert.match(result.html, /15 กันยายน 2569/);
-  assert.match(result.html, /already completed registration\/payment/i);
-  assert.match(result.html, /โปรดละเว้นข้อความส่วนการชำระเงินนี้/);
-  assert.match(result.html, /For registration details, please visit:/);
+  assert.match(result.html, /กรุณาดำเนินการลงทะเบียนและชำระค่าลงทะเบียนภายในวันนี้ \(วันที่ 15 กันยายน 2569 เวลา 23:59 น\.\)/);
+  assert.match(result.html, /ตั้งแต่วันที่ 16 กันยายน 2569 เป็นต้นไป อัตราค่าลงทะเบียนจะปรับเป็น ราคาปกติ 2,500 บาท/);
+  assert.match(result.html, /หากท่านได้ดำเนินการลงทะเบียนหรือชำระค่าลงทะเบียนเรียบร้อยแล้ว/);
+  assert.match(result.html, /รายละเอียดการลงทะเบียน<br>/);
   assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/th\/registration"/);
-  assert.match(result.html, /Should you have any questions, please feel free to contact us\./);
-  assert.match(result.html, /<p>Sincerely,<\/p><p>The Pharmacy Council of Thailand<\/p>/);
+  assert.match(result.html, /หากท่านมีข้อสงสัยหรือต้องการสอบถามข้อมูลเพิ่มเติม/);
+  assert.match(result.html, /ขอแสดงความนับถือ<br>สภาเภสัชกรรม<br>ติดต่อ 02 591 9992/);
+  assert.doesNotMatch(result.html, /Dear Ada Lovelace/);
+  assert.doesNotMatch(result.html, /IMPORTANT REGISTRATION RATE/);
 });

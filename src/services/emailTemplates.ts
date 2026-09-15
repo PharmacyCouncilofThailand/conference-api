@@ -1216,19 +1216,31 @@ export function buildPris2026EarlyBirdReminderEmailContent(
   ctx: EventEmailContext,
   notice: RegistrationRateNotice,
 ): EventEmailContent {
-  const registrationRateHtml = textToHtml(buildRegistrationRateNoticeBlock(notice)).trim();
+  const amount = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(notice.rateAmount);
+  const regularAmount = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(notice.regularAmount);
+  const deadlineTh = new Intl.DateTimeFormat("th-TH-u-ca-buddhist", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Bangkok",
+  }).format(notice.deadline);
   const registrationUrl = PRIS_2026_REGISTRATION_URL;
   const recipientName = escapeHtml(`${firstName} ${lastName}`.trim());
 
   return {
     subject: "PRIS 2026 Early Bird Registration Reminder - Payment by 15 September 2026",
     html: [
-      `<p>Dear ${recipientName},</p>`,
-      `<p>This is a reminder regarding your PRIS 2026 registration. You are eligible for the Early Bird registration rate, as both your user account and your PRIS 2026 abstract submission were created before 31 August 2026, 23:59 (Bangkok time). Please note that this eligibility is based solely on submission timing and is independent of your abstract's acceptance or rejection status.</p>`,
-      `<div>${registrationRateHtml}</div>`,
-      `<p>For registration details, please visit: <a href="${registrationUrl}">${registrationUrl}</a></p>`,
-      `<p>Should you have any questions, please feel free to contact us.</p>`,
-      `<p>Sincerely,</p><p>The Pharmacy Council of Thailand</p>`,
+      `<p>เรียน คุณ${recipientName}</p>`,
+      `<p>ขอแจ้งให้ทราบว่า ท่านมีสิทธิ์ลงทะเบียนเข้าร่วมงาน PRIS 2026 (ประกาศผลรอบที่ 1) ในอัตรา Early Bird ราคา ${amount} บาท</p>`,
+      `<p>กรุณาดำเนินการลงทะเบียนและชำระค่าลงทะเบียนภายในวันนี้ (วันที่ ${deadlineTh} น.)</p>`,
+      `<p>ทั้งนี้ ตั้งแต่วันที่ 16 กันยายน 2569 เป็นต้นไป อัตราค่าลงทะเบียนจะปรับเป็น ราคาปกติ ${regularAmount} บาท</p>`,
+      `<p>หากท่านได้ดำเนินการลงทะเบียนหรือชำระค่าลงทะเบียนเรียบร้อยแล้ว คณะผู้จัดงานขออภัยในความไม่สะดวก และขอความกรุณาท่านละเว้นอีเมลฉบับนี้</p>`,
+      `<p>รายละเอียดการลงทะเบียน<br><a href="${registrationUrl}">${registrationUrl}</a></p>`,
+      `<p>หากท่านมีข้อสงสัยหรือต้องการสอบถามข้อมูลเพิ่มเติม กรุณาติดต่อคณะผู้จัดงานได้ตามช่องทางที่ระบุไว้</p>`,
+      `<p>ขอแสดงความนับถือ<br>สภาเภสัชกรรม<br>ติดต่อ 02 591 9992</p>`,
     ].join("\n"),
   };
 }

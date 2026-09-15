@@ -222,29 +222,24 @@ PRIS Early Bird Reminder ต่างจาก Abstract Result Email เพร�
 ### Final Reminder Body
 
 ```text
-Dear [Name],
+เรียน คุณ[Name]
 
-This is a reminder regarding your PRIS 2026 registration. You are eligible for the Early Bird registration rate, as both your user account and your PRIS 2026 abstract submission were created before 31 August 2026, 23:59 (Bangkok time). Please note that this eligibility is based solely on submission timing and is independent of your abstract's acceptance or rejection status.
+ขอแจ้งให้ทราบว่า ท่านมีสิทธิ์ลงทะเบียนเข้าร่วมงาน PRIS 2026 (ประกาศผลรอบที่ 1) ในอัตรา Early Bird ราคา 1,250 บาท
 
-=== IMPORTANT REGISTRATION RATE / ข้อมูลสำคัญเรื่องค่าลงทะเบียน ===
+กรุณาดำเนินการลงทะเบียนและชำระค่าลงทะเบียนภายในวันนี้ (วันที่ 15 กันยายน 2569 เวลา 23:59 น.)
 
-You are eligible for the PRIS 2026 Early Bird registration rate of THB 1,250.
-Please complete payment within 5 days after the Round 1 result announcement and no later than 15 September 2026, 23:59 (Bangkok time).
-After this deadline, the regular registration rate is THB 2,500.
-If you have already completed registration/payment, we apologize for the inconvenience and please disregard this payment section.
+ทั้งนี้ ตั้งแต่วันที่ 16 กันยายน 2569 เป็นต้นไป อัตราค่าลงทะเบียนจะปรับเป็น ราคาปกติ 2,500 บาท
 
-ท่านมีสิทธิ์ลงทะเบียน PRIS 2026 ในราคา Early Bird 1,250 บาท
-กรุณาดำเนินการชำระเงินภายใน 5 วันหลังประกาศผลรอบที่ 1 และไม่เกินวันที่ 15 กันยายน 2569 เวลา 23:59
-หลังจากกำหนดดังกล่าว อัตราค่าลงทะเบียนจะเป็นราคาปกติ 2,500 บาท
-หากท่านได้ลงทะเบียนหรือชำระเงินเรียบร้อยแล้ว ทางคณะผู้จัดงานขออภัยในความไม่สะดวก และโปรดละเว้นข้อความส่วนการชำระเงินนี้
+หากท่านได้ดำเนินการลงทะเบียนหรือชำระค่าลงทะเบียนเรียบร้อยแล้ว คณะผู้จัดงานขออภัยในความไม่สะดวก และขอความกรุณาท่านละเว้นอีเมลฉบับนี้
 
-For registration details, please visit: https://pris.pharmacycouncil.org/th/registration
+รายละเอียดการลงทะเบียน
+https://pris.pharmacycouncil.org/th/registration
 
-Should you have any questions, please feel free to contact us.
+หากท่านมีข้อสงสัยหรือต้องการสอบถามข้อมูลเพิ่มเติม กรุณาติดต่อคณะผู้จัดงานได้ตามช่องทางที่ระบุไว้
 
-Sincerely,
-
-The Pharmacy Council of Thailand
+ขอแสดงความนับถือ
+สภาเภสัชกรรม
+ติดต่อ 02 591 9992
 ```
 
 Registration URL ใน HTML เป็นลิงก์ที่คลิกได้จริง:
