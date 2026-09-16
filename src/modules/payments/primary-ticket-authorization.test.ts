@@ -47,7 +47,7 @@ test("PRIS personalized pricing retains only the exact effective ticket", () => 
     qualifiedForExtension: true,
     effectivePriority: "early_bird",
     effectiveTicketTypeId: 2,
-    offerExpiresAt: new Date("2026-09-15T17:00:00.000Z"),
+    offerExpiresAt: new Date("2026-10-30T10:30:00.000Z"),
     reason: "eligible_extension",
   });
   assert.deepEqual(result.map((ticket) => ticket.id), [2]);

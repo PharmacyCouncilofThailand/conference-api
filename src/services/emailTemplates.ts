@@ -1218,6 +1218,12 @@ export function buildPris2026EarlyBirdReminderEmailContent(
 ): EventEmailContent {
   const amount = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(notice.rateAmount);
   const regularAmount = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(notice.regularAmount);
+  const deadlineEn = new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Bangkok",
+  }).format(notice.deadline);
   const deadlineTh = new Intl.DateTimeFormat("th-TH-u-ca-buddhist", {
     day: "numeric",
     month: "long",
@@ -1231,12 +1237,12 @@ export function buildPris2026EarlyBirdReminderEmailContent(
   const recipientName = escapeHtml(`${firstName} ${lastName}`.trim());
 
   return {
-    subject: "PRIS 2026 Early Bird Registration Reminder - Payment by 15 September 2026",
+    subject: `PRIS 2026 Early Bird Registration Reminder - Payment by ${deadlineEn}`,
     html: [
       `<p>เรียน คุณ${recipientName}</p>`,
       `<p>ขอแจ้งให้ทราบว่า ท่านมีสิทธิ์ลงทะเบียนเข้าร่วมงาน PRIS 2026 (ประกาศผลรอบที่ 1) ในอัตรา Early Bird ราคา ${amount} บาท</p>`,
       `<p>กรุณาดำเนินการลงทะเบียนและชำระค่าลงทะเบียนภายในวันนี้ (วันที่ ${deadlineTh} น.)</p>`,
-      `<p>ทั้งนี้ ตั้งแต่วันที่ 16 กันยายน 2569 เป็นต้นไป อัตราค่าลงทะเบียนจะปรับเป็น ราคาปกติ ${regularAmount} บาท</p>`,
+      `<p>หลังจากกำหนดเวลาดังกล่าว อัตราค่าลงทะเบียนจะปรับเป็น ราคาปกติ ${regularAmount} บาท</p>`,
       `<p>หากท่านได้ดำเนินการลงทะเบียนหรือชำระค่าลงทะเบียนเรียบร้อยแล้ว คณะผู้จัดงานขออภัยในความไม่สะดวก และขอความกรุณาท่านละเว้นอีเมลฉบับนี้</p>`,
       `<p>รายละเอียดการลงทะเบียน<br><a href="${registrationUrl}">${registrationUrl}</a></p>`,
       `<p>หากท่านมีข้อสงสัยหรือต้องการสอบถามข้อมูลเพิ่มเติม กรุณาติดต่อคณะผู้จัดงานได้ตามช่องทางที่ระบุไว้</p>`,

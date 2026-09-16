@@ -8,7 +8,7 @@ import {
 
 export const PRIS_2026_EVENT_CODE = "PRIS-2026";
 export const PRIS_2026_CUTOFF = new Date("2026-08-31T17:00:00.000Z");
-export const PRIS_2026_EXTENSION_END = new Date("2026-09-15T17:00:00.000Z");
+export const PRIS_2026_EXTENSION_END = new Date("2026-10-30T10:30:00.000Z");
 
 const TARGET_ROLES = new Set(["pharmacist", "medical_professional"]);
 

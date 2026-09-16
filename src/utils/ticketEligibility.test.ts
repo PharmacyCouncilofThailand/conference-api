@@ -36,12 +36,12 @@ test("postgraduate identity can use postgraduate ticket", () => {
 });
 
 test("sale end remains valid through its exact stored millisecond", () => {
-  const saleEndDate = new Date("2026-09-15T16:59:59.999Z");
+  const saleEndDate = new Date("2026-10-30T10:29:59.999Z");
   assert.equal(ticketIsOnSaleAt({ saleStartDate: null, saleEndDate }, saleEndDate), true);
   assert.equal(
     ticketIsOnSaleAt(
       { saleStartDate: null, saleEndDate },
-      new Date("2026-09-15T17:00:00.000Z"),
+      new Date("2026-10-30T10:30:00.000Z"),
     ),
     false,
   );

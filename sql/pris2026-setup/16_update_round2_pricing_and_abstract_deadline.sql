@@ -4,11 +4,11 @@
 -- Stored timestamps use UTC values in timestamp-without-time-zone columns.
 -- Bangkok references:
 --   2026-08-31 17:00:00 UTC = 2026-09-01 00:00:00 Asia/Bangkok
---   2026-09-15 16:59:59.999 UTC = 2026-09-15 23:59:59.999 Asia/Bangkok
+--   2026-10-30 10:30:00 UTC = 2026-10-30 17:30:00 Asia/Bangkok
 --   2026-09-20 16:59:59.999 UTC = 2026-09-20 23:59:59.999 Asia/Bangkok
 --
 -- Scope:
---   * Extend Early Bird row through 15 Sep 2026 Bangkok.
+--   * Extend Early Bird row through the event end on 30 Oct 2026 Bangkok.
 --   * Make Regular THB 2,500 from 1 Sep through event end.
 --   * Disable Late row without deleting it.
 --   * Extend abstract submission through 20 Sep 2026 Bangkok.
@@ -51,7 +51,7 @@ BEGIN
 END $$;
 
 UPDATE ticket_types AS t
-SET sale_end_date = TIMESTAMP '2026-09-15 16:59:59.999'
+SET sale_end_date = e.end_date
 FROM events AS e
 WHERE t.event_id = e.id
   AND e.event_code = 'PRIS-2026'
@@ -98,7 +98,7 @@ BEGIN
       AND t.priority = 'early_bird'
       AND t.currency = 'THB'
       AND t.name = 'Early Bird'
-      AND t.sale_end_date = TIMESTAMP '2026-09-15 16:59:59.999'
+      AND t.sale_end_date = e.end_date
       AND t.is_active = true
   ) THEN
     RAISE EXCEPTION 'PRIS-2026 Early Bird postcondition failed';

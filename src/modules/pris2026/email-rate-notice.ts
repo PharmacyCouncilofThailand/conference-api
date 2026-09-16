@@ -1,11 +1,12 @@
 import type { RegistrationRateNotice } from "../../services/emailTemplates.js";
 import {
+  PRIS_2026_EXTENSION_END,
   resolvePris2026Pricing,
   type ResolvedPris2026Pricing,
 } from "./pricing-policy.js";
 
 export const PRIS_2026_RESULT_EMAIL_NOTICE_DEADLINE =
-  new Date("2026-09-15T16:59:00.000Z");
+  new Date(PRIS_2026_EXTENSION_END.getTime() - 60_000);
 
 export function buildPris2026RegistrationRateNotice(): RegistrationRateNotice {
   return {

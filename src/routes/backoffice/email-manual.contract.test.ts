@@ -15,7 +15,7 @@ const ctx = {
 const notice = {
   rateAmount: 1250,
   currency: "THB" as const,
-  deadline: new Date("2026-09-15T16:59:00.000Z"),
+  deadline: new Date("2026-10-30T10:29:00.000Z"),
   regularAmount: 2500,
 };
 

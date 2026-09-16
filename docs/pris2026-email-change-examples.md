@@ -35,12 +35,12 @@ Result emails ไม่ตัด Early Bird block ออกเพียงเพ
 === IMPORTANT REGISTRATION RATE / ข้อมูลสำคัญเรื่องค่าลงทะเบียน ===
 
 You are eligible for the PRIS 2026 Early Bird registration rate of THB 1,250.
-Please complete payment within 5 days after the Round 1 result announcement and no later than 15 September 2026, 23:59 (Bangkok time).
+Please complete payment within 5 days after the Round 1 result announcement and no later than 30 October 2026, 17:29 (Bangkok time).
 After this deadline, the regular registration rate is THB 2,500.
 If you have already completed registration/payment, we apologize for the inconvenience and please disregard this payment section.
 
 ท่านมีสิทธิ์ลงทะเบียน PRIS 2026 ในราคา Early Bird 1,250 บาท
-กรุณาดำเนินการชำระเงินภายใน 5 วันหลังประกาศผลรอบที่ 1 และไม่เกินวันที่ 15 กันยายน 2569 เวลา 23:59
+กรุณาดำเนินการชำระเงินภายใน 5 วันหลังประกาศผลรอบที่ 1 และไม่เกินวันที่ 30 ตุลาคม 2569 เวลา 17:29
 หลังจากกำหนดดังกล่าว อัตราค่าลงทะเบียนจะเป็นราคาปกติ 2,500 บาท
 หากท่านได้ลงทะเบียนหรือชำระเงินเรียบร้อยแล้ว ทางคณะผู้จัดงานขออภัยในความไม่สะดวก และโปรดละเว้นข้อความส่วนการชำระเงินนี้
 ```
@@ -163,12 +163,12 @@ For registration information, please visit: https://pris.pharmacycouncil.org/th/
 === IMPORTANT REGISTRATION RATE / ข้อมูลสำคัญเรื่องค่าลงทะเบียน ===
 
 You are eligible for the PRIS 2026 Early Bird registration rate of THB 1,250.
-Please complete payment within 5 days after the Round 1 result announcement and no later than 15 September 2026, 23:59 (Bangkok time).
+Please complete payment within 5 days after the Round 1 result announcement and no later than 30 October 2026, 17:29 (Bangkok time).
 After this deadline, the regular registration rate is THB 2,500.
 If you have already completed registration/payment, we apologize for the inconvenience and please disregard this payment section.
 
 ท่านมีสิทธิ์ลงทะเบียน PRIS 2026 ในราคา Early Bird 1,250 บาท
-กรุณาดำเนินการชำระเงินภายใน 5 วันหลังประกาศผลรอบที่ 1 และไม่เกินวันที่ 15 กันยายน 2569 เวลา 23:59
+กรุณาดำเนินการชำระเงินภายใน 5 วันหลังประกาศผลรอบที่ 1 และไม่เกินวันที่ 30 ตุลาคม 2569 เวลา 17:29
 หลังจากกำหนดดังกล่าว อัตราค่าลงทะเบียนจะเป็นราคาปกติ 2,500 บาท
 หากท่านได้ลงทะเบียนหรือชำระเงินเรียบร้อยแล้ว ทางคณะผู้จัดงานขออภัยในความไม่สะดวก และโปรดละเว้นข้อความส่วนการชำระเงินนี้
 
@@ -204,7 +204,7 @@ pris-early-bird-reminder
 Subject:
 
 ```text
-PRIS 2026 Early Bird Registration Reminder - Payment by 15 September 2026
+PRIS 2026 Early Bird Registration Reminder - Payment by 30 October 2026
 ```
 
 ### Recipient Rules
@@ -226,9 +226,9 @@ PRIS Early Bird Reminder ต่างจาก Abstract Result Email เพร�
 
 ขอแจ้งให้ทราบว่า ท่านมีสิทธิ์ลงทะเบียนเข้าร่วมงาน PRIS 2026 (ประกาศผลรอบที่ 1) ในอัตรา Early Bird ราคา 1,250 บาท
 
-กรุณาดำเนินการลงทะเบียนและชำระค่าลงทะเบียนภายในวันนี้ (วันที่ 15 กันยายน 2569 เวลา 23:59 น.)
+กรุณาดำเนินการลงทะเบียนและชำระค่าลงทะเบียนภายในวันนี้ (วันที่ 30 ตุลาคม 2569 เวลา 17:29 น.)
 
-ทั้งนี้ ตั้งแต่วันที่ 16 กันยายน 2569 เป็นต้นไป อัตราค่าลงทะเบียนจะปรับเป็น ราคาปกติ 2,500 บาท
+หลังจากกำหนดเวลาดังกล่าว อัตราค่าลงทะเบียนจะปรับเป็น ราคาปกติ 2,500 บาท
 
 หากท่านได้ดำเนินการลงทะเบียนหรือชำระค่าลงทะเบียนเรียบร้อยแล้ว คณะผู้จัดงานขออภัยในความไม่สะดวก และขอความกรุณาท่านละเว้นอีเมลฉบับนี้
 

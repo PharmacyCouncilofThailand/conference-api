@@ -11,7 +11,7 @@ const eligiblePricing = {
   phase: "extended_early_bird" as const,
   qualifiedForExtension: true,
   effectivePriority: "early_bird" as const,
-  offerExpiresAt: new Date("2026-09-15T17:00:00.000Z"),
+  offerExpiresAt: new Date("2026-10-30T10:30:00.000Z"),
   reason: "eligible_extension" as const,
   eventId: 1,
   effectiveTicketTypeId: 2,

@@ -226,11 +226,11 @@ test("final PRIS pricing matrix locks the exact Bangkok cutoff boundaries", () =
   });
   const extensionLastMillisecond = evaluatePris2026Pricing({
     ...base,
-    now: new Date("2026-09-15T16:59:59.999Z"),
+    now: new Date("2026-10-30T10:29:59.999Z"),
   });
   const extensionExpired = evaluatePris2026Pricing({
     ...base,
-    now: new Date("2026-09-15T17:00:00.000Z"),
+    now: new Date("2026-10-30T10:30:00.000Z"),
   });
 
   assert.equal(originalLastMillisecond.effectivePriority, "early_bird");
@@ -239,6 +239,7 @@ test("final PRIS pricing matrix locks the exact Bangkok cutoff boundaries", () =
   assert.equal(newAccountAtCutoff.effectivePriority, "regular");
   assert.equal(extensionLastMillisecond.effectivePriority, "early_bird");
   assert.equal(extensionExpired.effectivePriority, "regular");
+  assert.equal(PRIS_2026_EXTENSION_END.toISOString(), "2026-10-30T10:30:00.000Z");
 });
 
 test("candidate filter keeps only effective priority when policy applies", () => {

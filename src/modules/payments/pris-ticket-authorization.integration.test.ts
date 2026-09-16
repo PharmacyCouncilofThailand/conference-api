@@ -7,7 +7,7 @@ const integrationRunRequested =
   process.env.npm_lifecycle_event === "test:pris-ticket-authorization:integration";
 const NOW = new Date("2026-09-09T00:00:00.000Z");
 const CUTOFF = new Date("2026-08-31T17:00:00.000Z");
-const SALE_END = new Date("2026-09-15T16:59:59.999Z");
+const SALE_END = new Date("2026-10-30T10:30:00.000Z");
 
 test("PRIS authorization integration database is isolated", () => {
   assert.throws(() => validatePaymentsTestDatabaseUrl({}), /TEST_DATABASE_URL is required/);
@@ -67,7 +67,7 @@ test("DB-backed PRIS ticket authorization matrix", {
       ) VALUES
         (${eventId}, 'primary', 'early_bird', 'Early Bird', 1250, 'THB',
           'pharmacist,medical_professional', NULL, 100, 0,
-          TIMESTAMP '2026-07-01 03:00:00', TIMESTAMP '2026-09-15 16:59:59.999', true, 1),
+          TIMESTAMP '2026-07-01 03:00:00', TIMESTAMP '2026-10-30 10:30:00', true, 1),
         (${eventId}, 'primary', 'regular', 'Regular', 2500, 'THB',
           'pharmacist,medical_professional', NULL, 100, 0,
           TIMESTAMP '2026-08-31 17:00:00', TIMESTAMP '2026-10-30 10:30:00', true, 2),

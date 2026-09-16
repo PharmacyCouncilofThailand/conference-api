@@ -63,7 +63,7 @@ test("free ticket without promo uses the generic free registration label", () =>
 const earlyBirdNotice = {
   rateAmount: 1250,
   currency: "THB" as const,
-  deadline: new Date("2026-09-15T16:59:00.000Z"),
+  deadline: new Date("2026-10-30T10:29:00.000Z"),
   regularAmount: 2500,
 };
 
@@ -101,8 +101,8 @@ test("PRIS accepted oral email keeps its subject and uses the approved body", ()
   assert.match(result.html, /th\/abstracts\/confirm\?token=test-token<br><\/div><br>\s*<div>=== IMPORTANT REGISTRATION RATE/);
   assert.match(result.html, /1,250/);
   assert.match(result.html, /2,500/);
-  assert.match(result.html, /15 September 2026/);
-  assert.match(result.html, /15 กันยายน 2569/);
+  assert.match(result.html, /30 October 2026/);
+  assert.match(result.html, /30 ตุลาคม 2569/);
   assert.match(result.html, /already completed registration\/payment/i);
   assert.match(result.html, /โปรดละเว้นข้อความส่วนการชำระเงินนี้/);
   assert.match(result.html, /href="mailto:pr@pharmacycouncil\.org"/);
@@ -150,8 +150,8 @@ test("PRIS rejected abstract email uses the approved subject, body, and optional
   assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/th\/registration"/);
   assert.match(result.html, /1,250/);
   assert.match(result.html, /2,500/);
-  assert.match(result.html, /15 September 2026/);
-  assert.match(result.html, /15 กันยายน 2569/);
+  assert.match(result.html, /30 October 2026/);
+  assert.match(result.html, /30 ตุลาคม 2569/);
   assert.match(result.html, /already completed registration\/payment/i);
   assert.match(result.html, /โปรดละเว้นข้อความส่วนการชำระเงินนี้/);
   assert.match(result.html, /Thank you so much again for your submission\. Looking forward to your abstract at next year's conference\./);
@@ -204,14 +204,14 @@ test("manual PRIS reminder keeps its subject and uses the Thai reminder body", (
     earlyBirdNotice,
   );
 
-  assert.equal(result.subject, "PRIS 2026 Early Bird Registration Reminder - Payment by 15 September 2026");
+  assert.equal(result.subject, "PRIS 2026 Early Bird Registration Reminder - Payment by 30 October 2026");
   assert.match(result.html, /<p>เรียน คุณAda Lovelace<\/p>/);
   assert.match(
     result.html,
     /ขอแจ้งให้ทราบว่า ท่านมีสิทธิ์ลงทะเบียนเข้าร่วมงาน PRIS 2026 \(ประกาศผลรอบที่ 1\) ในอัตรา Early Bird ราคา 1,250 บาท/,
   );
-  assert.match(result.html, /กรุณาดำเนินการลงทะเบียนและชำระค่าลงทะเบียนภายในวันนี้ \(วันที่ 15 กันยายน 2569 เวลา 23:59 น\.\)/);
-  assert.match(result.html, /ตั้งแต่วันที่ 16 กันยายน 2569 เป็นต้นไป อัตราค่าลงทะเบียนจะปรับเป็น ราคาปกติ 2,500 บาท/);
+  assert.match(result.html, /กรุณาดำเนินการลงทะเบียนและชำระค่าลงทะเบียนภายในวันนี้ \(วันที่ 30 ตุลาคม 2569 เวลา 17:29 น\.\)/);
+  assert.match(result.html, /หลังจากกำหนดเวลาดังกล่าว อัตราค่าลงทะเบียนจะปรับเป็น ราคาปกติ 2,500 บาท/);
   assert.match(result.html, /หากท่านได้ดำเนินการลงทะเบียนหรือชำระค่าลงทะเบียนเรียบร้อยแล้ว/);
   assert.match(result.html, /รายละเอียดการลงทะเบียน<br>/);
   assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/th\/registration"/);
