@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
 import {
     registrations, registrationSessions, ticketTypes, ticketSessions,
-    events, sessions, users, staffEventAssignments, backofficeUsers,
+    events, sessions, users, orders, staffEventAssignments, backofficeUsers,
 } from "../../database/schema.js";
 import {
     registrationListSchema, updateRegistrationSchema,
@@ -96,6 +96,7 @@ export default async function (fastify: FastifyInstance) {
                     eventName: events.eventName,
                     eventCode: events.eventCode,
                     source: registrations.source,
+                    promoCode: orders.promoCode,
                     addedNote: registrations.addedNote,
                     addedByFirstName: backofficeUsers.firstName,
                     addedByLastName: backofficeUsers.lastName,
@@ -103,6 +104,7 @@ export default async function (fastify: FastifyInstance) {
                 .from(registrations)
                 .leftJoin(ticketTypes, eq(registrations.ticketTypeId, ticketTypes.id))
                 .leftJoin(events, eq(registrations.eventId, events.id))
+                .leftJoin(orders, eq(registrations.orderId, orders.id))
                 .leftJoin(backofficeUsers, eq(registrations.addedBy, backofficeUsers.id))
                 .where(whereClause)
                 .orderBy(desc(registrations.createdAt))
