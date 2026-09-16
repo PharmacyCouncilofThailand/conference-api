@@ -22,6 +22,7 @@ export interface SuccessfulPaymentInput {
   paymentProvider: PaymentProvider;
   providerStatus: string;
   paymentDetails: Record<string, unknown> | null;
+  source?: "purchase" | "free";
 }
 
 export interface SuccessfulPaymentResult {
@@ -211,6 +212,7 @@ export async function processSuccessfulPaymentInTransaction(
       firstName: user.firstName,
       lastName: user.lastName,
       status: "confirmed",
+      source: input.source ?? "purchase",
     }).returning();
     registration = { id: newReg.id };
   }

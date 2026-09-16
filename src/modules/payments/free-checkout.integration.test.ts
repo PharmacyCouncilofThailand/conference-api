@@ -141,9 +141,11 @@ test("proves free checkout atomicity, promo concurrency, and idempotent settleme
     const happy = await seedFixture(sql, 1);
     const completed = await completeFreeCheckout(freeInput(happy, happy.userIds[0]));
     const [happyRow] = await sql<Array<Record<string, unknown>>>`
-      SELECT o.status AS order_status, o.total_amount, p.amount, p.status AS payment_status,
+      SELECT o.status AS order_status, o.total_amount, o.promo_code,
+             p.amount, p.status AS payment_status,
              p.payment_provider, p.payment_channel, u.status AS usage_status,
-             pc.used_count, r.status AS registration_status, r.reg_code, t.sold_count
+             pc.used_count, r.status AS registration_status,
+             r.source AS registration_source, r.reg_code, t.sold_count
       FROM orders o
       JOIN payments p ON p.order_id = o.id
       JOIN promo_code_usages u ON u.order_id = o.id
@@ -161,6 +163,8 @@ test("proves free checkout atomicity, promo concurrency, and idempotent settleme
     assert.equal(happyRow.usage_status, "used");
     assert.equal(Number(happyRow.used_count), 1);
     assert.equal(happyRow.registration_status, "confirmed");
+    assert.equal(happyRow.promo_code, happy.promoCode);
+    assert.equal(happyRow.registration_source, "free");
     assert.equal(Number(happyRow.sold_count), 1);
     assert.ok(String(happyRow.reg_code).length > 0);
 

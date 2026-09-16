@@ -171,6 +171,7 @@ export async function completeFreeCheckout(input: FreeCheckoutInput): Promise<Fr
         workshopSessionId: input.workshopSessionId,
         optionalSessionIds: input.optionalSessionIds,
       },
+      source: "free",
     });
 
     if (!settlement.regCode) {
