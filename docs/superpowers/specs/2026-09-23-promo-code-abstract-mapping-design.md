@@ -1,7 +1,7 @@
 # Promo Code Registration and Abstract Mapping Report
 
 Date: 2026-09-23
-Status: Design approved; written-spec review pending
+Status: Design approved; written-spec review approved
 
 ## Goal
 
