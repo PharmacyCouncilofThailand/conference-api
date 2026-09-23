@@ -96,6 +96,7 @@ export const abstractListSchema = z.object({
     search: z.string().optional(),
     eventId: z.coerce.number().optional(),
     status: abstractStatusSchema.optional(),
+    confirmationStatus: z.enum(['confirmed', 'awaiting']).optional(),
     categoryId: z.coerce.number().optional(),
     presentationType: z.enum(['oral', 'poster']).optional(),
     trackingId: z.string().min(1).max(80).optional(),

@@ -124,3 +124,17 @@ test("abstract list rejects malformed submitted date range", () => {
     false,
   );
 });
+
+test("abstract list accepts confirmation status", () => {
+  for (const confirmationStatus of ["confirmed", "awaiting"] as const) {
+    const parsed = abstractListSchema.parse({ confirmationStatus });
+    assert.equal(parsed.confirmationStatus, confirmationStatus);
+  }
+});
+
+test("abstract list rejects an unknown confirmation status", () => {
+  assert.equal(
+    abstractListSchema.safeParse({ confirmationStatus: "unknown" }).success,
+    false,
+  );
+});

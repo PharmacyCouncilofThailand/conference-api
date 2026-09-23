@@ -17,7 +17,21 @@ import {
   requestAbstractRevisionSchema,
   updateAbstractStatusSchema,
 } from "../../schemas/abstracts.schema.js";
-import { eq, desc, ilike, and, or, count, inArray, isNull, exists, sql, gte, lt } from "drizzle-orm";
+import {
+  eq,
+  desc,
+  ilike,
+  and,
+  or,
+  count,
+  inArray,
+  isNull,
+  isNotNull,
+  exists,
+  sql,
+  gte,
+  lt,
+} from "drizzle-orm";
 import { z } from "zod";
 import { appendTrackingAuditEvent } from "../../modules/abstracts/tracking.repository.js";
 import {
@@ -239,8 +253,21 @@ export default async function (fastify: FastifyInstance) {
         .send({ error: "Invalid query", details: queryResult.error.flatten() });
     }
 
-    const { page, limit, search, eventId, status, categoryId, presentationType, trackingId, trackingMatch, submittedFrom, submittedBefore, archived } =
-      queryResult.data;
+    const {
+      page,
+      limit,
+      search,
+      eventId,
+      status,
+      confirmationStatus,
+      categoryId,
+      presentationType,
+      trackingId,
+      trackingMatch,
+      submittedFrom,
+      submittedBefore,
+      archived,
+    } = queryResult.data;
     const offset = (page - 1) * limit;
 
     // Get user info from JWT
@@ -325,6 +352,14 @@ export default async function (fastify: FastifyInstance) {
       if (submittedFrom) conditions.push(gte(abstracts.createdAt, new Date(submittedFrom)));
       if (submittedBefore) conditions.push(lt(abstracts.createdAt, new Date(submittedBefore)));
       if (status) conditions.push(eq(abstracts.status, status));
+      if (confirmationStatus) {
+        conditions.push(eq(abstracts.status, "accepted"));
+        conditions.push(
+          confirmationStatus === "confirmed"
+            ? isNotNull(abstracts.confirmedAt)
+            : isNull(abstracts.confirmedAt),
+        );
+      }
       if (categoryId) conditions.push(eq(abstracts.categoryId, categoryId));
       if (presentationType)
         conditions.push(eq(abstracts.presentationType, presentationType));
