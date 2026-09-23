@@ -175,7 +175,7 @@ export default async function (fastify: FastifyInstance) {
             eventId: registrations.eventId,
             buyerUserId: orders.userId,
             promoCodeId: orders.promoCodeId,
-            lastOrderAt: sql<Date>`max(${orders.createdAt})`,
+            lastOrderAt: sql<Date>`max(${orders.createdAt})`.as("last_order_at"),
           })
           .from(orders)
           .innerJoin(registrations, eq(registrations.orderId, orders.id))
