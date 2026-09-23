@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { db } from "../../database/index.js";
 import { promoCodes, events, staffEventAssignments, promoCodeRuleSets, promoCodeRuleItems, ticketTypes } from "../../database/schema.js";
-import { eq, desc, ilike, and, count, inArray, or, ne, sql } from "drizzle-orm";
+import { eq, desc, ilike, and, count, inArray, or, ne, sql, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { normalizePromoCode } from "../../utils/promoCodeNormalization.js";
 import { createPromoSchema, updatePromoSchema } from "../../schemas/promoCode.schema.js";
@@ -12,6 +12,11 @@ const promoQuerySchema = z.object({
     search: z.string().optional(),
     eventId: z.coerce.number().optional(),
     status: z.enum(['active', 'inactive', 'expired']).optional(),
+    includeGlobal: z
+        .enum(["true", "false"])
+        .optional()
+        .default("false")
+        .transform((value) => value === "true"),
 });
 
 export default async function (fastify: FastifyInstance) {
@@ -22,8 +27,12 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { page, limit, search, eventId, status } = queryResult.data;
+        const { page, limit, search, eventId, status, includeGlobal } = queryResult.data;
         const offset = (page - 1) * limit;
+
+        if (includeGlobal && !eventId) {
+            return reply.status(400).send({ error: "eventId is required when includeGlobal is true" });
+        }
 
         const user = (request as any).user;
 
@@ -39,6 +48,10 @@ export default async function (fastify: FastifyInstance) {
 
                 const assignedEventIds = assignments.map(a => a.eventId);
 
+                if (includeGlobal && !assignedEventIds.includes(eventId!)) {
+                    return reply.status(403).send({ error: "Event access denied" });
+                }
+
                 if (assignedEventIds.length === 0) {
                     return reply.send({
                         promoCodes: [],
@@ -46,10 +59,18 @@ export default async function (fastify: FastifyInstance) {
                     });
                 }
 
-                conditions.push(inArray(promoCodes.eventId, assignedEventIds));
+                if (!includeGlobal) {
+                    conditions.push(inArray(promoCodes.eventId, assignedEventIds));
+                }
             }
 
-            if (eventId) conditions.push(eq(promoCodes.eventId, eventId));
+            if (eventId) {
+                conditions.push(
+                    includeGlobal
+                        ? or(eq(promoCodes.eventId, eventId), isNull(promoCodes.eventId))
+                        : eq(promoCodes.eventId, eventId),
+                );
+            }
             if (search) {
                 conditions.push(
                     or(
