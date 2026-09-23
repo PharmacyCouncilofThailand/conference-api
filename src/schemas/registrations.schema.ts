@@ -5,6 +5,7 @@ export const registrationListSchema = z.object({
     limit: z.coerce.number().min(1).max(1000).default(10),
     search: z.string().optional(),
     eventId: z.coerce.number().optional(),
+    promoCodeId: z.coerce.number().int().positive().optional(),
     status: z.enum(['confirmed', 'cancelled']).optional(),
     ticketTypeId: z.coerce.number().optional(),
     source: z.enum(['purchase', 'manual', 'free', 'quick']).optional(),

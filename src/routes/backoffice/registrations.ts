@@ -9,7 +9,7 @@ import {
     manualRegistrationSchema, addSessionsSchema,
     batchManualRegistrationSchema, checkRegisteredUsersSchema,
 } from "../../schemas/registrations.schema.js";
-import { eq, desc, ilike, and, count, sql, or, inArray } from "drizzle-orm";
+import { eq, desc, ilike, and, count, sql, or, inArray, exists } from "drizzle-orm";
 
 function generateRegCode(): string {
     const ts = Date.now().toString(36).toUpperCase();
@@ -25,7 +25,7 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { page, limit, search, eventId, status, ticketTypeId, source } = queryResult.data;
+        const { page, limit, search, eventId, promoCodeId, status, ticketTypeId, source } = queryResult.data;
         const offset = (page - 1) * limit;
 
         // Get user from request (set by auth middleware)
@@ -63,6 +63,21 @@ export default async function (fastify: FastifyInstance) {
             if (status) conditions.push(eq(registrations.status, status));
             if (ticketTypeId) conditions.push(eq(registrations.ticketTypeId, ticketTypeId));
             if (source) conditions.push(eq(registrations.source, source));
+            if (promoCodeId) {
+                conditions.push(
+                    exists(
+                        db
+                            .select({ id: orders.id })
+                            .from(orders)
+                            .where(
+                                and(
+                                    eq(orders.id, registrations.orderId),
+                                    eq(orders.promoCodeId, promoCodeId),
+                                ),
+                            ),
+                    ),
+                );
+            }
             if (search) {
                 conditions.push(
                     or(
