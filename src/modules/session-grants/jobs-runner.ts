@@ -70,9 +70,14 @@ async function run(): Promise<void> {
 }
 
 run().catch((error: unknown) => {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : "";
+  const message = error instanceof Error ? error.message : "";
   console.error(JSON.stringify({
     at: new Date().toISOString(),
-    errorCode: error instanceof Error ? error.name : "SESSION_GRANT_WORKER_ERROR",
+    errorCode: code || (error instanceof Error ? error.name : "SESSION_GRANT_WORKER_ERROR"),
+    errorMessage: message || undefined,
   }));
   process.exitCode = 1;
 });

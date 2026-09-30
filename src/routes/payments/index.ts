@@ -17,6 +17,11 @@ import {
   events,
 } from "../../database/schema.js";
 import { eq, and, sql, inArray, count, desc } from "drizzle-orm";
+import {
+  findOwnedSessionIds,
+  getRegistrationSessionEntitlements,
+  hasWorkshopEntitlement,
+} from "../../modules/session-grants/public-entitlements.js";
 import { createPaymentIntentSchema } from "../../schemas/payment.schema.js";
 import type Stripe from "stripe";
 import {
@@ -1557,6 +1562,15 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
               )
               .orderBy(desc(registrationSessions.createdAt));
 
+            const entitlementRows = await getRegistrationSessionEntitlements(
+              db,
+              reg.registrationId,
+            );
+
+            const adminGrantedRows = entitlementRows.filter(
+              (row) => row.source === "admin_grant",
+            );
+
             const workshopRows = addonRows.filter(
               (row) => (row.groupName || "").toLowerCase() === "workshop"
             );
@@ -1571,6 +1585,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             }
 
             return {
+              registrationId: reg.registrationId,
               regCode: reg.regCode,
               eventId: reg.eventId,
               eventCode: reg.eventCode,
@@ -1589,6 +1604,18 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
               currency: reg.ticketCurrency,
               includes: Array.isArray(reg.ticketFeatures) ? reg.ticketFeatures : [],
               receiptUrl,
+              ownedSessionIds: [...new Set(entitlementRows.map((row) => row.sessionId))].sort((a, b) => a - b),
+              adminGrantedSessions: adminGrantedRows.map((row) => ({
+                registrationId: reg.registrationId,
+                sessionId: row.sessionId,
+                sessionName: row.sessionName,
+                sessionType: row.sessionType ?? null,
+                startTime: row.sessionStartTime?.toISOString() || null,
+                endTime: row.sessionEndTime?.toISOString() || null,
+                room: row.sessionRoom,
+                grantedAt: row.grantedAt?.toISOString() || null,
+                source: "admin_grant" as const,
+              })),
               galaTicket: galaRow
                 ? {
                     id: `${reg.regCode}-GALA`,
@@ -1947,25 +1974,9 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
 
         // Block purchasing workshop addon if user already has a confirmed workshop session
         if (addOnIds.some((id) => id.toLowerCase() === "workshop")) {
-          const existingWorkshopSession = await db
-            .select({ id: registrationSessions.id })
-            .from(registrationSessions)
-            .innerJoin(registrations, eq(registrationSessions.registrationId, registrations.id))
-            .innerJoin(ticketTypes, eq(registrationSessions.ticketTypeId, ticketTypes.id))
-            .innerJoin(orders, eq(registrations.orderId, orders.id))
-            .innerJoin(payments, eq(payments.orderId, orders.id))
-            .where(
-              and(
-                eq(registrations.userId, userId),
-                eq(registrations.eventId, eventId),
-                eq(registrations.status, "confirmed"),
-                sql`LOWER(${ticketTypes.groupName}) = 'workshop'`,
-                eq(payments.status, "paid")
-              )
-            )
-            .limit(1);
+          const existingWorkshopSession = await hasWorkshopEntitlement(db, userId, eventId);
 
-          if (existingWorkshopSession.length > 0) {
+          if (existingWorkshopSession) {
             return reply.status(400).send({
               success: false,
               error: "You have already registered for a workshop session. Only one workshop session is allowed per registration.",
@@ -2136,6 +2147,45 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             code: "OPTIONAL_SESSION_PRIMARY_REQUIRED",
             error: "Optional sessions can only be selected with a primary ticket purchase",
           });
+        }
+
+        const fixedAddonTicketIds = resolvedAddOns
+          .filter((_addon, index) => addOnIds[index]?.toLowerCase() !== "workshop")
+          .map((addon) => addon.id);
+        const fixedAddonSessions = fixedAddonTicketIds.length > 0
+          ? await db
+              .select({ sessionId: ticketSessions.sessionId })
+              .from(ticketSessions)
+              .innerJoin(sessions, eq(ticketSessions.sessionId, sessions.id))
+              .where(and(
+                inArray(ticketSessions.ticketTypeId, fixedAddonTicketIds),
+                eq(sessions.eventId, eventId),
+                eq(sessions.requiresOptIn, false),
+              ))
+          : [];
+        const intendedSessionIds = [...new Set([
+          ...fixedAddonSessions.map((row) => row.sessionId),
+          ...(workshopSessionId && addOnIds.some((id) => id.toLowerCase() === "workshop")
+            ? [workshopSessionId]
+            : []),
+          ...validatedOptionalSessionIds,
+        ])].sort((a, b) => a - b);
+
+        if (intendedSessionIds.length > 0) {
+          const existingEntitlements = await findOwnedSessionIds(
+            db,
+            userId,
+            eventId,
+            intendedSessionIds,
+          );
+          if (existingEntitlements.length > 0) {
+            return reply.status(400).send({
+              success: false,
+              code: "SESSION_ALREADY_REGISTERED",
+              error: "You already have access to one or more selected sessions.",
+              sessionIds: existingEntitlements,
+            });
+          }
         }
 
         if (taxInvoice.needTaxInvoice) {

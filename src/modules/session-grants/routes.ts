@@ -64,6 +64,12 @@ export default async function sessionGrantRoutes(
   const getGrantBatchFn = options.getGrantBatchFn ?? getGrantBatch;
   const retryGrantEmailsFn = options.retryGrantEmailsFn ?? retryGrantEmails;
 
+  fastify.get("/status", async (request, reply) => {
+    const actor = adminActor(request, reply);
+    if (!actor) return;
+    return reply.send({ enabled: featureEnabled() });
+  });
+
   fastify.post("/", async (request, reply) => {
     const actor = adminActor(request, reply);
     if (!actor) return;
