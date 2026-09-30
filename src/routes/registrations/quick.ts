@@ -283,13 +283,24 @@ export default async function quickRegistrationRoutes(fastify: FastifyInstance) 
             }
           }
 
-          for (const sid of sessionIdsToLink) {
-            await tx.insert(registrationSessions).values({
+          for (const sid of [...new Set(sessionIdsToLink)].sort((a, b) => a - b)) {
+            const [inserted] = await tx.insert(registrationSessions).values({
               registrationId: newReg.id,
               sessionId: sid,
               ticketTypeId: ticket.id,
               source: "quick",
-            });
+            }).onConflictDoNothing().returning({ id: registrationSessions.id });
+            if (!inserted) {
+              const [existing] = await tx
+                .select({ id: registrationSessions.id })
+                .from(registrationSessions)
+                .where(and(
+                  eq(registrationSessions.registrationId, newReg.id),
+                  eq(registrationSessions.sessionId, sid),
+                ))
+                .limit(1);
+              if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+            }
           }
 
           await tx

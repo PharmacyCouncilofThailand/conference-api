@@ -1042,14 +1042,28 @@ async function processSuccessfulPaymentLegacy(
         }
       }
 
-      // Insert registration_sessions rows
-      for (const sid of sessionIdsToLink) {
-        await tx.insert(registrationSessions).values({
+      // Insert registration_sessions rows. Existing entitlements (including an
+      // earlier Admin grant) do not block the paid settlement or overwrite
+      // the original entitlement metadata.
+      for (const sid of [...new Set(sessionIdsToLink)].sort((a, b) => a - b)) {
+        const [inserted] = await tx.insert(registrationSessions).values({
           registrationId: registration.id,
           sessionId: sid,
           ticketTypeId: item.ticketTypeId,
-        });
-        totalSessionLinks++;
+        }).onConflictDoNothing().returning({ id: registrationSessions.id });
+        if (inserted) {
+          totalSessionLinks++;
+          continue;
+        }
+        const [existing] = await tx
+          .select({ id: registrationSessions.id })
+          .from(registrationSessions)
+          .where(and(
+            eq(registrationSessions.registrationId, registration.id),
+            eq(registrationSessions.sessionId, sid),
+          ))
+          .limit(1);
+        if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
       }
 
       // Update soldCount (unchanged)

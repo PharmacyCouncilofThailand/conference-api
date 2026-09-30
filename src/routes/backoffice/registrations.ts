@@ -10,6 +10,10 @@ import {
     batchManualRegistrationSchema, checkRegisteredUsersSchema,
 } from "../../schemas/registrations.schema.js";
 import { eq, desc, ilike, and, count, sql, or, inArray, exists } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import { registrationBlock, sessionBlock } from "../../modules/session-grants/policy.js";
+
+const registrationSessionGrantActors = alias(backofficeUsers, "registration_session_grant_actors");
 
 function generateRegCode(): string {
     const ts = Date.now().toString(36).toUpperCase();
@@ -25,13 +29,37 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { page, limit, search, eventId, promoCodeId, status, ticketTypeId, source } = queryResult.data;
+        const { page, limit, search, eventId, sessionId, promoCodeId, status, ticketTypeId, source } = queryResult.data;
         const offset = (page - 1) * limit;
 
         // Get user from request (set by auth middleware)
         const user = (request as any).user;
 
         try {
+            let grantSession: { id: number; eventId: number; isActive: boolean; endTime: Date } | null = null;
+            let grantServerNow: Date | null = null;
+            if (sessionId) {
+                if (user?.role !== "admin") {
+                    return reply.status(403).send({ error: "Admin access required" });
+                }
+                const [session] = await db
+                    .select({
+                        id: sessions.id,
+                        eventId: sessions.eventId,
+                        isActive: sessions.isActive,
+                        endTime: sessions.endTime,
+                    })
+                    .from(sessions)
+                    .where(and(eq(sessions.id, sessionId), eq(sessions.eventId, eventId!)))
+                    .limit(1);
+                if (!session) {
+                    return reply.status(400).send({ error: "Session does not belong to the requested event" });
+                }
+                const [{ now: rawNow }] = await db.execute<{ now: Date | string }>(sql`SELECT clock_timestamp() AS now`);
+                grantServerNow = rawNow instanceof Date ? rawNow : new Date(rawNow);
+                grantSession = session;
+            }
+
             const conditions = [];
 
             // If user is not admin, filter by assigned events only
@@ -112,6 +140,17 @@ export default async function (fastify: FastifyInstance) {
                     eventCode: events.eventCode,
                     source: registrations.source,
                     promoCode: orders.promoCode,
+                    ...(sessionId ? {
+                        hasSession: exists(
+                            db
+                                .select({ id: registrationSessions.id })
+                                .from(registrationSessions)
+                                .where(and(
+                                    eq(registrationSessions.registrationId, registrations.id),
+                                    eq(registrationSessions.sessionId, sessionId),
+                                )),
+                        ),
+                    } : {}),
                     addedNote: registrations.addedNote,
                     addedByFirstName: backofficeUsers.firstName,
                     addedByLastName: backofficeUsers.lastName,
@@ -126,8 +165,26 @@ export default async function (fastify: FastifyInstance) {
                 .limit(limit)
                 .offset(offset);
 
+            const registrationResponse = sessionId && grantSession && grantServerNow
+                ? registrationList.map((row) => {
+                    const hasSession = "hasSession" in row ? Boolean(row.hasSession) : false;
+                    const disabledReason = sessionBlock(grantSession, grantServerNow)
+                        ?? registrationBlock(
+                            { eventId: grantSession.eventId, status: row.status },
+                            grantSession.eventId,
+                            hasSession,
+                        );
+                    return {
+                        ...row,
+                        hasSession,
+                        grantEligible: disabledReason === null,
+                        grantDisabledReason: disabledReason,
+                    };
+                })
+                : registrationList;
+
             return reply.send({
-                registrations: registrationList,
+                registrations: registrationResponse,
                 pagination: {
                     page,
                     limit,
@@ -204,7 +261,9 @@ export default async function (fastify: FastifyInstance) {
                 return reply.status(404).send({ error: "Registration not found" });
             }
 
-            // Get registration sessions with session details
+            // Get registration sessions with session details. Session-level ticket
+            // attribution is nullable for admin grants, while the Registration's
+            // primary ticket above remains required.
             const regSessions = await db
                 .select({
                     id: registrationSessions.id,
@@ -212,6 +271,9 @@ export default async function (fastify: FastifyInstance) {
                     ticketTypeId: registrationSessions.ticketTypeId,
                     checkedInAt: registrationSessions.checkedInAt,
                     checkedInById: registrationSessions.checkedInBy,
+                    source: registrationSessions.source,
+                    addedById: registrationSessions.addedBy,
+                    addedAt: registrationSessions.createdAt,
                     createdAt: registrationSessions.createdAt,
                     sessionCode: sessions.sessionCode,
                     sessionName: sessions.sessionName,
@@ -223,11 +285,17 @@ export default async function (fastify: FastifyInstance) {
                     ticketCategory: ticketTypes.category,
                     checkedInByFirstName: backofficeUsers.firstName,
                     checkedInByLastName: backofficeUsers.lastName,
+                    addedByFirstName: registrationSessionGrantActors.firstName,
+                    addedByLastName: registrationSessionGrantActors.lastName,
                 })
                 .from(registrationSessions)
                 .innerJoin(sessions, eq(registrationSessions.sessionId, sessions.id))
-                .innerJoin(ticketTypes, eq(registrationSessions.ticketTypeId, ticketTypes.id))
+                .leftJoin(ticketTypes, eq(registrationSessions.ticketTypeId, ticketTypes.id))
                 .leftJoin(backofficeUsers, eq(registrationSessions.checkedInBy, backofficeUsers.id))
+                .leftJoin(
+                    registrationSessionGrantActors,
+                    eq(registrationSessions.addedBy, registrationSessionGrantActors.id),
+                )
                 .where(eq(registrationSessions.registrationId, parseInt(id)))
                 .orderBy(sessions.startTime);
 
@@ -372,15 +440,29 @@ export default async function (fastify: FastifyInstance) {
                 }
 
                 // 8. Insert registration_sessions
-                for (const sid of sessionsToLink) {
-                    await tx.insert(registrationSessions).values({
+                const sessionsLinked: number[] = [];
+                for (const sid of [...new Set(sessionsToLink)].sort((a, b) => a - b)) {
+                    const [inserted] = await tx.insert(registrationSessions).values({
                         registrationId: newReg.id,
                         sessionId: sid,
                         ticketTypeId,
                         source: "manual",
                         addedBy: staffUser.id,
                         addedNote: note || null,
-                    });
+                    }).onConflictDoNothing().returning({ id: registrationSessions.id });
+                    if (inserted) {
+                        sessionsLinked.push(sid);
+                        continue;
+                    }
+                    const [existing] = await tx
+                        .select({ id: registrationSessions.id })
+                        .from(registrationSessions)
+                        .where(and(
+                            eq(registrationSessions.registrationId, newReg.id),
+                            eq(registrationSessions.sessionId, sid),
+                        ))
+                        .limit(1);
+                    if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
                 }
 
                 // 9. Update soldCount
@@ -394,8 +476,8 @@ export default async function (fastify: FastifyInstance) {
                     ticketName: ticket.name,
                     eventName: event.eventName,
                     eventRow: event,
-                    sessionCount: sessionsToLink.length,
-                    sessionsLinked: sessionsToLink,
+                    sessionCount: sessionsLinked.length,
+                    sessionsLinked,
                     userEmail: user.email,
                     userFirstName: user.firstName,
                     userLastName: user.lastName,
@@ -471,24 +553,33 @@ export default async function (fastify: FastifyInstance) {
         try {
             // Verify registration exists
             const [reg] = await db
-                .select({ id: registrations.id, eventId: registrations.eventId })
+                .select({ id: registrations.id, eventId: registrations.eventId, status: registrations.status })
                 .from(registrations)
                 .where(eq(registrations.id, regId))
                 .limit(1);
 
             if (!reg) return reply.status(404).send({ error: "Registration not found" });
+            if (reg.status !== "confirmed") {
+                return reply.status(409).send({ error: "Registration must be confirmed" });
+            }
 
-            // Verify sessions belong to same event
+            // Verify sessions belong to same event and are currently grantable.
+            const distinctSessionIds = [...new Set(sessionIds)].sort((a, b) => a - b);
             const validSessions = await db
-                .select({ id: sessions.id })
+                .select({ id: sessions.id, isActive: sessions.isActive, endTime: sessions.endTime })
                 .from(sessions)
                 .where(and(
-                    inArray(sessions.id, sessionIds),
+                    inArray(sessions.id, distinctSessionIds),
                     eq(sessions.eventId, reg.eventId),
                 ));
 
-            if (validSessions.length !== sessionIds.length) {
+            if (validSessions.length !== distinctSessionIds.length) {
                 return reply.status(400).send({ error: "Some sessions do not belong to the registration's event" });
+            }
+            const [{ now: rawNow }] = await db.execute<{ now: Date | string }>(sql`SELECT clock_timestamp() AS now`);
+            const serverNow = rawNow instanceof Date ? rawNow : new Date(rawNow);
+            if (validSessions.some((session) => !session.isActive || session.endTime.getTime() <= serverNow.getTime())) {
+                return reply.status(409).send({ error: "Some sessions are inactive or have ended" });
             }
 
             // Check for duplicates
@@ -498,13 +589,15 @@ export default async function (fastify: FastifyInstance) {
                 .where(eq(registrationSessions.registrationId, regId));
 
             const existingIds = new Set(existingSessions.map(s => s.sessionId));
-            const newSessionIds = sessionIds.filter(sid => !existingIds.has(sid));
+            const newSessionIds = distinctSessionIds.filter(sid => !existingIds.has(sid));
 
             if (newSessionIds.length === 0) {
                 return reply.status(409).send({ error: "All sessions already added" });
             }
 
-            // Insert new registration_sessions
+            // Insert new registration_sessions. Re-check the exact pair when a
+            // concurrent writer wins after the pre-read; do not hide unrelated
+            // unique conflicts.
             const inserted = [];
             for (const sid of newSessionIds) {
                 const [row] = await db.insert(registrationSessions).values({
@@ -514,8 +607,24 @@ export default async function (fastify: FastifyInstance) {
                     source: "manual",
                     addedBy: staffUser.id,
                     addedNote: note || null,
-                }).returning();
-                inserted.push(row);
+                }).onConflictDoNothing().returning();
+                if (row) {
+                    inserted.push(row);
+                    continue;
+                }
+                const [existing] = await db
+                    .select({ id: registrationSessions.id })
+                    .from(registrationSessions)
+                    .where(and(
+                        eq(registrationSessions.registrationId, regId),
+                        eq(registrationSessions.sessionId, sid),
+                    ))
+                    .limit(1);
+                if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+            }
+
+            if (inserted.length === 0) {
+                return reply.status(409).send({ error: "All sessions already added" });
             }
 
             return reply.status(201).send({
@@ -805,15 +914,26 @@ export default async function (fastify: FastifyInstance) {
                     }).returning();
 
                     // Insert registration_sessions
-                    for (const sid of sessionsToLink) {
-                        await tx.insert(registrationSessions).values({
+                    for (const sid of [...new Set(sessionsToLink)].sort((a, b) => a - b)) {
+                        const [inserted] = await tx.insert(registrationSessions).values({
                             registrationId: newReg.id,
                             sessionId: sid,
                             ticketTypeId,
                             source: "manual",
                             addedBy: staffUser.id,
                             addedNote: note || null,
-                        });
+                        }).onConflictDoNothing().returning({ id: registrationSessions.id });
+                        if (!inserted) {
+                            const [existing] = await tx
+                                .select({ id: registrationSessions.id })
+                                .from(registrationSessions)
+                                .where(and(
+                                    eq(registrationSessions.registrationId, newReg.id),
+                                    eq(registrationSessions.sessionId, sid),
+                                ))
+                                .limit(1);
+                            if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+                        }
                     }
 
                     addedCount++;

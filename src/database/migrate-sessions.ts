@@ -51,12 +51,24 @@ const run = async () => {
         .limit(1);
 
       if (existing.length === 0 && reg.sessionId !== null) {
-        await db.insert(registrationSessions).values({
+        const [inserted] = await db.insert(registrationSessions).values({
           registrationId: reg.id,
           sessionId: reg.sessionId,
           ticketTypeId: reg.ticketTypeId,
-        });
-        step1Count++;
+        }).onConflictDoNothing().returning({ id: registrationSessions.id });
+        if (inserted) {
+          step1Count++;
+        } else {
+          const [concurrentExisting] = await db
+            .select({ id: registrationSessions.id })
+            .from(registrationSessions)
+            .where(and(
+              eq(registrationSessions.registrationId, reg.id),
+              eq(registrationSessions.sessionId, reg.sessionId),
+            ))
+            .limit(1);
+          if (!concurrentExisting) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+        }
       }
     }
     console.log(`   ✅ ${step1Count} registration_sessions created from sessionId\n`);
@@ -94,12 +106,24 @@ const run = async () => {
           .limit(1);
 
         if (existing.length === 0) {
-          await db.insert(registrationSessions).values({
+          const [inserted] = await db.insert(registrationSessions).values({
             registrationId: reg.id,
             sessionId: ls.sessionId,
             ticketTypeId: reg.ticketTypeId,
-          });
-          step2Count++;
+          }).onConflictDoNothing().returning({ id: registrationSessions.id });
+          if (inserted) {
+            step2Count++;
+          } else {
+            const [concurrentExisting] = await db
+              .select({ id: registrationSessions.id })
+              .from(registrationSessions)
+              .where(and(
+                eq(registrationSessions.registrationId, reg.id),
+                eq(registrationSessions.sessionId, ls.sessionId),
+              ))
+              .limit(1);
+            if (!concurrentExisting) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+          }
         }
       }
     }

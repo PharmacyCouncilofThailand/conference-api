@@ -726,25 +726,193 @@ export const registrations = pgTable("registrations", {
 });
 
 // Junction table: 1 registration → N sessions (tracks which sessions a registrant has access to)
-export const registrationSessions = pgTable("registration_sessions", {
-  id: serial("id").primaryKey(),
-  registrationId: integer("registration_id")
-    .notNull()
-    .references(() => registrations.id, { onDelete: "cascade" }),
-  sessionId: integer("session_id")
-    .notNull()
-    .references(() => sessions.id),
-  ticketTypeId: integer("ticket_type_id")
-    .notNull()
-    .references(() => ticketTypes.id),
-  checkedInAt: timestamp("checked_in_at"),
-  checkedInBy: integer("checked_in_by")
-    .references(() => backofficeUsers.id),
-  source: varchar("source", { length: 20 }).notNull().default("purchase"),
-  addedBy: integer("added_by").references(() => backofficeUsers.id),
-  addedNote: text("added_note"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+export const registrationSessions = pgTable(
+  "registration_sessions",
+  {
+    id: serial("id").primaryKey(),
+    registrationId: integer("registration_id")
+      .notNull()
+      .references(() => registrations.id, { onDelete: "cascade" }),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => sessions.id),
+    ticketTypeId: integer("ticket_type_id").references(() => ticketTypes.id),
+    checkedInAt: timestamp("checked_in_at"),
+    checkedInBy: integer("checked_in_by").references(() => backofficeUsers.id),
+    source: varchar("source", { length: 20 }).notNull().default("purchase"),
+    addedBy: integer("added_by").references(() => backofficeUsers.id),
+    addedNote: text("added_note"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("registration_sessions_registration_session_unique").on(
+      table.registrationId,
+      table.sessionId,
+    ),
+  ],
+);
+
+export const registrationSessionGrantBatches = pgTable(
+  "registration_session_grant_batches",
+  {
+    id: uuid("id").primaryKey(),
+    actorId: integer("actor_id").notNull(),
+    actorNameSnapshot: text("actor_name_snapshot").notNull(),
+    idempotencyKey: uuid("idempotency_key").notNull(),
+    requestHash: varchar("request_hash", { length: 64 }).notNull(),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => sessions.id),
+    eventId: integer("event_id")
+      .notNull()
+      .references(() => events.id),
+    sessionNameSnapshot: text("session_name_snapshot").notNull(),
+    requestedCount: integer("requested_count").notNull(),
+    addedCount: integer("added_count").notNull().default(0),
+    skippedCount: integer("skipped_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("registration_session_grant_batches_actor_idempotency_unique").on(
+      table.actorId,
+      table.idempotencyKey,
+    ),
+    check(
+      "registration_session_grant_batches_requested_count_check",
+      sql`${table.requestedCount} between 1 and 500`,
+    ),
+    check(
+      "registration_session_grant_batches_added_count_check",
+      sql`${table.addedCount} >= 0`,
+    ),
+    check(
+      "registration_session_grant_batches_skipped_count_check",
+      sql`${table.skippedCount} >= 0`,
+    ),
+    check(
+      "registration_session_grant_batches_completion_count_check",
+      sql`${table.completedAt} is null or ${table.requestedCount} = ${table.addedCount} + ${table.skippedCount}`,
+    ),
+  ],
+);
+
+export const registrationSessionGrantItems = pgTable(
+  "registration_session_grant_items",
+  {
+    id: uuid("id").primaryKey(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => registrationSessionGrantBatches.id),
+    requestedRegistrationId: integer("requested_registration_id").notNull(),
+    registrationSessionId: integer("registration_session_id").references(
+      () => registrationSessions.id,
+      { onDelete: "set null" },
+    ),
+    regCodeSnapshot: text("reg_code_snapshot"),
+    nameSnapshot: text("name_snapshot"),
+    outcome: varchar("outcome", { length: 16 }).notNull(),
+    reasonCode: varchar("reason_code", { length: 64 }),
+    recipientEmailSnapshot: text("recipient_email_snapshot"),
+    notificationSnapshot: jsonb("notification_snapshot"),
+    emailStatus: varchar("email_status", { length: 24 }).notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    lastErrorCode: varchar("last_error_code", { length: 100 }),
+    claimToken: uuid("claim_token"),
+    claimedUntil: timestamp("claimed_until", { withTimezone: true }),
+    nextTrigger: varchar("next_trigger", { length: 16 }).notNull().default("system"),
+    nextTriggeredBy: integer("next_triggered_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("registration_session_grant_items_batch_registration_unique").on(
+      table.batchId,
+      table.requestedRegistrationId,
+    ),
+    uniqueIndex("registration_session_grant_items_registration_session_unique").on(
+      table.registrationSessionId,
+    ),
+    index("session_grant_items_queue_idx")
+      .on(table.createdAt, table.id)
+      .where(sql`${table.emailStatus} = 'pending'`),
+    index("session_grant_items_lease_idx")
+      .on(table.claimedUntil)
+      .where(sql`${table.emailStatus} = 'sending'`),
+    index("session_grant_items_registration_idx").on(
+      table.requestedRegistrationId,
+      table.createdAt,
+    ),
+    check(
+      "registration_session_grant_items_requested_registration_check",
+      sql`${table.requestedRegistrationId} > 0`,
+    ),
+    check(
+      "registration_session_grant_items_outcome_check",
+      sql`${table.outcome} in ('added', 'skipped')`,
+    ),
+    check(
+      "registration_session_grant_items_email_status_check",
+      sql`${table.emailStatus} in ('not_applicable', 'pending', 'sending', 'sent', 'failed', 'unknown', 'suppressed')`,
+    ),
+    check(
+      "registration_session_grant_items_attempt_count_check",
+      sql`${table.attemptCount} >= 0`,
+    ),
+    check(
+      "registration_session_grant_items_next_trigger_check",
+      sql`${table.nextTrigger} in ('system', 'admin')`,
+    ),
+    check(
+      "registration_session_grant_items_outcome_email_check",
+      sql`(${table.outcome} = 'skipped' and ${table.emailStatus} = 'not_applicable' and ${table.reasonCode} is not null)
+        or (${table.outcome} = 'added' and ${table.emailStatus} <> 'not_applicable' and ${table.reasonCode} is null)`,
+    ),
+  ],
+);
+
+export const registrationSessionGrantEmailAttempts = pgTable(
+  "registration_session_grant_email_attempts",
+  {
+    id: uuid("id").primaryKey(),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => registrationSessionGrantItems.id),
+    attemptNo: integer("attempt_no").notNull(),
+    claimToken: uuid("claim_token").notNull(),
+    trigger: varchar("trigger", { length: 16 }).notNull(),
+    triggeredBy: integer("triggered_by"),
+    recipientEmail: text("recipient_email").notNull(),
+    templateVersion: varchar("template_version", { length: 32 }).notNull(),
+    subjectSnapshot: text("subject_snapshot").notNull(),
+    result: varchar("result", { length: 16 }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    requestStartedAt: timestamp("request_started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    errorCode: varchar("error_code", { length: 100 }),
+    errorMessage: text("error_message"),
+    providerMessageId: text("provider_message_id"),
+  },
+  (table) => [
+    uniqueIndex("registration_session_grant_email_attempts_item_attempt_unique").on(
+      table.itemId,
+      table.attemptNo,
+    ),
+    check(
+      "registration_session_grant_email_attempts_attempt_no_check",
+      sql`${table.attemptNo} > 0`,
+    ),
+    check(
+      "registration_session_grant_email_attempts_trigger_check",
+      sql`${table.trigger} in ('system', 'admin')`,
+    ),
+    check(
+      "registration_session_grant_email_attempts_result_check",
+      sql`${table.result} in ('sending', 'sent', 'failed', 'unknown', 'suppressed')`,
+    ),
+  ],
+);
 
 export const orderItems = pgTable("order_items", {
   id: serial("id").primaryKey(),

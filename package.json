@@ -25,7 +25,15 @@
     "jobs:team-registrations:once": "tsx src/modules/team-registrations/jobs-runner.ts --once",
     "jobs:team-registrations:prod": "node dist/modules/team-registrations/jobs-runner.js",
     "jobs:team-registrations:prod:once": "node dist/modules/team-registrations/jobs-runner.js --once",
-    "jobs:team-registrations:prod:health": "node dist/modules/team-registrations/jobs-runner.js --healthcheck"
+    "jobs:team-registrations:prod:health": "node dist/modules/team-registrations/jobs-runner.js --healthcheck",
+    "test:session-grants": "tsx --test src/modules/session-grants/policy.test.ts src/modules/session-grants/schemas.test.ts src/modules/session-grants/routes.test.ts src/modules/session-grants/email-template.test.ts src/modules/session-grants/email-jobs.test.ts",
+    "test:session-grants:integration": "tsx --test src/modules/session-grants/migration.integration.test.ts && tsx --test --test-concurrency=1 src/modules/session-grants/readers.integration.test.ts src/modules/session-grants/service.integration.test.ts src/modules/session-grants/writer-compatibility.integration.test.ts src/modules/session-grants/email-jobs.integration.test.ts",
+    "jobs:session-grants": "tsx src/modules/session-grants/jobs-runner.ts",
+    "jobs:session-grants:once": "tsx src/modules/session-grants/jobs-runner.ts --once",
+    "jobs:session-grants:health": "tsx src/modules/session-grants/jobs-runner.ts --healthcheck",
+    "jobs:session-grants:prod": "node dist/modules/session-grants/jobs-runner.js",
+    "jobs:session-grants:prod:once": "node dist/modules/session-grants/jobs-runner.js --once",
+    "jobs:session-grants:prod:health": "node dist/modules/session-grants/jobs-runner.js --healthcheck"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

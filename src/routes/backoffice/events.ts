@@ -706,6 +706,11 @@ export default async function (fastify: FastifyInstance) {
 
   // List Sessions for an Event
   fastify.get("/:eventId/sessions", async (request, reply) => {
+    const forGrant = String((request.query as { forGrant?: string }).forGrant ?? "").toLowerCase() === "true";
+    const staffUser = (request as any).user;
+    if (forGrant && staffUser?.role !== "admin") {
+      return reply.status(403).send({ error: "Admin access required" });
+    }
     const { eventId } = request.params as { eventId: string };
 
     try {
@@ -745,6 +750,37 @@ export default async function (fastify: FastifyInstance) {
         ...s,
         speakers: speakersBySession[s.id] || [],
       }));
+
+      if (forGrant) {
+        const [{ now: rawNow }] = await db.execute<{ now: Date | string }>(sql`SELECT clock_timestamp() AS now`);
+        const serverNow = rawNow instanceof Date ? rawNow : new Date(rawNow);
+        const enrollmentRows = sessionIds.length > 0
+          ? await db
+            .select({ sessionId: registrationSessions.sessionId, total: count() })
+            .from(registrationSessions)
+            .innerJoin(registrations, eq(registrationSessions.registrationId, registrations.id))
+            .where(and(
+              inArray(registrationSessions.sessionId, sessionIds),
+              eq(registrations.status, "confirmed"),
+            ))
+            .groupBy(registrationSessions.sessionId)
+          : [];
+        const enrollmentBySession = new Map(enrollmentRows.map((row) => [row.sessionId, row.total]));
+        const grantSessions = sessionsWithSpeakers.map((session) => {
+          const disabledReason = !session.isActive
+            ? "SESSION_INACTIVE"
+            : session.endTime.getTime() <= serverNow.getTime()
+              ? "SESSION_ENDED"
+              : null;
+          return {
+            ...session,
+            enrollmentCount: enrollmentBySession.get(session.id) ?? 0,
+            grantEligible: disabledReason === null,
+            disabledReason,
+          };
+        });
+        return reply.send({ sessions: grantSessions, serverNow: serverNow.toISOString() });
+      }
 
       return reply.send({ sessions: sessionsWithSpeakers });
     } catch (error) {
@@ -930,6 +966,8 @@ export default async function (fastify: FastifyInstance) {
             createdAt: registrations.createdAt,
             ticketTypeId: registrationSessions.ticketTypeId,
             ticketName: ticketTypes.name,
+            source: registrationSessions.source,
+            addedAt: registrationSessions.createdAt,
           })
           .from(registrationSessions)
           .innerJoin(registrations, eq(registrationSessions.registrationId, registrations.id))

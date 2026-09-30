@@ -273,13 +273,28 @@ export async function processSuccessfulPaymentInTransaction(
       }
     }
 
-    for (const sessionId of sessionIdsToLink) {
-      await tx.insert(registrationSessions).values({
+    for (const sessionId of [...new Set(sessionIdsToLink)].sort((a, b) => a - b)) {
+      const [inserted] = await tx.insert(registrationSessions).values({
         registrationId: registration.id,
         sessionId,
         ticketTypeId: item.ticketTypeId,
-      });
-      totalSessionLinks++;
+      }).onConflictDoNothing().returning({ id: registrationSessions.id });
+      if (inserted) {
+        totalSessionLinks++;
+        continue;
+      }
+      const [existing] = await tx
+        .select({ id: registrationSessions.id })
+        .from(registrationSessions)
+        .where(and(
+          eq(registrationSessions.registrationId, registration.id),
+          eq(registrationSessions.sessionId, sessionId),
+        ))
+        .limit(1);
+      if (!existing) throw new RegistrationSettlementError(
+        "ENTITLEMENT_INSERT_CONFLICT",
+        "Session entitlement insert conflicted without an existing registration/session pair",
+      );
     }
 
     await tx.update(ticketTypes).set({

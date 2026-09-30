@@ -1,0 +1,170 @@
+name: admin-session-grants-test
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: session_grants_test
+      POSTGRES_PASSWORD: session_grants_test
+      POSTGRES_DB: confer_session_grants_runtime_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U session_grants_test -d confer_session_grants_runtime_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - session_grants_pgdata:/var/lib/postgresql/data
+
+  fake-mail:
+    image: node:20-alpine
+    command:
+      - node
+      - -e
+      - |
+        const http = require('http');
+        http.createServer((req, res) => {
+          let body = '';
+          req.on('data', chunk => { body += chunk; });
+          req.on('end', () => {
+            process.stdout.write(JSON.stringify({ method: req.method, url: req.url, bytes: Buffer.byteLength(body) }) + '\n');
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, messageId: 'fake-session-grants-message' }));
+          });
+        }).listen(8025, '0.0.0.0');
+    expose:
+      - "8025"
+
+  api-tools:
+    image: node:20-alpine
+    working_dir: /workspace/conference-api
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgres://session_grants_test:session_grants_test@postgres:5432/confer_session_grants_runtime_test
+      TEST_DATABASE_URL: postgres://session_grants_test:session_grants_test@postgres:5432/confer_session_grants_integration_test
+      ADMIN_SESSION_GRANTS_ENABLED: "false"
+    volumes:
+      - ./:/workspace/conference-api
+      - ../conference-backoffice:/workspace/conference-backoffice
+      - ../conference-web:/workspace/conference-web
+      - api_node_modules:/workspace/conference-api/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backoffice-tools:
+    image: node:20-alpine
+    working_dir: /workspace/conference-backoffice
+    environment:
+      NODE_ENV: test
+      NEXT_PUBLIC_API_URL: http://api-server:3002
+    volumes:
+      - ./:/workspace/conference-api
+      - ../conference-backoffice:/workspace/conference-backoffice
+      - ../conference-web:/workspace/conference-web
+      - backoffice_node_modules:/workspace/conference-backoffice/node_modules
+
+  web-tools:
+    image: node:20-alpine
+    working_dir: /workspace/conference-web
+    environment:
+      NODE_ENV: test
+      NEXT_PUBLIC_API_URL: http://api-server:3002
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_session_grants_placeholder
+    volumes:
+      - ./:/workspace/conference-api
+      - ../conference-backoffice:/workspace/conference-backoffice
+      - ../conference-web:/workspace/conference-web
+      - web_node_modules:/workspace/conference-web/node_modules
+
+  api-server:
+    image: node:20-alpine
+    working_dir: /workspace/conference-api
+    environment:
+      NODE_ENV: test
+      PORT: "3002"
+      DATABASE_URL: postgres://session_grants_test:session_grants_test@postgres:5432/confer_session_grants_runtime_test
+      TEST_DATABASE_URL: postgres://session_grants_test:session_grants_test@postgres:5432/confer_session_grants_integration_test
+      ADMIN_SESSION_GRANTS_ENABLED: "false"
+      SESSION_GRANTS_FAKE_MAIL_URL: http://fake-mail:8025
+    command: ["sh", "-lc", "npm run dev"]
+    volumes:
+      - ./:/workspace/conference-api
+      - api_node_modules:/workspace/conference-api/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fake-mail:
+        condition: service_started
+    expose:
+      - "3002"
+
+  backoffice-server:
+    image: node:20-alpine
+    working_dir: /workspace/conference-backoffice
+    environment:
+      NODE_ENV: test
+      NEXT_PUBLIC_API_URL: http://api-server:3002
+    command: ["sh", "-lc", "npm run dev -- --hostname 0.0.0.0"]
+    volumes:
+      - ../conference-backoffice:/workspace/conference-backoffice
+      - backoffice_node_modules:/workspace/conference-backoffice/node_modules
+    depends_on:
+      - api-server
+    expose:
+      - "3001"
+
+  web-server:
+    image: node:20-alpine
+    working_dir: /workspace/conference-web
+    environment:
+      NODE_ENV: test
+      NEXT_PUBLIC_API_URL: http://api-server:3002
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_session_grants_placeholder
+    command: ["sh", "-lc", "npm run dev -- --hostname 0.0.0.0"]
+    volumes:
+      - ../conference-web:/workspace/conference-web
+      - web_node_modules:/workspace/conference-web/node_modules
+    depends_on:
+      - api-server
+    expose:
+      - "3003"
+
+  worker:
+    image: node:20-alpine
+    working_dir: /workspace/conference-api
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgres://session_grants_test:session_grants_test@postgres:5432/confer_session_grants_runtime_test
+      TEST_DATABASE_URL: postgres://session_grants_test:session_grants_test@postgres:5432/confer_session_grants_integration_test
+      ADMIN_SESSION_GRANTS_ENABLED: "false"
+      SESSION_GRANTS_FAKE_MAIL_URL: http://fake-mail:8025
+    command: ["sh", "-lc", "sleep infinity"]
+    volumes:
+      - ./:/workspace/conference-api
+      - api_node_modules:/workspace/conference-api/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fake-mail:
+        condition: service_started
+
+  browser:
+    image: mcr.microsoft.com/playwright:v1.51.1-noble
+    working_dir: /workspace/conference-backoffice
+    command: ["bash", "-lc", "sleep infinity"]
+    environment:
+      BASE_URL_BACKOFFICE: http://backoffice-server:3001
+      BASE_URL_WEB: http://web-server:3003
+      API_URL: http://api-server:3002
+    volumes:
+      - ./:/workspace/conference-api
+      - ../conference-backoffice:/workspace/conference-backoffice
+      - ../conference-web:/workspace/conference-web
+      - backoffice_node_modules:/workspace/conference-backoffice/node_modules
+      - web_node_modules:/workspace/conference-web/node_modules
+
+volumes:
+  session_grants_pgdata:
+  api_node_modules:
+  backoffice_node_modules:
+  web_node_modules:

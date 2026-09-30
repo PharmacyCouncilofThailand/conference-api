@@ -9,6 +9,21 @@ const NIPAMAIL_API_URL = "https://api.nipamail.com";
 let cachedToken: string | null = null;
 let tokenExpiry: number = 0;
 
+export interface NipaMailSendOptions {
+  timeoutMs?: number;
+}
+
+export class NipaMailTransportError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly deliveryState: "failed" | "unknown",
+    message: string,
+  ) {
+    super(message);
+    this.name = "NipaMailTransportError";
+  }
+}
+
 /**
  * Encode content to Base64
  */
@@ -31,7 +46,7 @@ function getSenderString(): string {
 /**
  * Get NipaMail access token (with caching)
  */
-async function getAccessToken(): Promise<string> {
+async function getAccessToken(options: NipaMailSendOptions = {}): Promise<string> {
   // Return cached token if still valid
   if (cachedToken && Date.now() < tokenExpiry) {
     return cachedToken;
@@ -56,6 +71,7 @@ async function getAccessToken(): Promise<string> {
       }),
       {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
       }
     );
 
@@ -136,9 +152,19 @@ export async function sendNipaMailHtml(
   recipient: string,
   subject: string,
   html: string,
-  retryOnAuth: boolean = true
+  retryOnAuth: boolean = true,
+  options: NipaMailSendOptions = {},
 ): Promise<void> {
-  const token = await getAccessToken();
+  let token: string;
+  try {
+    token = await getAccessToken(options);
+  } catch (error: unknown) {
+    throw new NipaMailTransportError(
+      "NIPAMAIL_PRE_SEND_FAILED",
+      "failed",
+      error instanceof Error ? error.message : "NipaMail pre-send setup failed",
+    );
+  }
 
   try {
     await axios.post(
@@ -157,6 +183,7 @@ export async function sendNipaMailHtml(
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
+        ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
       }
     );
   } catch (error: unknown) {
@@ -166,19 +193,27 @@ export async function sendNipaMailHtml(
       error.response?.status === 401
     ) {
       cachedToken = null;
-      return sendNipaMailHtml(recipient, subject, html, false);
+      return sendNipaMailHtml(recipient, subject, html, false, options);
     }
 
-    if (axios.isAxiosError(error) && error.response) {
-      console.error(
-        "NipaMail send failed:",
-        JSON.stringify(error.response.data)
-      );
-      throw new Error(
-        `Email send failed: ${error.response.data?.message || error.response.status}`
-      );
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status;
+      const deliveryState: "failed" | "unknown" = status !== undefined && status < 500 ? "failed" : "unknown";
+      const code = status !== undefined
+        ? `NIPAMAIL_HTTP_${status}`
+        : error.code === "ECONNABORTED"
+          ? "NIPAMAIL_TIMEOUT"
+          : "NIPAMAIL_CONNECTION_LOST";
+      throw new NipaMailTransportError(code, deliveryState, `NipaMail send failed (${code})`);
     }
-    throw error;
+    if (error instanceof Error && error.message.includes("not configured")) {
+      throw new NipaMailTransportError("NIPAMAIL_PRE_SEND_FAILED", "failed", error.message);
+    }
+    throw new NipaMailTransportError(
+      "NIPAMAIL_SEND_UNKNOWN",
+      "unknown",
+      error instanceof Error ? error.message : "NipaMail send outcome is unknown",
+    );
   }
 }
 

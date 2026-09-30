@@ -1,0 +1,273 @@
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { and, count, desc, eq } from "drizzle-orm";
+import { z } from "zod";
+import { db } from "../../database/index.js";
+import {
+  registrationSessionGrantBatches,
+  registrationSessionGrantEmailAttempts,
+  registrationSessionGrantItems,
+} from "../../database/schema.js";
+import {
+  createGrantSchema,
+  idempotencyKeySchema,
+  resultQuerySchema,
+  retryEmailsSchema,
+} from "./schemas.js";
+import { retryGrantEmails } from "./email-jobs.js";
+import { createGrant, getGrantBatch } from "./service.js";
+import type { GrantDatabase } from "./types.js";
+import { GrantError } from "./types.js";
+
+const batchIdSchema = z.string().uuid();
+const historyQuerySchema = resultQuerySchema.extend({
+  registrationId: z.coerce.number().int().positive(),
+  eventId: z.coerce.number().int().positive().optional(),
+});
+
+export interface SessionGrantRouteOptions {
+  database?: GrantDatabase;
+  createGrantFn?: typeof createGrant;
+  getGrantBatchFn?: typeof getGrantBatch;
+  retryGrantEmailsFn?: typeof retryGrantEmails;
+}
+
+function featureEnabled(): boolean {
+  return process.env.ADMIN_SESSION_GRANTS_ENABLED?.trim().toLowerCase() === "true";
+}
+
+function adminActor(request: FastifyRequest, reply: FastifyReply): { id: number; role: string } | null {
+  const actor = (request as any).user as { id?: number; role?: string } | undefined;
+  if (!actor?.id) {
+    reply.status(401).send({ error: "Authentication required", code: "AUTH_REQUIRED" });
+    return null;
+  }
+  if (actor.role !== "admin") {
+    reply.status(403).send({ error: "Admin access required", code: "ADMIN_REQUIRED" });
+    return null;
+  }
+  return { id: actor.id, role: actor.role };
+}
+
+function sendGrantError(reply: FastifyReply, error: unknown) {
+  if (error instanceof GrantError) {
+    return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+  }
+  return reply.status(500).send({ error: "Session grant request failed", code: "SESSION_GRANT_FAILED" });
+}
+
+export default async function sessionGrantRoutes(
+  fastify: FastifyInstance,
+  options: SessionGrantRouteOptions = {},
+) {
+  const database = options.database ?? db;
+  const createGrantFn = options.createGrantFn ?? createGrant;
+  const getGrantBatchFn = options.getGrantBatchFn ?? getGrantBatch;
+  const retryGrantEmailsFn = options.retryGrantEmailsFn ?? retryGrantEmails;
+
+  fastify.post("/", async (request, reply) => {
+    const actor = adminActor(request, reply);
+    if (!actor) return;
+    if (!featureEnabled()) {
+      return reply.status(503).send({
+        error: "Admin Session Grants are temporarily disabled",
+        code: "ADMIN_SESSION_GRANTS_DISABLED",
+      });
+    }
+
+    const keyResult = idempotencyKeySchema.safeParse(request.headers["idempotency-key"]);
+    const bodyResult = createGrantSchema.safeParse(request.body);
+    if (!keyResult.success || !bodyResult.success) {
+      return reply.status(400).send({
+        error: "Invalid session grant request",
+        code: "INVALID_SESSION_GRANT_REQUEST",
+        details: {
+          idempotencyKey: keyResult.success ? undefined : keyResult.error.flatten(),
+          body: bodyResult.success ? undefined : bodyResult.error.flatten(),
+        },
+      });
+    }
+
+    try {
+      const result = await createGrantFn(database, {
+        actorId: actor.id,
+        idempotencyKey: keyResult.data,
+        sessionId: bodyResult.data.sessionId,
+        registrationIds: bodyResult.data.registrationIds,
+      });
+      return reply.status(result.replayed ? 200 : 201).send(result.batch);
+    } catch (error) {
+      fastify.log.error({ err: error instanceof GrantError ? error.code : "SESSION_GRANT_FAILED" });
+      return sendGrantError(reply, error);
+    }
+  });
+
+  fastify.get("/", async (request, reply) => {
+    const actor = adminActor(request, reply);
+    if (!actor) return;
+    const queryResult = historyQuerySchema.safeParse(request.query);
+    if (!queryResult.success) {
+      return reply.status(400).send({ error: "Invalid query", code: "INVALID_QUERY" });
+    }
+    const { registrationId, eventId, page, limit } = queryResult.data;
+    const whereClause = eventId
+      ? and(
+          eq(registrationSessionGrantItems.requestedRegistrationId, registrationId),
+          eq(registrationSessionGrantBatches.eventId, eventId),
+        )
+      : eq(registrationSessionGrantItems.requestedRegistrationId, registrationId);
+
+    try {
+      const [{ total }] = await database
+        .select({ total: count() })
+        .from(registrationSessionGrantItems)
+        .innerJoin(
+          registrationSessionGrantBatches,
+          eq(registrationSessionGrantItems.batchId, registrationSessionGrantBatches.id),
+        )
+        .where(whereClause);
+      const rows = await database
+        .select({
+          batchId: registrationSessionGrantBatches.id,
+          eventId: registrationSessionGrantBatches.eventId,
+          sessionId: registrationSessionGrantBatches.sessionId,
+          sessionName: registrationSessionGrantBatches.sessionNameSnapshot,
+          actorName: registrationSessionGrantBatches.actorNameSnapshot,
+          createdAt: registrationSessionGrantBatches.createdAt,
+          outcome: registrationSessionGrantItems.outcome,
+          reasonCode: registrationSessionGrantItems.reasonCode,
+          emailStatus: registrationSessionGrantItems.emailStatus,
+          attemptCount: registrationSessionGrantItems.attemptCount,
+        })
+        .from(registrationSessionGrantItems)
+        .innerJoin(
+          registrationSessionGrantBatches,
+          eq(registrationSessionGrantItems.batchId, registrationSessionGrantBatches.id),
+        )
+        .where(whereClause)
+        .orderBy(desc(registrationSessionGrantBatches.createdAt), desc(registrationSessionGrantItems.id))
+        .limit(limit)
+        .offset((page - 1) * limit);
+      return reply.send({
+        batches: rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+        },
+      });
+    } catch (error) {
+      fastify.log.error({ err: "SESSION_GRANT_HISTORY_FAILED" });
+      return reply.status(500).send({ error: "Failed to read session grant history", code: "SESSION_GRANT_HISTORY_FAILED" });
+    }
+  });
+
+  fastify.post("/:batchId/retry", async (request, reply) => {
+    const actor = adminActor(request, reply);
+    if (!actor) return;
+    if (!featureEnabled()) {
+      return reply.status(503).send({ error: "Admin Session Grants are temporarily disabled", code: "ADMIN_SESSION_GRANTS_DISABLED" });
+    }
+    const batchIdResult = batchIdSchema.safeParse((request.params as { batchId?: string }).batchId);
+    const bodyResult = retryEmailsSchema.safeParse(request.body);
+    if (!batchIdResult.success || !bodyResult.success) {
+      return reply.status(400).send({ error: "Invalid retry request", code: "INVALID_RETRY_REQUEST" });
+    }
+    try {
+      const result = await retryGrantEmailsFn(database, {
+        actorId: actor.id,
+        batchId: batchIdResult.data,
+        itemIds: bodyResult.data.itemIds,
+        acknowledgeUnknown: bodyResult.data.acknowledgeUnknown,
+      });
+      return reply.send(result);
+    } catch (error) {
+      fastify.log.error({ err: "SESSION_GRANT_RETRY_FAILED" });
+      return sendGrantError(reply, error);
+    }
+  });
+
+  fastify.get("/:batchId/items/:itemId/email-attempts", async (request, reply) => {
+    const actor = adminActor(request, reply);
+    if (!actor) return;
+    const params = request.params as { batchId?: string; itemId?: string };
+    const batchIdResult = batchIdSchema.safeParse(params.batchId);
+    const itemIdResult = batchIdSchema.safeParse(params.itemId);
+    const queryResult = resultQuerySchema.safeParse(request.query);
+    if (!batchIdResult.success || !itemIdResult.success || !queryResult.success) {
+      return reply.status(400).send({ error: "Invalid email attempt request", code: "INVALID_EMAIL_ATTEMPT_REQUEST" });
+    }
+    const [item] = await database
+      .select({ id: registrationSessionGrantItems.id })
+      .from(registrationSessionGrantItems)
+      .where(and(
+        eq(registrationSessionGrantItems.id, itemIdResult.data),
+        eq(registrationSessionGrantItems.batchId, batchIdResult.data),
+      ))
+      .limit(1);
+    if (!item) {
+      return reply.status(404).send({ error: "Grant item not found in batch", code: "GRANT_ITEM_NOT_FOUND" });
+    }
+    const { page, limit } = queryResult.data;
+    const [{ total }] = await database
+      .select({ total: count() })
+      .from(registrationSessionGrantEmailAttempts)
+      .where(eq(registrationSessionGrantEmailAttempts.itemId, item.id));
+    const attempts = await database
+      .select({
+        id: registrationSessionGrantEmailAttempts.id,
+        attemptNo: registrationSessionGrantEmailAttempts.attemptNo,
+        trigger: registrationSessionGrantEmailAttempts.trigger,
+        triggeredBy: registrationSessionGrantEmailAttempts.triggeredBy,
+        recipientEmail: registrationSessionGrantEmailAttempts.recipientEmail,
+        templateVersion: registrationSessionGrantEmailAttempts.templateVersion,
+        subject: registrationSessionGrantEmailAttempts.subjectSnapshot,
+        result: registrationSessionGrantEmailAttempts.result,
+        startedAt: registrationSessionGrantEmailAttempts.startedAt,
+        requestStartedAt: registrationSessionGrantEmailAttempts.requestStartedAt,
+        finishedAt: registrationSessionGrantEmailAttempts.finishedAt,
+        errorCode: registrationSessionGrantEmailAttempts.errorCode,
+        errorMessage: registrationSessionGrantEmailAttempts.errorMessage,
+        providerMessageId: registrationSessionGrantEmailAttempts.providerMessageId,
+      })
+      .from(registrationSessionGrantEmailAttempts)
+      .where(eq(registrationSessionGrantEmailAttempts.itemId, item.id))
+      .orderBy(registrationSessionGrantEmailAttempts.attemptNo)
+      .limit(limit)
+      .offset((page - 1) * limit);
+    return reply.send({
+      attempts: attempts.map((attempt) => ({
+        ...attempt,
+        startedAt: attempt.startedAt.toISOString(),
+        requestStartedAt: attempt.requestStartedAt?.toISOString() ?? null,
+        finishedAt: attempt.finishedAt?.toISOString() ?? null,
+      })),
+      pagination: { page, limit, total, totalPages: total === 0 ? 0 : Math.ceil(total / limit) },
+    });
+  });
+
+  fastify.get("/:batchId", async (request, reply) => {
+    const actor = adminActor(request, reply);
+    if (!actor) return;
+    const batchIdResult = batchIdSchema.safeParse((request.params as { batchId?: string }).batchId);
+    const queryResult = resultQuerySchema.safeParse(request.query);
+    if (!batchIdResult.success || !queryResult.success) {
+      return reply.status(400).send({ error: "Invalid batch request", code: "INVALID_BATCH_REQUEST" });
+    }
+    try {
+      const batch = await getGrantBatchFn(
+        database,
+        batchIdResult.data,
+        queryResult.data.page,
+        queryResult.data.limit,
+      );
+      if (!batch) {
+        return reply.status(404).send({ error: "Grant batch not found", code: "GRANT_BATCH_NOT_FOUND" });
+      }
+      return reply.send(batch);
+    } catch (error) {
+      fastify.log.error({ err: error instanceof GrantError ? error.code : "SESSION_GRANT_READ_FAILED" });
+      return sendGrantError(reply, error);
+    }
+  });
+}
