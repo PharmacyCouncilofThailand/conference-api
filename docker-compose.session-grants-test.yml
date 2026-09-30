@@ -61,6 +61,7 @@ services:
       - ./:/workspace/conference-api
       - ../conference-backoffice:/workspace/conference-backoffice
       - ../conference-web:/workspace/conference-web
+      - api_node_modules:/workspace/conference-api/node_modules
       - backoffice_node_modules:/workspace/conference-backoffice/node_modules
 
   web-tools:
