@@ -78,19 +78,21 @@ services:
       - web_node_modules:/workspace/conference-web/node_modules
 
   api-server:
-    image: node:20-alpine
-    working_dir: /workspace/conference-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
     environment:
       NODE_ENV: test
       PORT: "3002"
       DATABASE_URL: postgres://session_grants_test:session_grants_test@postgres:5432/confer_session_grants_runtime_test
       TEST_DATABASE_URL: postgres://session_grants_test:session_grants_test@postgres:5432/confer_session_grants_integration_test
-      ADMIN_SESSION_GRANTS_ENABLED: "false"
+      ADMIN_SESSION_GRANTS_ENABLED: "true"
+      JWT_SECRET: review-only-session-grants-jwt-secret
+      CORS_ORIGIN: http://backoffice-server:3001,http://web-server:3003
+      STRIPE_SECRET_KEY: sk_test_review_only_placeholder
       SESSION_GRANTS_FAKE_MAIL_URL: http://fake-mail:8025
-    command: ["sh", "-lc", "npm run dev"]
-    volumes:
-      - ./:/workspace/conference-api
-      - api_node_modules:/workspace/conference-api/node_modules
+    command: ["node", "dist/index.js"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,7 +107,7 @@ services:
     environment:
       NODE_ENV: test
       NEXT_PUBLIC_API_URL: http://api-server:3002
-    command: ["sh", "-lc", "npm run dev -- --hostname 0.0.0.0"]
+    command: ["sh", "-lc", "npm run dev -- --hostname 0.0.0.0 --webpack"]
     volumes:
       - ../conference-backoffice:/workspace/conference-backoffice
       - backoffice_node_modules:/workspace/conference-backoffice/node_modules
@@ -121,7 +123,7 @@ services:
       NODE_ENV: test
       NEXT_PUBLIC_API_URL: http://api-server:3002
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_session_grants_placeholder
-    command: ["sh", "-lc", "npm run dev -- --hostname 0.0.0.0"]
+    command: ["sh", "-lc", "npm run dev -- --hostname 0.0.0.0 --webpack"]
     volumes:
       - ../conference-web:/workspace/conference-web
       - web_node_modules:/workspace/conference-web/node_modules
