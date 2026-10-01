@@ -149,3 +149,44 @@ Detailed evidence: `docs/superpowers/verification/admin-session-invitations/t11-
 - OPS-01..07 and E2E-01..06 are covered by the combined T11 evidence and prior focused race/mixed/decline/unknown-mail integration gates. Final comprehensive verification remains a separate I-FINAL requirement after T12/final source stabilization.
 
 Next: finish T11 evidence consistency check, then T12 independent review/handoff. No production activation, push, deploy, real email, or real payment.
+
+## Implementation T12 + comprehensive final — completed
+
+- Recovered stale/interrupted task `f32c539f-239c-4469-8c1a-fcb2983e8559` without counting UNKNOWN/interrupted work as PASS. Runtime/process/task evidence showed the old reset attempt was no longer live and a contemporaneous retained reset task had failed before fixture normalization.
+- Read the actual isolated DB fixture before mutation. It was dirty at 48 actual + 2 pending on `INVITE-UI` with 6 invitation rows versus the clean baseline 48 actual + 1 pending / 5 invitation rows.
+- Cleaned only run-owned `inv-review-20261001` synthetic data and performed one recovery setup. Verified clean baseline: 58 synthetic registrations, 5 invitations, 4 pending overall, 48 actual + 1 pending on `INVITE-UI`.
+- Refreshed the private review-token env without committing/logging credentials and added an exact Git ignore rule for that private file.
+- Strengthened clean-fixture Docker browser rerun `43d9ca6b-5b5b-461c-9bfe-07f12a131488` PASS: BOUI-01-05, BOUI-06, BOUI-08-12, PRIS-01-03-06-07-14, PRIS-04, PRIS-05, PRIS-08-12-13.
+- Independent source/security review confirmed strict Bearer credential transport, decision-only PUT body, no-store/no-referrer/noindex behavior, no invitation-token browser storage, fixed-code API error logging, and no raw credential committed.
+- Four-repository `git diff --check` PASS before grouped implementation commit.
+- Final API Docker chain `9b2f4b01-5de7-47c2-9892-4922572b9e01` exit 0: invitation 18/18, legacy/current grants 19/19, legacy migration 4, invitation migration 2, serialized integration 10/10, load500 requested=500/added=500, API TypeScript build PASS.
+- Final Backoffice production build PASS; task-owned focused lint `738f5fb0-959d-457a-8f31-ac8d2836d4fb` exit 0. Five broad `no-explicit-any` errors were proven pre-existing in HEAD.
+- Final PRIS `00a824f1-7a4e-4d9c-972f-dab1f310c2b8` exit 0: 39/39 tests, production build, focused lint PASS.
+- Final conference-web `a6d6e1f4-c749-4f7d-8302-b06f6715ffa1` exit 0: focused entitlement/payment tests 8/8 and production build PASS.
+- Implementation grouped commit 2 created without push:
+  - API `0d591663a02ed9d310388fdb58bee1a198870f0c`
+  - Backoffice `334a96f83531dbdb0975333ca5d6346838cf31d7`
+  - Pris2026 `f870a7db2e0279b441f7d1b25d00b3f2e6ba1e35`
+  - conference-web: no intentional diff, therefore no empty commit.
+
+## Independent Review T00–T12 — completed
+
+- Re-reviewed environment/baseline, migration/schema, policy/token, capacity/readers, create transaction, response transaction, public HTTP/security, mail/recovery, writer/bypass compatibility, Backoffice, PRIS, E2E/operations, untracked files and traceability against final source and fresh Docker evidence.
+- No new product defect remained after T12 credential-hygiene hardening.
+- The review does **not** convert the known historical schema gap into a pass: the authoritative migration chain still does not prove `registrations.attendee_type` or `events.website_url`. Harness-only prerequisites are test evidence only.
+- Production deployment remains a separately authorized future action requiring authoritative migration/provisioning, stable server-only key/origin/CORS configuration, target preflight/activation and provider-level tracking/privacy confirmation as applicable.
+- Review/final evidence is recorded in `docs/superpowers/verification/admin-session-invitations/final-readiness.md`.
+
+## Review FINAL — completed
+
+- Review FINAL reran the complete Docker matrix on the committed product snapshots:
+  - API `0d591663a02ed9d310388fdb58bee1a198870f0c`: `bf1da54c-2ca8-43a9-b272-68838f794694` exit 0.
+  - Backoffice `334a96f83531dbdb0975333ca5d6346838cf31d7`: `4add7e51-b545-4641-a9a2-ca7905d84e50` exit 0.
+  - Pris2026 `f870a7db2e0279b441f7d1b25d00b3f2e6ba1e35`: `f29d33ca-345d-41ac-89e2-3cacb2ac4155` exit 0.
+  - conference-web `4ee1045f7bf670d86ad38eb53eef1a3f27371642`: `f94e37c4-7803-4f16-a9e8-39e73e88282a` exit 0.
+- A new clean synthetic fixture was created for the final browser review and its private token env was refreshed without recording raw credentials.
+- Final browser task `00acba4a-9afe-4ef0-a3cd-001a3dc82a11` exit 0 with all strengthened BOUI/PRIS gate groups PASS.
+- No Review T00-T06 source/evidence diff existed at the first review boundary, so no empty review-group-1 commit is created. The actual review/final evidence diff is committed only at the final review checkpoint.
+- Production deployment readiness remains conditional/blocked on authoritative provisioning for `registrations.attendee_type` and `events.website_url` and production runtime configuration; Docker review PASS does not override that limitation.
+
+Next: commit the actual review/final evidence diff without push, clean run-owned synthetic data/private token env and the dedicated Docker project, reconcile any existing watchdog, and finish the durable goal.
