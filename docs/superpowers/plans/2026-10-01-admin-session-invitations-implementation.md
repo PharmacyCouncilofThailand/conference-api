@@ -1,6 +1,6 @@
 # Admin Session Invitations Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. This is an execution handoff for a future authorized implementation turn, not permission to start now. Do not spawn implementation agents or edit application code while preparing these documents.
+> Execute the approved plan task-by-task using checkbox (`- [ ]`) tracking and the execution policy below. This document is a handoff for a future authorized implementation turn. Preparing or revising it does not authorize application edits, tests, or containers.
 
 **Goal:** Admin invites existing PRIS-2026 registrants to Policy Innovation Workshop, reserves at most 50 seats, emails a scoped token link to Pris2026, and grants access only after explicit acceptance before the session starts.
 
@@ -11,6 +11,8 @@
 **Approved design:** [2026-10-01-admin-session-invitations-design.md](../specs/2026-10-01-admin-session-invitations-design.md)
 
 **Independent review/verification:** [2026-10-01-admin-session-invitations-review-verification.md](2026-10-01-admin-session-invitations-review-verification.md)
+
+**Execution prompt:** [2026-10-01-admin-session-invitations-implementation-prompt.md](2026-10-01-admin-session-invitations-implementation-prompt.md)
 
 **Status:** Planning only, approved design and deadline; no application source, migration, test setup, runtime configuration, production data, or email has been changed/executed by this plan. Checkboxes below describe future work. Engineering code blocks are implementation instructions, not code already applied or test results.
 
@@ -30,6 +32,23 @@
 - Tests/build/lint/E2E run only in isolated Docker test containers, following the existing grant-verification baseline. Git/source inspection may run on host. Do not use real mail/payment endpoints or production credentials.
 - This plan authorizes neither production deployment/migration nor real mail sending. Rehearsal and readiness evidence only until the user explicitly authorizes deployment.
 - Respect current checkout/user edits. Do not create worktrees, reset files, or import old unrelated commit/skill requirements merely because older plans mention them.
+
+## Mandatory execution policy — user update 2026-10-01
+
+This policy replaces any earlier per-task Git commit instruction. Follow the approved design and plan exactly. If requirements, contracts, repository state, or a necessary change conflict with the plan or require confirmation, stop dependent work immediately, summarize the evidence and impact, and ask the user before proceeding. Do not silently redesign, add scope, or weaken gates.
+
+- Use brainstorming to check the approved intent, task scope, dependencies, acceptance criteria, and evidence before and after every task. The existing approved design remains the baseline; ordinary implementation choices already covered by it do not require repeated approval. Use api-design-principles for the approved API contracts without changing them.
+- Use caveman only for chat progress and the final chat summary. Code, plans, findings, evidence, test names, and commit bodies must remain complete and precise. Refer to skills by name without skill paths.
+- Create dedicated isolated Docker test containers for every runtime check: RED/GREEN, unit, integration, migration rehearsal, lint, typecheck, build, smoke, workers, concurrency, recovery, regression, and E2E. The browser and the full application/database/fake-provider stack run inside that project. Host inspection/editing/Git and Docker orchestration are allowed; host test/server runners and shared/live containers are not. Docker unavailable is BLOCKED, never a dependency exception or permission to use host runners.
+- Task states are NOT_STARTED, IN_PROGRESS, PASSED, FAILED, DEFERRED_DEPENDENCY, or BLOCKED. Keep task checkboxes unchecked until every required gate passes. Gate outcomes retain the evidence model in the verification file.
+- Finish one task, run its required tests, fix in-scope errors, and re-test until green before starting the next. Only a proven prerequisite owned by a later planned task permits DEFERRED_DEPENDENCY. Record blocked task/gates, observed error, source evidence, exact prerequisite task, pending checks, and re-test trigger. Do not defer ordinary bugs, scope conflicts, or infrastructure failures.
+- Perform only the planned prerequisite work needed to resolve a deferral. Immediately after that prerequisite passes, re-test all now-unblocked tasks, oldest first, until they pass before starting another task. Record chained dependencies explicitly. Never skip, delete, weaken, or mark expected-failure tests to manufacture a pass.
+- Task 1–7 = T00–T06; Task 8–13 = T07–T12. The default commit checkpoints are these two groups. At a checkpoint, all included tasks and now-due deferred tests must pass. Create a title and detailed body per changed repository, explicitly stage only intended files/hunks, and verify the coherent snapshot in Docker. Continue after the first checkpoint; never push.
+- A documented adjustment to coherent groups of six or seven PASSED tasks is allowed when real dependencies make the default boundary invalid. Do not claim a snapshot passes using an unstaged prerequisite. If no valid grouping can meet this rule, stop and ask the user. Do not create empty commits in unchanged repositories.
+- After the final task passes, independently re-run the complete detailed verification sequence, all required gate groups, and regression coverage at the final source state. Earlier task results do not replace this final run. Any runtime-relevant fix invalidates affected evidence and requires affected re-tests plus another comprehensive final run.
+- Record exact Docker commands, exit codes, source revisions/diff identity, task/gate results, sanitized evidence, dependency resolutions, and grouped commit title/body/hash. A documentation-only evidence update after testing must be identified as such; record final commit hashes without pretending tests ran on a different source state.
+- During a review-only run, apply the same T00–T12 ownership map to review checkpoints. Verify source and live behavior directly; do not count document sections or gate rows as additional implementation tasks. Fix only in-scope defects under review authorization; if substantial planned implementation is missing, stop and report it rather than silently implementing the whole feature.
+- No production operations, real attendee mail/payment calls, pushes, or publication. Writing these documents creates no runtime proof or authorization to start implementation.
 
 ## 0. Repository roots, verified facts, and dependency map
 
@@ -55,7 +74,7 @@ Existing facts that constrain implementation:
 
 Sequence: T00 -> T01 -> T02 -> T03 -> T04 -> T05 -> T06 -> T07 -> T08 -> T09 -> T10 -> T11 -> T12. T07 consumes T04–T06, T09 consumes T06/T08, T10 consumes T05/T02. Do not use an incomplete dependency as a reason to silently skip a final gate.
 
-Each task contains an independently reviewable deliverable. Implement steps in small edits, prove the local RED then GREEN behavior, record gate IDs from the review file, and commit the completed deliverable in the repository that changed. A docs-only turn must not run these task commands.
+Each task contains an independently reviewable deliverable. Implement steps in small edits, prove RED then GREEN in Docker, and record gate IDs from the review file. Commit completed work at the grouped checkpoints below, not after each task. A docs-only turn must not run these task commands.
 
 ## 1. File map and ownership
 
@@ -323,7 +342,7 @@ Recorder has no host port/public authentication: the isolation boundary is the d
 - [ ] Add test-only fake transport selection to A12 factory when NODE_ENV=test and SESSION_GRANTS_FAKE_MAIL_URL points to the Compose fake-mail origin. Normal production branch remains sendNipaMailHtml. Reject a fake URL in non-test environment. The fake transport must classify pre-send rejection as failed and after-capture timeout as unknown using the existing failure contract.
 - [ ] Create/reuse migration bootstrap through the current guarded manifest. Existing migration suite's pre-0031 tests must continue to apply exactly their prior schema. Bootstrap the dedicated integration database, then clone it to the distinct runtime test database for browser fixtures after all migrations apply. Do not substitute db:push for migration rehearsal.
 - [ ] Run ENV commands from verification section 3, install locked dependencies in containers, compile baseline, and run existing grant tests. Record old errors rather than expand scope to fix unrelated failures.
-- [ ] Commit test-only setup after ENV/BASE gates pass. Suggested title: test: prepare isolated session invitation verification.
+- [ ] Record ENV/BASE results and completed test-only setup for the first grouped commit; do not commit this task alone.
 
 **Boundary:** Until later tasks add tests, these containers are only infrastructure. Real NipaMail credentials are absent and the fake transport is proven active with a captured synthetic message.
 
@@ -386,7 +405,7 @@ CREATE INDEX session_invitations_pending_capacity_idx
 - [ ] Add complete section 2 types, update existing test DTO factories with invitedCount=0 and invitation=null, and define decision body with z.object({decision:z.enum(['accepted','declined'])}).strict(). Do not broaden existing create input.
 - [ ] Extend A30 to leave the latest schema ready only after its original migration checks complete, or expose its existing manifest functions for new migration tests. New migration suite must support lock-timeout rollback, FK/check rejection, legacy preservation, and catalog parity. Run it before service suites, with test-concurrency=1.
 - [ ] Add focused scripts with explicit filenames; the full new suite list is in verification section 3. Do not rely on a Windows shell expanding ** globs.
-- [ ] Run migration/contract RED then GREEN and API compile in containers. Commit: feat: add session invitation schema and contracts.
+- [ ] Run migration/contract RED then GREEN and API compile in containers. Record the schema/contracts deliverable for the first grouped commit.
 
 **Review rule:** DDL above is the concrete target; if catalog inspection finds an unexpected old compound check name, identify it by its expression and add a narrowly named drop to this migration. Do not mask mismatch with blanket IF NOT EXISTS or dynamic dropping of unrelated checks.
 
@@ -501,7 +520,7 @@ export function buildInvitationUrl(rawToken:string,frontendOrigin:string):string
 ```
 
 - [ ] Token tests use a synthetic Buffer.alloc(32,7), verify decrypt round trip, different nonces for identical calls, SHA digest distinct from raw token, tampered tag/version/ciphertext/wrong key/other invitation ID rejection, invalid credential format, and HTTPS/local-origin rules. Assert errors contain no input secret/token.
-- [ ] GREEN both unit files and compile, then commit: feat: add scoped invitation token and deadline policy.
+- [ ] GREEN both unit files and compile; record token/policy completion for the first grouped commit.
 
 ## T03 — Add capacity and read-only invitation reader
 
@@ -543,7 +562,7 @@ FROM sessions s WHERE s.id=$1;
 - [ ] readInvitationCapacity is called only for configured invitation sessions; it throws SESSION_NOT_FOUND for no session and SESSION_INVITATION_CONFIG_ERROR for invalid positive capacity. Use number conversion and safe integer checks before arithmetic. Ungated batch/selector readers use the explicit section 2 null-remaining mapping instead of this validator.
 - [ ] lookupInvitation hashes the credential, selects invitation/registration/session by unique token_hash, obtains current DB clock, computes effective state, and maps only fields in PublicInvitationDto. It performs no UPDATE and never falls back to user login. Return fixed GrantErrors for unavailable/expired states with safe DTO for expired display.
 - [ ] Compare database rows before/after repeated GET-style lookups to prove no usedAt/status/ciphertext/count changes. Accept/decline terminal states remain readable after deadline.
-- [ ] GREEN focused reader/capacity tests, existing grant reader regressions, compile. Commit: feat: add invitation lookup and reservation counts.
+- [ ] GREEN focused reader/capacity tests, existing grant reader regressions, compile. Record lookup/capacity completion for the first grouped commit.
 
 ## T04 — Branch Admin grant creation into atomic invitations
 
@@ -580,7 +599,7 @@ Here itemId/invitationId are randomUUID(), issued is issueInvitationToken(invita
 - [ ] Skipped items retain existing not_applicable semantics. Store invitedCount separately; completedAt is DB time; enforce requested=added+invited+skipped. Do not modify immutable invited outcome on later acceptance.
 - [ ] readBatch joins invitations by grant_item_id and attaches computed metadata. Keep actual count global across pagination; capacity is global for session. History readers get the same state mapping and no credentials.
 - [ ] Concurrency tests use multiple independent guarded DB connections: two Admins/keys same participant -> one pending; two disjoint requests with one seat -> one winner; same key/payload -> same batch and same ciphertext/token hash; mismatch ->409. No duplicate initial mail job.
-- [ ] GREEN all CREATE/CAP gates and old immediate-grant tests; commit: feat: reserve seats with atomic admin session invitations.
+- [ ] GREEN all CREATE/CAP gates and old immediate-grant tests; record creation completion for the first grouped commit.
 
 ## T05 — Implement acceptance, decline, expiry normalization
 
@@ -609,7 +628,7 @@ const entitlementValues = {
 - [ ] closeInactiveInvitations uses the same lock order, updates only effectively inactive pending rows for one session, clears ciphertext, and returns changed count. Worker invokes bounded batches outside its mail-claim transaction; capacity already excludes these rows without cleanup.
 - [ ] Normalize expired/invalid response attempts through a committed closed transition if desired, then return error after commit. Do not persist partial acceptance/decline on any failure. GET remains read-only.
 - [ ] Run controlled accept-vs-decline race, double-accept, accept-vs-expiry/registration cancel, and transaction failure assertions. Confirm pending count falls by one while actual rises by one on acceptance, occupied remains constant.
-- [ ] GREEN RESP gates and compile; commit: feat: finalize invitation responses atomically.
+- [ ] GREEN RESP gates and compile; record atomic-response completion for the first grouped commit.
 
 ## T06 — Expose scoped public API and sanitize request logging
 
@@ -634,7 +653,7 @@ function invitationCredential(header:string|string[]|undefined):string {
 - [ ] Add logger redaction of req.headers.authorization and request serializers that redact token query parameter values for token-bearing routes without exposing alternate raw URL fields. Never log err objects that can contain axios config/headers/html. Preserve useful method/path/status/error-code logging.
 - [ ] Verify CORS accepts Pris2026 configured origin and Authorization header/PUT preflight through existing allowed-origin configuration. Do not enable wildcard CORS or credentials globally for this feature.
 - [ ] Assert POST is unsupported for response (404/405 according to Fastify registration), GET safe, PUT correct200/400/401/409/410/429/500, public accessible when ADMIN_SESSION_GRANTS_ENABLED=false, and no ordinary user session is created.
-- [ ] GREEN HTTP/SEC suites and compile; commit: feat: expose secure public session invitation responses.
+- [ ] GREEN HTTP/SEC suites and compile; re-test due dependencies and all completed T00–T06 gates. When all seven tasks pass, create the first grouped commit with title/body per changed repository, then continue to T07 without pushing.
 
 ## T07 — Extend email template, worker, and retry without duplicate seats
 
@@ -652,7 +671,7 @@ function invitationCredential(header:string|string[]|undefined):string {
 - [ ] Worker runner invokes closeInactiveInvitations on sessions with stale pending invitations in bounded batches even if new grants are disabled; don't busy-loop cleanup. Keep 5s idle poll/700ms mail gap/180s lease/30s configured transport timeout from existing runner. No separate worker/scheduler.
 - [ ] Fake transport tests cover crash before send vs after capture/finalize, invitation answer while send is blocked, key missing/wrong after queue creation, and expired ciphertext removal. Assert no secrets in thrown errors or persisted attempt messages.
 - [ ] Inspect provider request schema/settings for link tracking. If no application setting is supported, record provider-controlled state and make confirmation-page token protection a readiness requirement; don't invent undocumented NipaMail fields.
-- [ ] GREEN MAIL/legacy grant-email suites, runtime worker --once and health gate; commit: feat: deliver and retry durable invitation emails.
+- [ ] GREEN MAIL/legacy grant-email suites, runtime worker --once and health gate; record durable-mail completion for the second grouped commit.
 
 ## T08 — Add Admin readers and prevent reachable entitlement bypasses
 
@@ -676,7 +695,7 @@ const automaticallyLinked = linkedSessions.filter(
 - [ ] Inspect settlement prior snapshots and ticket links. If preflight proves no configured-session paid path exists, preserve settlement code outside automatic-link filtering. If legacy paid snapshot exists, report it as a readiness conflict without losing financial state/access; do not suppress/throw away gateway reconciliation just to satisfy new flow.
 - [ ] Historical migration script must not create new configured-session entitlement when run after rollout; direct attempt gets clear failure before row writes. Preserve old historical entries.
 - [ ] Test every check-in mode pending denied/accepted allowed with normal time window, ticketTypeId nullable, original regCode and source. Actual count/export remains actual, pending count separately labeled. Do not count invitations in actual enrollment helper.
-- [ ] GREEN BYPASS/REG/current readers/payment compatibility test set; commit: fix: enforce invitation acceptance across session access paths.
+- [ ] GREEN BYPASS/REG/current readers/payment compatibility test set; record writer/read compatibility completion for the second grouped commit.
 
 ## T09 — Update Backoffice invitation UI and recovery
 
@@ -702,7 +721,7 @@ const invitationLabels:Record<InvitationStatus,string> = {
 - [ ] Details has a separate invitation history section; pending/declined/expired aren't inserted into accessible sessions UI. After manual refresh, accepted entitlement appears in existing Admin-added group.
 - [ ] Poll only while mail pending/sending; awaiting human answer alone does not keep a timer running. Add manual refresh using existing button. Do not create websockets/background polling.
 - [ ] Use Thai/Bangkok timeZone explicitly in new date labels; preserve dialog focus, row checkbox labels, visible disabled reasons, and accessible table headings/colSpan updates.
-- [ ] Run BO build/lint and API-tsx existing selection test in Docker, then CDP BO walkthrough. Commit in BO only: feat: show session invitation capacity and responses.
+- [ ] Run BO build/lint and API-tsx existing selection test in Docker, then CDP BO walkthrough. Record BO completion for the second grouped checkpoint; commit BO changes in its own repository at that checkpoint.
 
 ## T10 — Add Pris2026 response page and safe navigation
 
@@ -808,7 +827,7 @@ export function shouldRedirectReload(pathname:string):boolean {
 - [ ] Predicate tests cover /, /th, /en/, both localized confirmation paths and trailing slash -> false; ordinary profile route -> true. P08 currently calls router.replace(pathname,{locale:newLocale}) and drops the query. Add a narrow /sessions/confirm branch that carries the existing search query through locale replacement; leave normal links unchanged. Include /sessions/confirm in its existing isLightPage predicate so controls remain readable on the page background. Do not propagate invitation tokens to other destinations.
 - [ ] Merge next.config.ts headers() returning response route pattern /:locale(th|en)/sessions/confirm with Referrer-Policy:no-referrer and Cache-Control:no-store; retain current withNextIntl wrapper. Avoid widening route matcher to every page.
 - [ ] Ensure existing REGISTRATION_OPEN or auth gates never hide this page. No token in localStorage/AuthContext/error telemetry; remove token from outgoing links and browser-generated referrers by header policy.
-- [ ] GREEN helper tests, PRIS build/lint, then full browser verification direct link/reload/language switch/mobile/keyboard/network interruption. Commit in PRIS: feat: add session invitation response page.
+- [ ] GREEN helper tests, PRIS build/lint, then full browser verification direct link/reload/language switch/mobile/keyboard/network interruption. Record PRIS completion for the second grouped checkpoint; commit PRIS changes in its own repository at that checkpoint.
 
 ## T11 — Complete regression, configuration rehearsal, and operator instructions
 
@@ -851,7 +870,7 @@ This SQL intentionally does not decide whether a paid reference is acceptable, v
 - [ ] Verify after acceptance conference-web existing actual entitlement reader sees Admin access; no WEB feature/UI change. Paid ticket amounts/Orders/Payments baseline unchanged.
 - [ ] Run final comprehensive verification command sequence from paired file once after the last feature change. Earlier per-task passes alone do not constitute final readiness.
 - [ ] Record issues as FAILED/BLOCKED with gate/task and exact revision, not skipped/pass. Resolve in owning task and rerun the smallest impacted set, plus comprehensive set if code changed after final run.
-- [ ] Commit execution evidence/test harness updates per changed repo, using descriptive title/body. No push or production rollout.
+- [ ] Record regression/rehearsal evidence for the second grouped checkpoint. No per-task commit, push, or production rollout.
 
 ## T12 — Independent final review and handoff
 
@@ -861,6 +880,7 @@ This SQL intentionally does not decide whether a paid reference is acceptable, v
 - [ ] Cross-reference every approved design section using section 15's traceability in the review file. Verify implemented behavior, not only test names.
 - [ ] Inspect source and untracked files for secrets/temporary token captures/unrelated changes. Confirm docs don't falsely report production migration or email delivery.
 - [ ] Report passed gates, failures/blockers, residual provider tracking/deployment constraints, revisions, and evidence links. Include exact target activation/rollback readiness and expiry boundary.
+- [ ] After T12's gates pass, run the complete detailed Docker verification again at the final source revision, close every deferred dependency, and commit the second group T07–T12 with title/body per changed repository. Repeat final verification if runtime-relevant files change after this run.
 - [ ] Stop after the verified feature is ready for authorized deployment. No automatic production flag activation, mail to real people, payment calls, PR creation, or push is implied.
 
 ## 3. Execution stop conditions and task checkpoints

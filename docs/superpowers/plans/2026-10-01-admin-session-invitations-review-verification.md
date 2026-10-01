@@ -1,6 +1,6 @@
 # Admin Session Invitations — Independent Review and Verification Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. For this verification document, the reviewer checks the implemented result against the approved design independently of the author's summary. No review agent, tests, containers, or application edits are started by writing this file.
+> Track verification with checkbox (`- [ ]`) steps and the execution policy below. Check the implemented result against the approved design independently of the author's summary. Preparing or revising this document does not start tests, containers, or application edits.
 
 **Goal:** Prove the invitation flow reserves no more than 50 seats, grants access only after explicit acceptance before session start, keeps scoped tokens confidential, and preserves existing grants/registration/payment/check-in behavior.
 
@@ -11,6 +11,8 @@
 **Implementation plan:** [2026-10-01-admin-session-invitations-implementation.md](2026-10-01-admin-session-invitations-implementation.md)
 
 **Approved design:** [2026-10-01-admin-session-invitations-design.md](../specs/2026-10-01-admin-session-invitations-design.md)
+
+**Execution prompt:** [2026-10-01-admin-session-invitations-review-verification-prompt.md](2026-10-01-admin-session-invitations-review-verification-prompt.md)
 
 **Status:** Planned verification only. All runtime gates below are UNRUN at document creation. Commands requiring future files run only after those files are implemented in a separately authorized turn. The user explicitly requested two planning files and no application edits.
 
@@ -26,6 +28,23 @@
 - No production DB exports, real attendee PII, production credentials, shared volumes, or host node_modules. Fake transport must be proven, not inferred from an environment variable.
 - Errors/logs/artifacts must not disclose raw invitation tokens, authorization headers, ciphertext keys, or email HTML. Synthetic in-memory captures are allowed only inside the private test harness.
 - No pass from skipped/blocked tests. No claiming that provider accepted mail means inbox delivery or recipient acceptance.
+
+## Mandatory execution policy — user update 2026-10-01
+
+This policy replaces any earlier per-task Git commit instruction. Follow the approved design and plan exactly. If requirements, contracts, repository state, or a necessary change conflict with the plan or require confirmation, stop dependent work immediately, summarize the evidence and impact, and ask the user before proceeding. Do not silently redesign, add scope, or weaken gates.
+
+- Use brainstorming to check the approved intent, task scope, dependencies, acceptance criteria, and evidence before and after every task. The existing approved design remains the baseline; ordinary implementation choices already covered by it do not require repeated approval. Use api-design-principles for the approved API contracts without changing them.
+- Use caveman only for chat progress and the final chat summary. Code, plans, findings, evidence, test names, and commit bodies must remain complete and precise. Refer to skills by name without skill paths.
+- Create dedicated isolated Docker test containers for every runtime check: RED/GREEN, unit, integration, migration rehearsal, lint, typecheck, build, smoke, workers, concurrency, recovery, regression, and E2E. The browser and the full application/database/fake-provider stack run inside that project. Host inspection/editing/Git and Docker orchestration are allowed; host test/server runners and shared/live containers are not. Docker unavailable is BLOCKED, never a dependency exception or permission to use host runners.
+- Task states are NOT_STARTED, IN_PROGRESS, PASSED, FAILED, DEFERRED_DEPENDENCY, or BLOCKED. Keep task checkboxes unchecked until every required gate passes. Gate outcomes retain the evidence model in the verification file.
+- Finish one task, run its required tests, fix in-scope errors, and re-test until green before starting the next. Only a proven prerequisite owned by a later planned task permits DEFERRED_DEPENDENCY. Record blocked task/gates, observed error, source evidence, exact prerequisite task, pending checks, and re-test trigger. Do not defer ordinary bugs, scope conflicts, or infrastructure failures.
+- Perform only the planned prerequisite work needed to resolve a deferral. Immediately after that prerequisite passes, re-test all now-unblocked tasks, oldest first, until they pass before starting another task. Record chained dependencies explicitly. Never skip, delete, weaken, or mark expected-failure tests to manufacture a pass.
+- Task 1–7 = T00–T06; Task 8–13 = T07–T12. The default commit checkpoints are these two groups. At a checkpoint, all included tasks and now-due deferred tests must pass. Create a title and detailed body per changed repository, explicitly stage only intended files/hunks, and verify the coherent snapshot in Docker. Continue after the first checkpoint; never push.
+- A documented adjustment to coherent groups of six or seven PASSED tasks is allowed when real dependencies make the default boundary invalid. Do not claim a snapshot passes using an unstaged prerequisite. If no valid grouping can meet this rule, stop and ask the user. Do not create empty commits in unchanged repositories.
+- After the final task passes, independently re-run the complete detailed verification sequence, all required gate groups, and regression coverage at the final source state. Earlier task results do not replace this final run. Any runtime-relevant fix invalidates affected evidence and requires affected re-tests plus another comprehensive final run.
+- Record exact Docker commands, exit codes, source revisions/diff identity, task/gate results, sanitized evidence, dependency resolutions, and grouped commit title/body/hash. A documentation-only evidence update after testing must be identified as such; record final commit hashes without pretending tests ran on a different source state.
+- During a review-only run, apply the same T00–T12 ownership map to review checkpoints. Verify source and live behavior directly; do not count document sections or gate rows as additional implementation tasks. Fix only in-scope defects under review authorization; if substantial planned implementation is missing, stop and report it rather than silently implementing the whole feature.
+- No production operations, real attendee mail/payment calls, pushes, or publication. Writing these documents creates no runtime proof or authorization to start implementation.
 
 ## 1. Evidence model and completion rules
 
@@ -245,7 +264,7 @@ git -C Pris2026 diff --check
 git -C Pris2026 status --short
 ```
 
-Inspect untracked files separately, since diff does not include them. Commit only intended source/tests/sanitized evidence in the repository where they live. No push or rollout. Retain test volumes until evidence is reviewed; normal compose down stops the dedicated project without deleting its volumes.
+Inspect untracked files separately, since diff does not include them. Commit only intended source/tests/sanitized evidence in their owning repository at the grouped T00–T06 and T07–T12 checkpoints, with title/body and the mandatory execution policy's snapshot proof. After T12 passes, run the complete detailed verification again before the final checkpoint commit. No push or rollout. Retain test volumes until evidence is reviewed; normal compose down stops the dedicated project without deleting its volumes.
 
 ## 4. Environment and baseline gates
 
