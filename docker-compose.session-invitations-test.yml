@@ -1,0 +1,77 @@
+services:
+  fake-mail:
+    command: ["node", "/workspace/conference-api/review/session-invitations-fake-mail.mjs"]
+    environment:
+      NODE_ENV: test
+    volumes:
+      - ./:/workspace/conference-api
+
+  api-tools:
+    environment:
+      SESSION_INVITATION_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+      SESSION_GRANTS_FAKE_MAIL_URL: http://fake-mail:8025
+    volumes:
+      - ../Pris2026:/workspace/Pris2026
+      - pris_node_modules:/workspace/Pris2026/node_modules
+
+  backoffice-tools:
+    volumes:
+      - ../Pris2026:/workspace/Pris2026
+      - pris_node_modules:/workspace/Pris2026/node_modules
+
+  web-tools:
+    volumes:
+      - ../Pris2026:/workspace/Pris2026
+      - pris_node_modules:/workspace/Pris2026/node_modules
+
+  api-server:
+    environment:
+      SESSION_INVITATION_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+      CORS_ORIGIN: http://backoffice-server:3001,http://web-server:3003,http://pris-server:3004
+    volumes:
+      - ../Pris2026:/workspace/Pris2026
+      - pris_node_modules:/workspace/Pris2026/node_modules
+
+  worker:
+    environment:
+      SESSION_INVITATION_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+    volumes:
+      - ../Pris2026:/workspace/Pris2026
+      - pris_node_modules:/workspace/Pris2026/node_modules
+
+  browser:
+    env_file:
+      - ./review/session-invitations-review-tokens.env
+    environment:
+      BASE_URL_PRIS: http://pris-server:3004
+    volumes:
+      - ../Pris2026:/workspace/Pris2026
+      - pris_node_modules:/workspace/Pris2026/node_modules
+
+  pris-tools:
+    image: node:20-alpine
+    working_dir: /workspace/Pris2026
+    environment:
+      NODE_ENV: test
+      NEXT_PUBLIC_API_URL: http://api-server:3002
+    volumes:
+      - ../Pris2026:/workspace/Pris2026
+      - pris_node_modules:/workspace/Pris2026/node_modules
+
+  pris-server:
+    image: node:20-alpine
+    working_dir: /workspace/Pris2026
+    environment:
+      NODE_ENV: test
+      NEXT_PUBLIC_API_URL: http://api-server:3002
+    command: ["sh", "-lc", "./node_modules/.bin/next dev -H 0.0.0.0 -p 3004 --webpack"]
+    volumes:
+      - ../Pris2026:/workspace/Pris2026
+      - pris_node_modules:/workspace/Pris2026/node_modules
+    depends_on:
+      - api-server
+    expose:
+      - "3004"
+
+volumes:
+  pris_node_modules:

@@ -4,11 +4,20 @@ export const registrationListSchema = z.object({
     page: z.coerce.number().min(1).default(1),
     limit: z.coerce.number().min(1).max(1000).default(10),
     search: z.string().optional(),
-    eventId: z.coerce.number().optional(),
+    eventId: z.coerce.number().int().positive().optional(),
+    sessionId: z.coerce.number().int().positive().optional(),
     promoCodeId: z.coerce.number().int().positive().optional(),
     status: z.enum(['confirmed', 'cancelled']).optional(),
     ticketTypeId: z.coerce.number().optional(),
     source: z.enum(['purchase', 'manual', 'free', 'quick']).optional(),
+}).superRefine((value, context) => {
+    if (value.sessionId && !value.eventId) {
+        context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['eventId'],
+            message: 'eventId is required when sessionId is provided',
+        });
+    }
 });
 
 export const updateRegistrationSchema = z.object({

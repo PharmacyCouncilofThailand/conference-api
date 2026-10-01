@@ -33,6 +33,11 @@ authoritative word counter is unavailable.
 | `npm run jobs:team-registrations:prod` | Run the compiled Team Registration worker |
 | `npm run jobs:team-registrations:prod:once` | Run one compiled worker cycle |
 | `npm run jobs:team-registrations:prod:health` | Check the compiled worker heartbeat |
+| `npm run test:session-grants` | Run Admin Session Grants unit/contract tests without DB/provider |
+| `npm run test:session-grants:integration` | Run guarded Admin Session Grants integration tests against `TEST_DATABASE_URL` |
+| `npm run jobs:session-grants:prod` | Run the compiled Session Grant email worker |
+| `npm run jobs:session-grants:prod:once` | Run one compiled Session Grant worker claim cycle |
+| `npm run jobs:session-grants:prod:health` | Inspect Session Grant backlog/expired-lease health |
 
 ## Environment Variables
 
@@ -87,6 +92,27 @@ payment retry migrations are installed, the worker is healthy, and staging has
 verified retry, winner, duplicate-payment, refund, and expiry behavior. Full
 preflight, deploy, rollback, and duplicate-refund procedures are in
 [`sql/team-registration-setup/README.md`](sql/team-registration-setup/README.md).
+
+## Admin Session Grant email operations
+
+Admin Session Grant email delivery is a separate durable worker process. Build the
+same API image, then run `npm run jobs:session-grants:prod` under the deployment's
+process/container supervisor with `SERVICE_ROLE=session-grant-worker`. The API
+must remain a separate process; API uptime is not worker-health evidence.
+
+The worker claims one email at a time. While work exists it waits 700 ms between
+claims; an empty queue is polled every 5 seconds. `ADMIN_SESSION_GRANTS_ENABLED`
+must be `true` for new sends. `SESSION_GRANT_EMAIL_TIMEOUT_MS` defaults to 30000.
+SIGTERM/SIGINT stops new claims after the current provider call returns, then the
+database connection closes. A replacement worker uses the durable lease/attempt
+state; it must not blindly replay an item left in `sending`.
+
+Use `npm run jobs:session-grants:prod:health` to inspect pending count, sending
+count, unknown count, oldest pending age, and expired sending leases. A non-zero
+expired-lease count makes the health command fail. Process supervision must also
+alert when the worker process/container itself is stopped. Provider outage does
+not roll back already committed grants; inspect durable attempts before retrying,
+and require explicit acknowledgement before retrying an `unknown` delivery.
 
 ## Project Structure
 

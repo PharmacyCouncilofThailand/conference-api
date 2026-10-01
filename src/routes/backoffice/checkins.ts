@@ -60,6 +60,8 @@ export default async function (fastify: FastifyInstance) {
                     university: users.university,
                     institution: users.institution,
                     ticketName: ticketTypes.name,
+                    source: registrationSessions.source,
+                    addedAt: registrationSessions.createdAt,
                     sessionName: sessions.sessionName,
                     eventName: events.eventName,
                     scannedBy: {
@@ -229,13 +231,40 @@ export default async function (fastify: FastifyInstance) {
             // Find registration with all linked sessions
             const registration = await db.query.registrations.findFirst({
                 where: ilike(registrations.regCode, regCode),
+                columns: {
+                    id: true,
+                    regCode: true,
+                    status: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                },
                 with: {
-                    event: true,
-                    ticketType: true,
+                    event: {
+                        columns: { eventName: true },
+                    },
+                    ticketType: {
+                        columns: { name: true },
+                    },
                     registrationSessions: {
+                        columns: {
+                            id: true,
+                            sessionId: true,
+                            checkedInAt: true,
+                            source: true,
+                        },
                         with: {
-                            session: true,
-                            ticketType: true,
+                            session: {
+                                columns: {
+                                    sessionName: true,
+                                    sessionType: true,
+                                    startTime: true,
+                                    endTime: true,
+                                },
+                            },
+                            ticketType: {
+                                columns: { name: true },
+                            },
                         },
                     },
                 }
@@ -329,7 +358,8 @@ export default async function (fastify: FastifyInstance) {
                     checkedInSession: {
                         sessionId: regSession.sessionId,
                         sessionName: (regSession as any).session?.sessionName,
-                        ticketName: (regSession as any).ticketType?.name,
+                        ticketName: (regSession as any).ticketType?.name ?? null,
+                        source: regSession.source,
                     },
                     registration: {
                         id: registration.id,
@@ -474,7 +504,8 @@ export default async function (fastify: FastifyInstance) {
                     checkedInSession: {
                         sessionId: regSession.sessionId,
                         sessionName: (regSession as any).session?.sessionName,
-                        ticketName: (regSession as any).ticketType?.name,
+                        ticketName: (regSession as any).ticketType?.name ?? null,
+                        source: regSession.source,
                     },
                     registration: {
                         id: registration.id,
@@ -504,7 +535,8 @@ export default async function (fastify: FastifyInstance) {
                     sessionId: rs.sessionId,
                     sessionName: rs.session?.sessionName,
                     sessionType: rs.session?.sessionType,
-                    ticketName: rs.ticketType?.name,
+                    ticketName: rs.ticketType?.name ?? null,
+                    source: rs.source,
                     checkedInAt: rs.checkedInAt,
                 })),
             });

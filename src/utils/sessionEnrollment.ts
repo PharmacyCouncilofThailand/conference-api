@@ -87,6 +87,7 @@ export async function validateOptionalSessionSelections(
       id: sessions.id,
       eventId: sessions.eventId,
       requiresOptIn: sessions.requiresOptIn,
+      adminGrantRequiresConfirmation: sessions.adminGrantRequiresConfirmation,
       maxCapacity: sessions.maxCapacity,
       isActive: sessions.isActive,
       sessionName: sessions.sessionName,
@@ -108,6 +109,13 @@ export async function validateOptionalSessionSelections(
   for (const session of sessionRows) {
     if (!session.isActive) {
       return { ok: false, error: `Session "${session.sessionName}" is not available`, code: "SESSION_INACTIVE" };
+    }
+    if (session.adminGrantRequiresConfirmation) {
+      return {
+        ok: false,
+        error: `Session "${session.sessionName}" requires invitation acceptance`,
+        code: "SESSION_INVITATION_REQUIRED",
+      };
     }
     if (!session.requiresOptIn) {
       return {
@@ -135,6 +143,7 @@ export async function enrichSessionsWithEnrollment(
   sessionList: Array<{
     id: number;
     requiresOptIn?: boolean | null;
+    adminGrantRequiresConfirmation?: boolean | null;
     maxCapacity?: number | null;
     [key: string]: unknown;
   }>

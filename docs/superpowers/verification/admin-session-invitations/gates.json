@@ -1,0 +1,203 @@
+{
+  "updatedAt": "2026-10-02",
+  "eventOriginDelta": {
+    "date": "2026-10-02",
+    "status": "PASS",
+    "parentRevision": "eecbdeb8db7fd85a0a010d8bf44f73408eb44e97",
+    "runtimeDiffIdentity": "39bf1edecb0441c1cc99be7a9cd3d2e205f19c78",
+    "tasks": { "1": "PASSED", "2": "PASSED", "3": "PASSED", "4": "PASSED" },
+    "dueDependencies": [],
+    "comprehensiveFinal": {
+      "status": "PASS",
+      "project": "session-invitations-test",
+      "composeFiles": ["docker-compose.session-grants-test.yml", "docker-compose.session-invitations-test.yml"],
+      "apiCommand": "run --rm api-tools sh -lc './node_modules/.bin/tsx --test src/modules/session-grants/migration.integration.test.ts && ./node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitation-migration.integration.test.ts && ./node_modules/.bin/tsx --test src/modules/session-grants/invitation-token.test.ts && ./node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitations.integration.test.ts src/modules/session-grants/service.integration.test.ts && ./node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitation-email.integration.test.ts && npm run test:session-invitations && npm run test:session-invitations:integration && npm run test:session-grants && npm run build'",
+      "apiExitCode": 0,
+      "tokenTests": 5,
+      "creationServiceTests": 5,
+      "emailTests": 8,
+      "invitationUnitTests": 19,
+      "migrationTests": 4,
+      "invitationMigrationTests": 2,
+      "serializedIntegrationTests": 18,
+      "grantUnitTests": 19,
+      "typescriptBuild": "PASS",
+      "runtimeCommands": [
+        "exec -T browser node /workspace/conference-api/review/session-invitations-review-e2e.mjs",
+        "run --rm worker sh -lc 'ADMIN_SESSION_GRANTS_ENABLED=true ./node_modules/.bin/tsx src/modules/session-grants/jobs-runner.ts --once'",
+        "exec -T browser node /workspace/conference-api/review/session-invitations-e2e-accept-latest.mjs",
+        "run --rm worker sh -lc './node_modules/.bin/tsx src/modules/session-grants/jobs-runner.ts --healthcheck'"
+      ],
+      "runtimeExitCodes": [0, 0, 0, 0],
+      "browserGateGroups": 7,
+      "fakeWorker": { "claimed": 1, "sent": 1, "failed": 0, "unknown": 0 },
+      "publicOrigin": "http://localhost:3004",
+      "publicPath": "/th/sessions/confirm",
+      "acceptedCandidateEntitlements": 1,
+      "workerBacklog": 0,
+      "obsoleteRuntimeEnv": "ABSENT",
+      "otherRepositoryDiffs": "CLEAN_AFTER_AUTHORIZED_GENERATED_CONFIG_RESTORATION",
+      "evidence": "final-readiness.md section 13 contains exact commands, guarded fresh-state preparation, observed assertions, historical failures and scope closure."
+    },
+    "productionOperations": "NONE",
+    "productionBlockers": [
+      "Close authoritative events.website_url migration/provisioning gap and existing historical prerequisites",
+      "Set canonical HTTPS root for production Event PRIS-2026",
+      "Provision stable server-only SESSION_INVITATION_ENCRYPTION_KEY in API and worker",
+      "Include Event website origin in API CORS_ORIGIN",
+      "Point Pris2026 NEXT_PUBLIC_API_URL to deployed API"
+    ],
+    "productionPrisFrontendUrlRequired": false
+  },
+  "gates": {
+    "ENV-01": {
+      "status": "PASS",
+      "evidence": "Docker 29.7.2; Compose 5.5.1"
+    },
+    "ENV-02": {
+      "status": "PASS",
+      "evidence": "Persistent isolated project session-invitations-test; no baseline collision; distinct project network/volumes"
+    },
+    "ENV-03": {
+      "status": "PASS",
+      "evidence": "Four lockfile installs PASS in project-owned node_modules volumes; distinct integration DB provisioned"
+    },
+    "ENV-04": {
+      "status": "PASS",
+      "evidence": "Private fake recorder captured one synthetic message through selected transport; production fake URL rejected"
+    },
+    "ENV-05": {
+      "status": "PASS",
+      "evidence": "Docker-only runtime verification; no real NipaMail/payment/provider call"
+    },
+    "BASE-01": {
+      "status": "PASS_WITH_BASELINE_LIMITATIONS",
+      "evidence": "API/BO/PRIS/WEB builds PASS. BO and PRIS repo-wide lint failures cataloged before invitation feature UI edits."
+    },
+    "BASE-02": {
+      "status": "PASS",
+      "evidence": "Existing session-grants unit and integration baseline PASS"
+    },
+    "BASE-03": {
+      "status": "PASS",
+      "evidence": "Production registration_sessions writer inventory recorded in writer-inventory.md"
+    },
+    "MIG-01": {
+      "status": "PASS",
+      "evidence": "0031->0032 clean apply; structural flag defaults false; historical batch preserved"
+    },
+    "MIG-02": {
+      "status": "PASS",
+      "evidence": "0031 duplicate/preflight behavior preserved by preceding migration suite"
+    },
+    "MIG-03": {
+      "status": "PASS",
+      "evidence": "Existing entitlement uniqueness/FK behavior preserved; 0032 adds NO ACTION invitation FKs"
+    },
+    "MIG-04": {
+      "status": "PASS",
+      "evidence": "session_invitations status/lifecycle/check/FK rejection exercised"
+    },
+    "MIG-05": {
+      "status": "PASS",
+      "evidence": "0032 lock timeout rolls back with no partial flag/count/table; succeeds after release"
+    },
+    "MIG-06": {
+      "status": "PASS",
+      "evidence": "Historical completed added/skipped batch remains valid with invited_count=0"
+    },
+    "MIG-07": {
+      "status": "PASS",
+      "evidence": "Catalog check names inspected; only exact historical outcome/completion checks dropped"
+    },
+    "DTO-01": {
+      "status": "PASS",
+      "evidence": "Stable invitation types/count fields/strict decision schema compiled; ungated old grant defaults retained"
+    },
+    "POL-01": {
+      "status": "PASS",
+      "evidence": "Effective deadline is min(snapshot expiry,current session start); exact deadline is expired."
+    },
+    "POL-02": {
+      "status": "PASS",
+      "evidence": "Accepted/declined terminal states remain terminal after deadline."
+    },
+    "POL-03": {
+      "status": "PASS",
+      "evidence": "Inactive session, cancelled registration, or event mismatch revokes pending invitation before deadline."
+    },
+    "POL-04": {
+      "status": "PASS",
+      "evidence": "Moving session start later never extends stored expiry snapshot; malformed dates fail closed."
+    },
+    "POL-05": {
+      "status": "PASS_PARTIAL",
+      "evidence": "Pure policy exact-boundary behavior proven in T02; database mutation semantics remain T05."
+    },
+    "POL-06": {
+      "status": "PASS_PARTIAL",
+      "evidence": "participantKey user/registration identity semantics proven in T02; database sibling enforcement remains T04/T05."
+    },
+    "SEC-01": {
+      "status": "PASS",
+      "evidence": "Invitation credential is 32 random bytes encoded as exactly 64 lowercase hex and persisted identifier is SHA-256 hash."
+    },
+    "SEC-02": {
+      "status": "PASS",
+      "evidence": "AES-256-GCM envelope uses 12-byte nonce, 16-byte tag and invitation ID AAD; tamper/wrong-key/wrong-ID tests fail closed."
+    },
+    "SEC-03": {
+      "status": "PASS",
+      "evidence": "SESSION_INVITATION_ENCRYPTION_KEY requires exact canonical base64 encoding of 32 bytes."
+    },
+    "SEC-04": {
+      "status": "PASS",
+      "historicalEvidence": "PRIS_FRONTEND_URL requires trusted HTTPS origin in production; localhost HTTP only outside production; credentials/path/query/hash rejected.",
+      "evidence": "2026-10-02 Event-origin delta: events.website_url is validated at creation and normalized into durable responseOrigin. Production HTTPS root and local-only non-production HTTP rules, safe errors, immutable retry origin and invalid-snapshot no-send behavior passed focused Docker token/creation/email checks. See final-readiness.md section 13 for source identities and commands."
+    },
+    "SEC-05": {
+      "status": "PASS",
+      "evidence": "Token/config error messages verified not to contain raw token or encryption key; API build PASS."
+    },
+    "CAP-01": {
+      "status": "PASS",
+      "evidence": "Configured capacity fixture: 30 actual + 15 valid pending / capacity 50 => occupied 45, remaining 5."
+    },
+    "CAP-02": {
+      "status": "PASS",
+      "evidence": "Expired pending invitation remains stored but consumes no reservation; read-only lookup/capacity performs no normalization."
+    },
+    "CAP-03": {
+      "status": "PASS",
+      "evidence": "Pending sibling of same-user existing entitlement contributes zero reservation; legacy actual entitlement retained."
+    },
+    "READ-01": {
+      "status": "PASS",
+      "evidence": "Repeated lookup returns identical DTO and leaves status/ciphertext/respondedAt/closedAt unchanged."
+    },
+    "READ-02": {
+      "status": "PASS",
+      "evidence": "Malformed credentials fail format validation and unknown valid-format hash returns uniform 401 INVALID_INVITATION_TOKEN."
+    },
+    "READ-03": {
+      "status": "PASS",
+      "evidence": "PublicInvitationDto exposes only invitation/status/deadline/display first name/minimal session summary."
+    },
+    "READ-04": {
+      "status": "PASS_PARTIAL",
+      "evidence": "Public lookup contains no token/ciphertext; batch/history invitation metadata join remains T04."
+    },
+    "READ-05": {
+      "status": "PASS",
+      "evidence": "Legacy/null-ticket entitlement reader regression suite remains PASS in full integration chain."
+    },
+    "READ-06": {
+      "status": "PASS",
+      "evidence": "Cancelled registration maps pending invitation to 409 REGISTRATION_NOT_CONFIRMED without DB mutation."
+    },
+    "SEC-06": {
+      "status": "PASS_PARTIAL",
+      "evidence": "At-rest inspection proves token_hash != raw token and token_ciphertext JSON excludes raw token; route/log proof remains T06."
+    }
+  }
+}

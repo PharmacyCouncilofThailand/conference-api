@@ -163,7 +163,7 @@ test("proves free checkout atomicity, promo concurrency, and idempotent settleme
     assert.equal(happyRow.usage_status, "used");
     assert.equal(Number(happyRow.used_count), 1);
     assert.equal(happyRow.registration_status, "confirmed");
-    assert.equal(happyRow.promo_code, happy.promoCode);
+    assert.equal(happyRow.promo_code, happy.promoCode.toUpperCase());
     assert.equal(happyRow.registration_source, "free");
     assert.equal(Number(happyRow.sold_count), 1);
     assert.ok(String(happyRow.reg_code).length > 0);

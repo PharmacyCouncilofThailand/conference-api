@@ -3,6 +3,7 @@ import { db } from "../../database/index.js";
 import {
     registrations, registrationSessions, ticketTypes, ticketSessions,
     events, sessions, users, orders, staffEventAssignments, backofficeUsers,
+    sessionInvitations, registrationSessionGrantItems,
 } from "../../database/schema.js";
 import {
     registrationListSchema, updateRegistrationSchema,
@@ -10,6 +11,12 @@ import {
     batchManualRegistrationSchema, checkRegisteredUsersSchema,
 } from "../../schemas/registrations.schema.js";
 import { eq, desc, ilike, and, count, sql, or, inArray, exists } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import { registrationBlock, sessionBlock } from "../../modules/session-grants/policy.js";
+import { effectiveDeadline, effectiveInvitationStatus } from "../../modules/session-grants/invitation-policy.js";
+import type { InvitationStatus } from "../../modules/session-grants/types.js";
+
+const registrationSessionGrantActors = alias(backofficeUsers, "registration_session_grant_actors");
 
 function generateRegCode(): string {
     const ts = Date.now().toString(36).toUpperCase();
@@ -25,13 +32,46 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { page, limit, search, eventId, promoCodeId, status, ticketTypeId, source } = queryResult.data;
+        const { page, limit, search, eventId, sessionId, promoCodeId, status, ticketTypeId, source } = queryResult.data;
         const offset = (page - 1) * limit;
 
         // Get user from request (set by auth middleware)
         const user = (request as any).user;
 
         try {
+            let grantSession: {
+                id: number;
+                eventId: number;
+                isActive: boolean;
+                startTime: Date;
+                endTime: Date;
+                adminGrantRequiresConfirmation: boolean;
+            } | null = null;
+            let grantServerNow: Date | null = null;
+            if (sessionId) {
+                if (user?.role !== "admin") {
+                    return reply.status(403).send({ error: "Admin access required" });
+                }
+                const [session] = await db
+                    .select({
+                        id: sessions.id,
+                        eventId: sessions.eventId,
+                        isActive: sessions.isActive,
+                        startTime: sessions.startTime,
+                        endTime: sessions.endTime,
+                        adminGrantRequiresConfirmation: sessions.adminGrantRequiresConfirmation,
+                    })
+                    .from(sessions)
+                    .where(and(eq(sessions.id, sessionId), eq(sessions.eventId, eventId!)))
+                    .limit(1);
+                if (!session) {
+                    return reply.status(400).send({ error: "Session does not belong to the requested event" });
+                }
+                const [{ now: rawNow }] = await db.execute<{ now: Date | string }>(sql`SELECT clock_timestamp() AS now`);
+                grantServerNow = rawNow instanceof Date ? rawNow : new Date(rawNow);
+                grantSession = session;
+            }
+
             const conditions = [];
 
             // If user is not admin, filter by assigned events only
@@ -101,6 +141,7 @@ export default async function (fastify: FastifyInstance) {
             const registrationList = await db
                 .select({
                     id: registrations.id,
+                    userId: registrations.userId,
                     regCode: registrations.regCode,
                     firstName: registrations.firstName,
                     lastName: registrations.lastName,
@@ -112,6 +153,17 @@ export default async function (fastify: FastifyInstance) {
                     eventCode: events.eventCode,
                     source: registrations.source,
                     promoCode: orders.promoCode,
+                    ...(sessionId ? {
+                        hasSession: exists(
+                            db
+                                .select({ id: registrationSessions.id })
+                                .from(registrationSessions)
+                                .where(and(
+                                    eq(registrationSessions.registrationId, registrations.id),
+                                    eq(registrationSessions.sessionId, sessionId),
+                                )),
+                        ),
+                    } : {}),
                     addedNote: registrations.addedNote,
                     addedByFirstName: backofficeUsers.firstName,
                     addedByLastName: backofficeUsers.lastName,
@@ -126,8 +178,125 @@ export default async function (fastify: FastifyInstance) {
                 .limit(limit)
                 .offset(offset);
 
+            let registrationResponse = registrationList;
+            if (sessionId && grantSession && grantServerNow) {
+                const pageIds = registrationList.map((row) => row.id);
+                const pageUserIds = [
+                    ...new Set(
+                        registrationList
+                            .map((row) => row.userId)
+                            .filter((value): value is number => value !== null),
+                    ),
+                ];
+                const participantScope = pageUserIds.length > 0
+                    ? or(
+                        inArray(registrations.id, pageIds),
+                        inArray(registrations.userId, pageUserIds),
+                    )
+                    : inArray(registrations.id, pageIds);
+
+                const [actualRows, pendingRows] = pageIds.length > 0
+                    ? await Promise.all([
+                        db
+                            .select({
+                                registrationId: registrations.id,
+                                userId: registrations.userId,
+                            })
+                            .from(registrationSessions)
+                            .innerJoin(
+                                registrations,
+                                eq(registrationSessions.registrationId, registrations.id),
+                            )
+                            .where(and(
+                                eq(registrationSessions.sessionId, sessionId),
+                                eq(registrations.eventId, grantSession.eventId),
+                                eq(registrations.status, "confirmed"),
+                                participantScope,
+                            )),
+                        db
+                            .select({
+                                registrationId: registrations.id,
+                                userId: registrations.userId,
+                                expiresAt: sessionInvitations.expiresAt,
+                            })
+                            .from(sessionInvitations)
+                            .innerJoin(
+                                registrations,
+                                eq(sessionInvitations.registrationId, registrations.id),
+                            )
+                            .where(and(
+                                eq(sessionInvitations.sessionId, sessionId),
+                                eq(sessionInvitations.status, "pending"),
+                                eq(registrations.eventId, grantSession.eventId),
+                                eq(registrations.status, "confirmed"),
+                                participantScope,
+                            )),
+                    ])
+                    : [[], []];
+
+                const actualRegistrationIds = new Set(
+                    actualRows.map((row) => row.registrationId),
+                );
+                const actualUserIds = new Set(
+                    actualRows
+                        .map((row) => row.userId)
+                        .filter((value): value is number => value !== null),
+                );
+                const pendingRegistrationIds = new Set<number>();
+                const pendingUserIds = new Set<number>();
+                if (
+                    grantSession.isActive &&
+                    grantSession.startTime.getTime() > grantServerNow.getTime()
+                ) {
+                    for (const row of pendingRows) {
+                        if (row.expiresAt.getTime() <= grantServerNow.getTime()) continue;
+                        pendingRegistrationIds.add(row.registrationId);
+                        if (row.userId !== null) pendingUserIds.add(row.userId);
+                    }
+                }
+
+                const sessionDisabledReason =
+                    grantSession.adminGrantRequiresConfirmation
+                        ? !grantSession.isActive
+                            ? "SESSION_INACTIVE"
+                            : grantSession.startTime.getTime() <= grantServerNow.getTime()
+                                ? "SESSION_RESPONSE_CLOSED"
+                                : null
+                        : sessionBlock(grantSession, grantServerNow);
+
+                registrationResponse = registrationList.map((row) => {
+                    const hasSession =
+                        "hasSession" in row ? Boolean(row.hasSession) : false;
+                    const participantHasSession =
+                        actualRegistrationIds.has(row.id) ||
+                        (row.userId !== null && actualUserIds.has(row.userId));
+                    const participantHasInvitation =
+                        pendingRegistrationIds.has(row.id) ||
+                        (row.userId !== null && pendingUserIds.has(row.userId));
+                    const disabledReason =
+                        sessionDisabledReason ??
+                        registrationBlock(
+                            {
+                                eventId: grantSession.eventId,
+                                status: row.status,
+                            },
+                            grantSession.eventId,
+                            participantHasSession,
+                        ) ??
+                        (participantHasInvitation ? "ALREADY_INVITED" : null);
+                    return {
+                        ...row,
+                        hasSession,
+                        hasParticipantSession: participantHasSession,
+                        hasPendingInvitation: participantHasInvitation,
+                        grantEligible: disabledReason === null,
+                        grantDisabledReason: disabledReason,
+                    };
+                });
+            }
+
             return reply.send({
-                registrations: registrationList,
+                registrations: registrationResponse,
                 pagination: {
                     page,
                     limit,
@@ -204,7 +373,9 @@ export default async function (fastify: FastifyInstance) {
                 return reply.status(404).send({ error: "Registration not found" });
             }
 
-            // Get registration sessions with session details
+            // Get registration sessions with session details. Session-level ticket
+            // attribution is nullable for admin grants, while the Registration's
+            // primary ticket above remains required.
             const regSessions = await db
                 .select({
                     id: registrationSessions.id,
@@ -212,6 +383,9 @@ export default async function (fastify: FastifyInstance) {
                     ticketTypeId: registrationSessions.ticketTypeId,
                     checkedInAt: registrationSessions.checkedInAt,
                     checkedInById: registrationSessions.checkedInBy,
+                    source: registrationSessions.source,
+                    addedById: registrationSessions.addedBy,
+                    addedAt: registrationSessions.createdAt,
                     createdAt: registrationSessions.createdAt,
                     sessionCode: sessions.sessionCode,
                     sessionName: sessions.sessionName,
@@ -223,18 +397,93 @@ export default async function (fastify: FastifyInstance) {
                     ticketCategory: ticketTypes.category,
                     checkedInByFirstName: backofficeUsers.firstName,
                     checkedInByLastName: backofficeUsers.lastName,
+                    addedByFirstName: registrationSessionGrantActors.firstName,
+                    addedByLastName: registrationSessionGrantActors.lastName,
                 })
                 .from(registrationSessions)
                 .innerJoin(sessions, eq(registrationSessions.sessionId, sessions.id))
-                .innerJoin(ticketTypes, eq(registrationSessions.ticketTypeId, ticketTypes.id))
+                .leftJoin(ticketTypes, eq(registrationSessions.ticketTypeId, ticketTypes.id))
                 .leftJoin(backofficeUsers, eq(registrationSessions.checkedInBy, backofficeUsers.id))
+                .leftJoin(
+                    registrationSessionGrantActors,
+                    eq(registrationSessions.addedBy, registrationSessionGrantActors.id),
+                )
                 .where(eq(registrationSessions.registrationId, parseInt(id)))
                 .orderBy(sessions.startTime);
+
+            const [{ now: rawInvitationNow }] = await db.execute<{
+                now: Date | string;
+            }>(sql`SELECT clock_timestamp() AS now`);
+            const invitationNow = rawInvitationNow instanceof Date
+                ? rawInvitationNow
+                : new Date(rawInvitationNow);
+            const invitationRows = await db
+                .select({
+                    invitationId: sessionInvitations.id,
+                    sessionId: sessionInvitations.sessionId,
+                    sessionEventId: sessions.eventId,
+                    sessionName: sessions.sessionName,
+                    sessionType: sessions.sessionType,
+                    startTime: sessions.startTime,
+                    endTime: sessions.endTime,
+                    room: sessions.room,
+                    sessionIsActive: sessions.isActive,
+                    storedStatus: sessionInvitations.status,
+                    expiresAt: sessionInvitations.expiresAt,
+                    respondedAt: sessionInvitations.respondedAt,
+                    createdAt: sessionInvitations.createdAt,
+                    emailStatus: registrationSessionGrantItems.emailStatus,
+                    attemptCount: registrationSessionGrantItems.attemptCount,
+                    lastErrorCode: registrationSessionGrantItems.lastErrorCode,
+                })
+                .from(sessionInvitations)
+                .innerJoin(sessions, eq(sessionInvitations.sessionId, sessions.id))
+                .innerJoin(
+                    registrationSessionGrantItems,
+                    eq(sessionInvitations.grantItemId, registrationSessionGrantItems.id),
+                )
+                .where(eq(sessionInvitations.registrationId, parseInt(id)))
+                .orderBy(desc(sessionInvitations.createdAt));
+
+            const invitations = invitationRows.map((invitation) => {
+                const status = effectiveInvitationStatus(
+                    {
+                        status: invitation.storedStatus as InvitationStatus,
+                        expiresAt: invitation.expiresAt,
+                        startTime: invitation.startTime,
+                        isActive: invitation.sessionIsActive,
+                        registrationConfirmed: reg.status === "confirmed",
+                        eventMatches: reg.eventId === invitation.sessionEventId,
+                    },
+                    invitationNow,
+                );
+                return {
+                    invitationId: invitation.invitationId,
+                    sessionId: invitation.sessionId,
+                    sessionName: invitation.sessionName,
+                    sessionType: invitation.sessionType,
+                    startTime: invitation.startTime,
+                    endTime: invitation.endTime,
+                    room: invitation.room,
+                    status,
+                    expiresAt: invitation.expiresAt.toISOString(),
+                    effectiveDeadline: effectiveDeadline(
+                        invitation.expiresAt,
+                        invitation.startTime,
+                    ).toISOString(),
+                    respondedAt: invitation.respondedAt?.toISOString() ?? null,
+                    createdAt: invitation.createdAt.toISOString(),
+                    emailStatus: invitation.emailStatus,
+                    attemptCount: invitation.attemptCount,
+                    lastErrorCode: invitation.lastErrorCode,
+                };
+            });
 
             return reply.send({
                 registration: {
                     ...reg,
                     sessions: regSessions,
+                    invitations,
                 },
             });
         } catch (error) {
@@ -334,6 +583,61 @@ export default async function (fastify: FastifyInstance) {
                 // 5. Check quota
                 if (ticket.quota > 0 && ticket.soldCount >= ticket.quota) throw new Error("TICKET_SOLD_OUT");
 
+                // Resolve and validate all session entitlement writes before
+                // creating Registration or mutating soldCount.
+                let sessionsToLink = sessionIds || [];
+                if (sessionsToLink.length > 0) {
+                    const explicitIds = [...new Set(sessionsToLink)].sort((a, b) => a - b);
+                    const explicitSessions = await tx
+                        .select({
+                            id: sessions.id,
+                            adminGrantRequiresConfirmation: sessions.adminGrantRequiresConfirmation,
+                        })
+                        .from(sessions)
+                        .where(and(
+                            inArray(sessions.id, explicitIds),
+                            eq(sessions.eventId, eventId),
+                        ));
+                    if (explicitSessions.length !== explicitIds.length) {
+                        throw new Error("INVALID_SESSION");
+                    }
+                    if (explicitSessions.some((row) => row.adminGrantRequiresConfirmation)) {
+                        throw new Error("SESSION_INVITATION_REQUIRED");
+                    }
+                    sessionsToLink = explicitIds;
+                } else {
+                    const linkedSessions = await tx
+                        .select({
+                            sessionId: ticketSessions.sessionId,
+                            requiresOptIn: sessions.requiresOptIn,
+                            adminGrantRequiresConfirmation: sessions.adminGrantRequiresConfirmation,
+                        })
+                        .from(ticketSessions)
+                        .innerJoin(sessions, eq(ticketSessions.sessionId, sessions.id))
+                        .where(and(
+                            eq(ticketSessions.ticketTypeId, ticketTypeId),
+                            eq(sessions.eventId, eventId),
+                        ));
+                    sessionsToLink = linkedSessions
+                        .filter((row) => !row.requiresOptIn && !row.adminGrantRequiresConfirmation)
+                        .map((row) => row.sessionId);
+                    if (linkedSessions.length === 0) {
+                        const mainSessions = await tx
+                            .select({
+                                id: sessions.id,
+                                adminGrantRequiresConfirmation: sessions.adminGrantRequiresConfirmation,
+                            })
+                            .from(sessions)
+                            .where(and(
+                                eq(sessions.eventId, eventId),
+                                eq(sessions.isMainSession, true),
+                            ));
+                        sessionsToLink = mainSessions
+                            .filter((row) => !row.adminGrantRequiresConfirmation)
+                            .map((row) => row.id);
+                    }
+                }
+
                 // 6. Generate regCode & insert registration
                 const regCode = generateRegCode();
                 const [newReg] = await tx.insert(registrations).values({
@@ -350,37 +654,30 @@ export default async function (fastify: FastifyInstance) {
                     addedNote: note || null,
                 }).returning();
 
-                // 7. Determine sessions to link
-                let sessionsToLink = sessionIds || [];
-
-                // If no sessions specified, auto-link from ticket_sessions junction
-                if (sessionsToLink.length === 0) {
-                    const linkedSessions = await tx
-                        .select({ sessionId: ticketSessions.sessionId })
-                        .from(ticketSessions)
-                        .where(eq(ticketSessions.ticketTypeId, ticketTypeId));
-                    sessionsToLink = linkedSessions.map(ls => ls.sessionId);
-
-                    // Fallback: main sessions of the event
-                    if (sessionsToLink.length === 0) {
-                        const mainSessions = await tx
-                            .select({ id: sessions.id })
-                            .from(sessions)
-                            .where(and(eq(sessions.eventId, eventId), eq(sessions.isMainSession, true)));
-                        sessionsToLink = mainSessions.map(s => s.id);
-                    }
-                }
-
-                // 8. Insert registration_sessions
-                for (const sid of sessionsToLink) {
-                    await tx.insert(registrationSessions).values({
+                // 7. Insert registration_sessions
+                const sessionsLinked: number[] = [];
+                for (const sid of [...new Set(sessionsToLink)].sort((a, b) => a - b)) {
+                    const [inserted] = await tx.insert(registrationSessions).values({
                         registrationId: newReg.id,
                         sessionId: sid,
                         ticketTypeId,
                         source: "manual",
                         addedBy: staffUser.id,
                         addedNote: note || null,
-                    });
+                    }).onConflictDoNothing().returning({ id: registrationSessions.id });
+                    if (inserted) {
+                        sessionsLinked.push(sid);
+                        continue;
+                    }
+                    const [existing] = await tx
+                        .select({ id: registrationSessions.id })
+                        .from(registrationSessions)
+                        .where(and(
+                            eq(registrationSessions.registrationId, newReg.id),
+                            eq(registrationSessions.sessionId, sid),
+                        ))
+                        .limit(1);
+                    if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
                 }
 
                 // 9. Update soldCount
@@ -394,8 +691,8 @@ export default async function (fastify: FastifyInstance) {
                     ticketName: ticket.name,
                     eventName: event.eventName,
                     eventRow: event,
-                    sessionCount: sessionsToLink.length,
-                    sessionsLinked: sessionsToLink,
+                    sessionCount: sessionsLinked.length,
+                    sessionsLinked,
                     userEmail: user.email,
                     userFirstName: user.firstName,
                     userLastName: user.lastName,
@@ -441,6 +738,8 @@ export default async function (fastify: FastifyInstance) {
                 TICKET_NOT_FOUND: { status: 404, message: "Ticket type not found or does not belong to event" },
                 DUPLICATE_REGISTRATION: { status: 409, message: "User already has an active registration for this event/ticket" },
                 TICKET_SOLD_OUT: { status: 409, message: "Ticket is sold out" },
+                INVALID_SESSION: { status: 400, message: "One or more selected sessions are invalid" },
+                SESSION_INVITATION_REQUIRED: { status: 409, message: "Session invitation acceptance is required" },
             };
 
             const known = knownErrors[error?.message];
@@ -471,24 +770,44 @@ export default async function (fastify: FastifyInstance) {
         try {
             // Verify registration exists
             const [reg] = await db
-                .select({ id: registrations.id, eventId: registrations.eventId })
+                .select({ id: registrations.id, eventId: registrations.eventId, status: registrations.status })
                 .from(registrations)
                 .where(eq(registrations.id, regId))
                 .limit(1);
 
             if (!reg) return reply.status(404).send({ error: "Registration not found" });
+            if (reg.status !== "confirmed") {
+                return reply.status(409).send({ error: "Registration must be confirmed" });
+            }
 
-            // Verify sessions belong to same event
+            // Verify sessions belong to same event and are currently grantable.
+            const distinctSessionIds = [...new Set(sessionIds)].sort((a, b) => a - b);
             const validSessions = await db
-                .select({ id: sessions.id })
+                .select({
+                    id: sessions.id,
+                    isActive: sessions.isActive,
+                    endTime: sessions.endTime,
+                    adminGrantRequiresConfirmation: sessions.adminGrantRequiresConfirmation,
+                })
                 .from(sessions)
                 .where(and(
-                    inArray(sessions.id, sessionIds),
+                    inArray(sessions.id, distinctSessionIds),
                     eq(sessions.eventId, reg.eventId),
                 ));
 
-            if (validSessions.length !== sessionIds.length) {
+            if (validSessions.length !== distinctSessionIds.length) {
                 return reply.status(400).send({ error: "Some sessions do not belong to the registration's event" });
+            }
+            if (validSessions.some((session) => session.adminGrantRequiresConfirmation)) {
+                return reply.status(409).send({
+                    error: "Session invitation acceptance is required",
+                    code: "SESSION_INVITATION_REQUIRED",
+                });
+            }
+            const [{ now: rawNow }] = await db.execute<{ now: Date | string }>(sql`SELECT clock_timestamp() AS now`);
+            const serverNow = rawNow instanceof Date ? rawNow : new Date(rawNow);
+            if (validSessions.some((session) => !session.isActive || session.endTime.getTime() <= serverNow.getTime())) {
+                return reply.status(409).send({ error: "Some sessions are inactive or have ended" });
             }
 
             // Check for duplicates
@@ -498,13 +817,15 @@ export default async function (fastify: FastifyInstance) {
                 .where(eq(registrationSessions.registrationId, regId));
 
             const existingIds = new Set(existingSessions.map(s => s.sessionId));
-            const newSessionIds = sessionIds.filter(sid => !existingIds.has(sid));
+            const newSessionIds = distinctSessionIds.filter(sid => !existingIds.has(sid));
 
             if (newSessionIds.length === 0) {
                 return reply.status(409).send({ error: "All sessions already added" });
             }
 
-            // Insert new registration_sessions
+            // Insert new registration_sessions. Re-check the exact pair when a
+            // concurrent writer wins after the pre-read; do not hide unrelated
+            // unique conflicts.
             const inserted = [];
             for (const sid of newSessionIds) {
                 const [row] = await db.insert(registrationSessions).values({
@@ -514,8 +835,24 @@ export default async function (fastify: FastifyInstance) {
                     source: "manual",
                     addedBy: staffUser.id,
                     addedNote: note || null,
-                }).returning();
-                inserted.push(row);
+                }).onConflictDoNothing().returning();
+                if (row) {
+                    inserted.push(row);
+                    continue;
+                }
+                const [existing] = await db
+                    .select({ id: registrationSessions.id })
+                    .from(registrationSessions)
+                    .where(and(
+                        eq(registrationSessions.registrationId, regId),
+                        eq(registrationSessions.sessionId, sid),
+                    ))
+                    .limit(1);
+                if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+            }
+
+            if (inserted.length === 0) {
+                return reply.status(409).send({ error: "All sessions already added" });
             }
 
             return reply.status(201).send({
@@ -748,21 +1085,55 @@ export default async function (fastify: FastifyInstance) {
                     alreadyRegistered = new Set(existingRegs.map(r => r.userId));
                 }
 
-                // 5. Determine sessions to link
+                // 5. Resolve all entitlement targets before any user write.
                 let sessionsToLink = sessionIds || [];
-                if (sessionsToLink.length === 0) {
+                if (sessionsToLink.length > 0) {
+                    const explicitIds = [...new Set(sessionsToLink)].sort((a, b) => a - b);
+                    const explicitSessions = await tx
+                        .select({
+                            id: sessions.id,
+                            adminGrantRequiresConfirmation: sessions.adminGrantRequiresConfirmation,
+                        })
+                        .from(sessions)
+                        .where(and(
+                            inArray(sessions.id, explicitIds),
+                            eq(sessions.eventId, eventId),
+                        ));
+                    if (explicitSessions.length !== explicitIds.length) {
+                        throw new Error("INVALID_SESSION");
+                    }
+                    if (explicitSessions.some((row) => row.adminGrantRequiresConfirmation)) {
+                        throw new Error("SESSION_INVITATION_REQUIRED");
+                    }
+                    sessionsToLink = explicitIds;
+                } else {
                     const linkedSessions = await tx
-                        .select({ sessionId: ticketSessions.sessionId })
+                        .select({
+                            sessionId: ticketSessions.sessionId,
+                            requiresOptIn: sessions.requiresOptIn,
+                            adminGrantRequiresConfirmation: sessions.adminGrantRequiresConfirmation,
+                        })
                         .from(ticketSessions)
-                        .where(eq(ticketSessions.ticketTypeId, ticketTypeId));
-                    sessionsToLink = linkedSessions.map(ls => ls.sessionId);
+                        .innerJoin(sessions, eq(ticketSessions.sessionId, sessions.id))
+                        .where(and(
+                            eq(ticketSessions.ticketTypeId, ticketTypeId),
+                            eq(sessions.eventId, eventId),
+                        ));
+                    sessionsToLink = linkedSessions
+                        .filter((row) => !row.requiresOptIn && !row.adminGrantRequiresConfirmation)
+                        .map((row) => row.sessionId);
 
-                    if (sessionsToLink.length === 0) {
+                    if (linkedSessions.length === 0) {
                         const mainSessions = await tx
-                            .select({ id: sessions.id })
+                            .select({
+                                id: sessions.id,
+                                adminGrantRequiresConfirmation: sessions.adminGrantRequiresConfirmation,
+                            })
                             .from(sessions)
                             .where(and(eq(sessions.eventId, eventId), eq(sessions.isMainSession, true)));
-                        sessionsToLink = mainSessions.map(s => s.id);
+                        sessionsToLink = mainSessions
+                            .filter((row) => !row.adminGrantRequiresConfirmation)
+                            .map((row) => row.id);
                     }
                 }
 
@@ -805,15 +1176,26 @@ export default async function (fastify: FastifyInstance) {
                     }).returning();
 
                     // Insert registration_sessions
-                    for (const sid of sessionsToLink) {
-                        await tx.insert(registrationSessions).values({
+                    for (const sid of [...new Set(sessionsToLink)].sort((a, b) => a - b)) {
+                        const [inserted] = await tx.insert(registrationSessions).values({
                             registrationId: newReg.id,
                             sessionId: sid,
                             ticketTypeId,
                             source: "manual",
                             addedBy: staffUser.id,
                             addedNote: note || null,
-                        });
+                        }).onConflictDoNothing().returning({ id: registrationSessions.id });
+                        if (!inserted) {
+                            const [existing] = await tx
+                                .select({ id: registrationSessions.id })
+                                .from(registrationSessions)
+                                .where(and(
+                                    eq(registrationSessions.registrationId, newReg.id),
+                                    eq(registrationSessions.sessionId, sid),
+                                ))
+                                .limit(1);
+                            if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+                        }
                     }
 
                     addedCount++;
@@ -897,6 +1279,8 @@ export default async function (fastify: FastifyInstance) {
             const knownErrors: Record<string, { status: number; message: string }> = {
                 EVENT_NOT_FOUND: { status: 404, message: "Event not found" },
                 TICKET_NOT_FOUND: { status: 404, message: "Ticket type not found or does not belong to event" },
+                INVALID_SESSION: { status: 400, message: "One or more selected sessions are invalid" },
+                SESSION_INVITATION_REQUIRED: { status: 409, message: "Session invitation acceptance is required" },
             };
 
             const known = knownErrors[error?.message];

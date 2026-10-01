@@ -28,5 +28,8 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Private Docker review credentials
+review/session-invitations-review-tokens.env
+
 # TypeScript
 *.tsbuildinfo

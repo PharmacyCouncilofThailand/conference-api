@@ -274,8 +274,16 @@ export default async function publicEventsRoutes(fastify: FastifyInstance) {
 
         return {
           ...ticket,
-          sessions: linkedSessions.filter((s) => !s.requiresOptIn),
-          optionalSessions: linkedSessions.filter((s) => s.requiresOptIn),
+          sessions: linkedSessions.filter(
+            (s) =>
+              !s.requiresOptIn &&
+              !s.adminGrantRequiresConfirmation,
+          ),
+          optionalSessions: linkedSessions.filter(
+            (s) =>
+              s.requiresOptIn &&
+              !s.adminGrantRequiresConfirmation,
+          ),
         };
       });
 

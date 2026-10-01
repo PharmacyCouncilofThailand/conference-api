@@ -368,6 +368,8 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
             .select({
               sessionId: ticketSessions.sessionId,
               requiresOptIn: sessions.requiresOptIn,
+              adminGrantRequiresConfirmation:
+                sessions.adminGrantRequiresConfirmation,
             })
             .from(ticketSessions)
             .innerJoin(sessions, eq(ticketSessions.sessionId, sessions.id))
@@ -379,13 +381,22 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
             );
 
           sessionIdsToLink = linkedSessions
-            .filter((ls) => !ls.requiresOptIn)
+            .filter(
+              (ls) =>
+                !ls.requiresOptIn &&
+                !ls.adminGrantRequiresConfirmation,
+            )
             .map((ls) => ls.sessionId);
 
-          // Fallback: auto-link to main sessions if no ticket_sessions rows
-          if (sessionIdsToLink.length === 0) {
+          // Fallback only if there is no ticket_sessions mapping. A mapped
+          // invitation-gated session must not cause broader auto-linking.
+          if (linkedSessions.length === 0) {
             const mainSessions = await tx
-              .select({ id: sessions.id })
+              .select({
+                id: sessions.id,
+                adminGrantRequiresConfirmation:
+                  sessions.adminGrantRequiresConfirmation,
+              })
               .from(sessions)
               .where(
                 and(
@@ -393,7 +404,9 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
                   eq(sessions.isMainSession, true),
                 )
               );
-            sessionIdsToLink = mainSessions.map((s) => s.id);
+            sessionIdsToLink = mainSessions
+              .filter((s) => !s.adminGrantRequiresConfirmation)
+              .map((s) => s.id);
 
             // Backfill ticket_sessions so future lookups work
             if (sessionIdsToLink.length > 0) {
@@ -410,13 +423,24 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
           }
 
           // Insert registration_sessions
-          for (const sid of sessionIdsToLink) {
-            await tx.insert(registrationSessions).values({
+          for (const sid of [...new Set(sessionIdsToLink)].sort((a, b) => a - b)) {
+            const [inserted] = await tx.insert(registrationSessions).values({
               registrationId: newReg.id,
               sessionId: sid,
               ticketTypeId: ticket.id,
               source: "free",
-            });
+            }).onConflictDoNothing().returning({ id: registrationSessions.id });
+            if (!inserted) {
+              const [existing] = await tx
+                .select({ id: registrationSessions.id })
+                .from(registrationSessions)
+                .where(and(
+                  eq(registrationSessions.registrationId, newReg.id),
+                  eq(registrationSessions.sessionId, sid),
+                ))
+                .limit(1);
+              if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+            }
           }
 
           // Update soldCount

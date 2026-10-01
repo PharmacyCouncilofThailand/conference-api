@@ -1,0 +1,44 @@
+{
+  "capturedAt": "2026-10-01",
+  "repositories": {
+    "api": {
+      "head": "9fd9b0143827b89fd60907f2440df6afc62dbc77",
+      "branch": "feat/admin-session-invitations",
+      "preexistingStatus": [
+        "?? docs/superpowers/plans/2026-10-01-admin-session-invitations-continuation-prompt.md"
+      ]
+    },
+    "backoffice": {
+      "head": "c92228fbdd43b82897ab4df0a6ada15bc43af79e",
+      "branch": "feat/admin-session-invitations",
+      "preexistingStatus": []
+    },
+    "pris": {
+      "head": "1abbd1af2ecbbfdc9f9eabfd73beda3d3175d41c",
+      "branch": "feat/admin-session-invitations",
+      "preexistingStatus": []
+    },
+    "web": {
+      "head": "4ee1045f7bf670d86ad38eb53eef1a3f27371642",
+      "branch": "webhub",
+      "preexistingStatus": []
+    }
+  },
+  "docker": {
+    "serverVersion": "29.7.2",
+    "composeVersion": "5.5.1",
+    "project": "session-invitations-test",
+    "baselineContainers": 0,
+    "baselineVolumes": 0
+  },
+  "migration": {
+    "latest": "0031_admin_session_grants.sql",
+    "planned": "0032_admin_session_invitations.sql",
+    "collisionAtBaseline": false
+  },
+  "notes": [
+    "No production credentials or .env contents were inspected.",
+    "The API continuation prompt was untracked before implementation and is preserved as user work.",
+    "Runtime verification is Docker-only."
+  ]
+}

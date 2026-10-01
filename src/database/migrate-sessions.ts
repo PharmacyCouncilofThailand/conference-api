@@ -25,6 +25,42 @@ const run = async () => {
   const db = drizzle(client);
 
   try {
+    // Refuse before any row write when historical sources would create a new
+    // entitlement for an invitation-gated session. Existing entitlements are
+    // left untouched by this preflight.
+    const guardedTargets = await db.execute(sql`
+      SELECT s.id
+      FROM sessions s
+      WHERE s.admin_grant_requires_confirmation = true
+        AND (
+          EXISTS (
+            SELECT 1 FROM registrations r
+            WHERE r.session_id = s.id
+              AND NOT EXISTS (
+                SELECT 1 FROM registration_sessions rs
+                WHERE rs.registration_id = r.id
+                  AND rs.session_id = s.id
+              )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM ticket_sessions ts
+            JOIN registrations r ON r.ticket_type_id = ts.ticket_type_id
+            WHERE ts.session_id = s.id
+              AND r.session_id IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM registration_sessions rs
+                WHERE rs.registration_id = r.id
+                  AND rs.session_id = s.id
+              )
+          )
+        )
+      LIMIT 1
+    `);
+    if ((guardedTargets as unknown[]).length > 0) {
+      throw new Error("SESSION_INVITATION_REQUIRED");
+    }
+
     // ──────────────────────────────────────────────
     // Step 1: Migrate registrations that have sessionId (workshop addons)
     // ──────────────────────────────────────────────
@@ -51,12 +87,24 @@ const run = async () => {
         .limit(1);
 
       if (existing.length === 0 && reg.sessionId !== null) {
-        await db.insert(registrationSessions).values({
+        const [inserted] = await db.insert(registrationSessions).values({
           registrationId: reg.id,
           sessionId: reg.sessionId,
           ticketTypeId: reg.ticketTypeId,
-        });
-        step1Count++;
+        }).onConflictDoNothing().returning({ id: registrationSessions.id });
+        if (inserted) {
+          step1Count++;
+        } else {
+          const [concurrentExisting] = await db
+            .select({ id: registrationSessions.id })
+            .from(registrationSessions)
+            .where(and(
+              eq(registrationSessions.registrationId, reg.id),
+              eq(registrationSessions.sessionId, reg.sessionId),
+            ))
+            .limit(1);
+          if (!concurrentExisting) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+        }
       }
     }
     console.log(`   ✅ ${step1Count} registration_sessions created from sessionId\n`);
@@ -94,12 +142,24 @@ const run = async () => {
           .limit(1);
 
         if (existing.length === 0) {
-          await db.insert(registrationSessions).values({
+          const [inserted] = await db.insert(registrationSessions).values({
             registrationId: reg.id,
             sessionId: ls.sessionId,
             ticketTypeId: reg.ticketTypeId,
-          });
-          step2Count++;
+          }).onConflictDoNothing().returning({ id: registrationSessions.id });
+          if (inserted) {
+            step2Count++;
+          } else {
+            const [concurrentExisting] = await db
+              .select({ id: registrationSessions.id })
+              .from(registrationSessions)
+              .where(and(
+                eq(registrationSessions.registrationId, reg.id),
+                eq(registrationSessions.sessionId, ls.sessionId),
+              ))
+              .limit(1);
+            if (!concurrentExisting) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+          }
         }
       }
     }
@@ -159,7 +219,11 @@ const run = async () => {
       if (existingLinks.length === 0) {
         // Find main sessions for this event
         const mainSessions = await db
-          .select({ id: sessions.id })
+          .select({
+            id: sessions.id,
+            adminGrantRequiresConfirmation:
+              sessions.adminGrantRequiresConfirmation,
+          })
           .from(sessions)
           .where(
             and(
@@ -169,6 +233,7 @@ const run = async () => {
           );
 
         for (const ms of mainSessions) {
+          if (ms.adminGrantRequiresConfirmation) continue;
           await db.insert(ticketSessions).values({
             ticketTypeId: pt.id,
             sessionId: ms.id,
@@ -198,6 +263,7 @@ const run = async () => {
 
   } catch (error) {
     console.error("❌ Migration error:", error);
+    throw error;
   } finally {
     await client.end();
     console.log("\n✅ Migration complete");

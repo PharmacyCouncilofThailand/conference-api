@@ -250,7 +250,12 @@ export default async function quickRegistrationRoutes(fastify: FastifyInstance) 
           let sessionIdsToLink: number[] = [];
 
           const linkedSessions = await tx
-            .select({ sessionId: ticketSessions.sessionId })
+            .select({
+              sessionId: ticketSessions.sessionId,
+              requiresOptIn: sessions.requiresOptIn,
+              adminGrantRequiresConfirmation:
+                sessions.adminGrantRequiresConfirmation,
+            })
             .from(ticketSessions)
             .innerJoin(sessions, eq(ticketSessions.sessionId, sessions.id))
             .where(
@@ -259,11 +264,21 @@ export default async function quickRegistrationRoutes(fastify: FastifyInstance) 
                 eq(sessions.eventId, event.id),
               )
             );
-          sessionIdsToLink = linkedSessions.map((ls) => ls.sessionId);
+          sessionIdsToLink = linkedSessions
+            .filter(
+              (ls) =>
+                !ls.requiresOptIn &&
+                !ls.adminGrantRequiresConfirmation,
+            )
+            .map((ls) => ls.sessionId);
 
-          if (sessionIdsToLink.length === 0) {
+          if (linkedSessions.length === 0) {
             const mainSessions = await tx
-              .select({ id: sessions.id })
+              .select({
+                id: sessions.id,
+                adminGrantRequiresConfirmation:
+                  sessions.adminGrantRequiresConfirmation,
+              })
               .from(sessions)
               .where(
                 and(
@@ -271,7 +286,9 @@ export default async function quickRegistrationRoutes(fastify: FastifyInstance) 
                   eq(sessions.isMainSession, true),
                 )
               );
-            sessionIdsToLink = mainSessions.map((s) => s.id);
+            sessionIdsToLink = mainSessions
+              .filter((s) => !s.adminGrantRequiresConfirmation)
+              .map((s) => s.id);
 
             if (sessionIdsToLink.length > 0) {
               await tx.insert(ticketSessions).values(
@@ -283,13 +300,24 @@ export default async function quickRegistrationRoutes(fastify: FastifyInstance) 
             }
           }
 
-          for (const sid of sessionIdsToLink) {
-            await tx.insert(registrationSessions).values({
+          for (const sid of [...new Set(sessionIdsToLink)].sort((a, b) => a - b)) {
+            const [inserted] = await tx.insert(registrationSessions).values({
               registrationId: newReg.id,
               sessionId: sid,
               ticketTypeId: ticket.id,
               source: "quick",
-            });
+            }).onConflictDoNothing().returning({ id: registrationSessions.id });
+            if (!inserted) {
+              const [existing] = await tx
+                .select({ id: registrationSessions.id })
+                .from(registrationSessions)
+                .where(and(
+                  eq(registrationSessions.registrationId, newReg.id),
+                  eq(registrationSessions.sessionId, sid),
+                ))
+                .limit(1);
+              if (!existing) throw new Error("ENTITLEMENT_INSERT_CONFLICT");
+            }
           }
 
           await tx

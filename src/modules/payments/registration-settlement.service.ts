@@ -233,31 +233,64 @@ export async function processSuccessfulPaymentInTransaction(
       && ticket.groupName?.toLowerCase() === "workshop"
       && input.workshopSessionId
     ) {
-      const [workshopSession] = await tx.select({ id: sessions.id })
+      const [workshopSession] = await tx.select({
+        id: sessions.id,
+        adminGrantRequiresConfirmation:
+          sessions.adminGrantRequiresConfirmation,
+      })
         .from(sessions)
-        .where(and(eq(sessions.id, input.workshopSessionId), eq(sessions.eventId, orderEventId)))
+        .where(and(
+          eq(sessions.id, input.workshopSessionId),
+          eq(sessions.eventId, orderEventId),
+        ))
         .limit(1);
       if (!workshopSession) {
-        throw new RegistrationSettlementError("WORKSHOP_EVENT_MISMATCH", "Workshop session is outside event scope");
+        throw new RegistrationSettlementError(
+          "WORKSHOP_EVENT_MISMATCH",
+          "Workshop session is outside event scope",
+        );
+      }
+      if (workshopSession.adminGrantRequiresConfirmation) {
+        throw new RegistrationSettlementError(
+          "SESSION_INVITATION_REQUIRED",
+          "Session invitation acceptance is required",
+        );
       }
       sessionIdsToLink = [input.workshopSessionId];
     } else {
       const linkedSessions = await tx.select({
         sessionId: ticketSessions.sessionId,
         requiresOptIn: sessions.requiresOptIn,
+        adminGrantRequiresConfirmation:
+          sessions.adminGrantRequiresConfirmation,
       }).from(ticketSessions)
         .innerJoin(sessions, eq(ticketSessions.sessionId, sessions.id))
         .where(and(
           eq(ticketSessions.ticketTypeId, item.ticketTypeId),
           eq(sessions.eventId, orderEventId),
         ));
-      sessionIdsToLink = linkedSessions.filter((row) => !row.requiresOptIn).map((row) => row.sessionId);
+      sessionIdsToLink = linkedSessions
+        .filter(
+          (row) =>
+            !row.requiresOptIn &&
+            !row.adminGrantRequiresConfirmation,
+        )
+        .map((row) => row.sessionId);
 
-      if (sessionIdsToLink.length === 0 && item.itemType === "ticket") {
-        const mainSessions = await tx.select({ id: sessions.id })
+      if (linkedSessions.length === 0 && item.itemType === "ticket") {
+        const mainSessions = await tx.select({
+          id: sessions.id,
+          adminGrantRequiresConfirmation:
+            sessions.adminGrantRequiresConfirmation,
+        })
           .from(sessions)
           .where(and(eq(sessions.eventId, orderEventId), eq(sessions.isMainSession, true)));
-        sessionIdsToLink = mainSessions.map((session) => session.id);
+        sessionIdsToLink = mainSessions
+          .filter(
+            (session) =>
+              !session.adminGrantRequiresConfirmation,
+          )
+          .map((session) => session.id);
         if (sessionIdsToLink.length > 0) {
           await tx.insert(ticketSessions).values(sessionIdsToLink.map((sessionId) => ({
             ticketTypeId: item.ticketTypeId,
@@ -266,20 +299,68 @@ export async function processSuccessfulPaymentInTransaction(
         }
       }
 
-      if (item.itemType === "ticket") {
+      if (item.itemType === "ticket" && optionalSessionIds.length > 0) {
+        const optionalSessions = await tx
+          .select({
+            id: sessions.id,
+            adminGrantRequiresConfirmation:
+              sessions.adminGrantRequiresConfirmation,
+          })
+          .from(sessions)
+          .where(and(
+            eq(sessions.eventId, orderEventId),
+            sql`${sessions.id} IN (${sql.join(
+              optionalSessionIds.map((id) => sql`${id}`),
+              sql`, `,
+            )})`,
+          ));
+        if (optionalSessions.length !== optionalSessionIds.length) {
+          throw new RegistrationSettlementError(
+            "OPTIONAL_SESSION_EVENT_MISMATCH",
+            "Optional session is outside event scope",
+          );
+        }
+        if (
+          optionalSessions.some(
+            (session) =>
+              session.adminGrantRequiresConfirmation,
+          )
+        ) {
+          throw new RegistrationSettlementError(
+            "SESSION_INVITATION_REQUIRED",
+            "Session invitation acceptance is required",
+          );
+        }
         for (const sessionId of optionalSessionIds) {
-          if (!sessionIdsToLink.includes(sessionId)) sessionIdsToLink.push(sessionId);
+          if (!sessionIdsToLink.includes(sessionId)) {
+            sessionIdsToLink.push(sessionId);
+          }
         }
       }
     }
 
-    for (const sessionId of sessionIdsToLink) {
-      await tx.insert(registrationSessions).values({
+    for (const sessionId of [...new Set(sessionIdsToLink)].sort((a, b) => a - b)) {
+      const [inserted] = await tx.insert(registrationSessions).values({
         registrationId: registration.id,
         sessionId,
         ticketTypeId: item.ticketTypeId,
-      });
-      totalSessionLinks++;
+      }).onConflictDoNothing().returning({ id: registrationSessions.id });
+      if (inserted) {
+        totalSessionLinks++;
+        continue;
+      }
+      const [existing] = await tx
+        .select({ id: registrationSessions.id })
+        .from(registrationSessions)
+        .where(and(
+          eq(registrationSessions.registrationId, registration.id),
+          eq(registrationSessions.sessionId, sessionId),
+        ))
+        .limit(1);
+      if (!existing) throw new RegistrationSettlementError(
+        "ENTITLEMENT_INSERT_CONFLICT",
+        "Session entitlement insert conflicted without an existing registration/session pair",
+      );
     }
 
     await tx.update(ticketTypes).set({
