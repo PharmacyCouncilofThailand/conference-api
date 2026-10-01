@@ -108,7 +108,7 @@ export interface InvitationNotificationSnapshot
 
 **Produces:** `readInvitationEncryptionKey()` and `parseInvitationFrontendOrigin()` for Tasks 2–3.
 
-- [ ] Add failing key-only tests proving a valid base64 encoding of exactly 32 bytes returns the key without `PRIS_FRONTEND_URL`, while missing, malformed, noncanonical, 31-byte, and 33-byte values throw `SESSION_INVITATION_CONFIG_ERROR` without exposing the input.
+- [x] Add failing key-only tests proving a valid base64 encoding of exactly 32 bytes returns the key without `PRIS_FRONTEND_URL`, while missing, malformed, noncanonical, 31-byte, and 33-byte values throw `SESSION_INVITATION_CONFIG_ERROR` without exposing the input.
 
 ```ts
 const parsed = readInvitationEncryptionKey({
@@ -117,7 +117,7 @@ const parsed = readInvitationEncryptionKey({
 assert.equal(parsed.equals(key), true);
 ```
 
-- [ ] Add failing origin-table tests. Production accepts `https://pris.example.test` and its trailing-slash form, both normalized to `https://pris.example.test`. Test accepts `http://localhost:3004`, `http://127.0.0.1:3004`, and `http://[::1]:3004`. Reject null/blank, malformed URL, production HTTP, credentials, `/pris`, query, and fragment.
+- [x] Add failing origin-table tests. Production accepts `https://pris.example.test` and its trailing-slash form, both normalized to `https://pris.example.test`. Test accepts `http://localhost:3004`, `http://127.0.0.1:3004`, and `http://[::1]:3004`. Reject null/blank, malformed URL, production HTTP, credentials, `/pris`, query, and fragment.
 
 ```ts
 assert.equal(
@@ -132,13 +132,13 @@ assert.throws(
 );
 ```
 
-- [ ] Run RED inside Docker. Expected: imports do not exist or old combined config still requires `PRIS_FRONTEND_URL`.
+- [x] Run RED inside Docker. Expected: imports do not exist or old combined config still requires `PRIS_FRONTEND_URL`.
 
 ```powershell
 docker compose -p session-invitations-test -f docker-compose.session-grants-test.yml -f docker-compose.session-invitations-test.yml run --rm api-tools sh -lc './node_modules/.bin/tsx --test src/modules/session-grants/invitation-token.test.ts'
 ```
 
-- [ ] Replace `readInvitationConfig()` with the two helpers. Reuse the current base64 canonicality check and URL validation rules. Do not retain a wrapper or deprecated `PRIS_FRONTEND_URL` fallback because there are no production invitation rows or external callers requiring it.
+- [x] Replace `readInvitationConfig()` with the two helpers. Reuse the current base64 canonicality check and URL validation rules. Do not retain a wrapper or deprecated `PRIS_FRONTEND_URL` fallback because there are no production invitation rows or external callers requiring it.
 
 ```ts
 export function readInvitationEncryptionKey(env: NodeJS.ProcessEnv): Buffer {
@@ -188,7 +188,7 @@ export function parseInvitationFrontendOrigin(
 }
 ```
 
-- [ ] Run GREEN in Docker and then compile API in Docker.
+- [x] Run GREEN in Docker and then compile API in Docker. Token GREEN 5/5; deferred compile closed after Task 3 GREEN.
 
 ```powershell
 docker compose -p session-invitations-test -f docker-compose.session-grants-test.yml -f docker-compose.session-invitations-test.yml run --rm api-tools sh -lc './node_modules/.bin/tsx --test src/modules/session-grants/invitation-token.test.ts && npm run build'
@@ -206,9 +206,9 @@ Expected: token tests pass; API build may remain RED until Tasks 2–3 replace o
 
 **Consumes:** Task 1 helpers. **Produces:** every newly created invited item contains immutable validated `responseOrigin`.
 
-- [ ] Extend the email snapshot types exactly as shown in Stable interfaces. Do not add a database column or modify the immediate-grant snapshot.
+- [x] Extend the email snapshot types exactly as shown in Stable interfaces. Do not add a database column or modify the immediate-grant snapshot.
 
-- [ ] Add failing integration cases using separate synthetic Events:
+- [x] Add failing integration cases using separate synthetic Events:
 
   - gated Event A has `website_url='http://localhost:3004/'`; creation succeeds and stores `responseOrigin='http://localhost:3004'`;
   - gated Event with null or invalid/non-root website rejects atomically with `SESSION_INVITATION_CONFIG_ERROR`; batch/item/invitation/reservation counts remain unchanged;
@@ -224,19 +224,19 @@ FROM registration_session_grant_items
 WHERE id = $1;
 ```
 
-- [ ] Run focused RED in Docker. Expected: creation ignores `events.website_url` and snapshot has no `responseOrigin`.
+- [x] Run focused RED in Docker. Expected: creation ignores `events.website_url` and snapshot has no `responseOrigin`.
 
 ```powershell
 docker compose -p session-invitations-test -f docker-compose.session-grants-test.yml -f docker-compose.session-invitations-test.yml run --rm api-tools sh -lc './node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitations.integration.test.ts'
 ```
 
-- [ ] Extend the existing locked session/Event query in `createGrant()` with `eventWebsiteUrl: events.websiteUrl`. Do not add another query.
+- [x] Extend the existing locked session/Event query in `createGrant()` with `eventWebsiteUrl: events.websiteUrl`. Do not add another query.
 
 ```ts
 eventWebsiteUrl: events.websiteUrl,
 ```
 
-- [ ] Replace the combined config local with two locals whose values exist only for the gated branch. Validate URL and key before capacity and before inserts.
+- [x] Replace the combined config local with two locals whose values exist only for the gated branch. Validate URL and key before capacity and before inserts.
 
 ```ts
 let invitationKey: Buffer | null = null;
@@ -252,7 +252,7 @@ if (session.adminGrantRequiresConfirmation) {
 }
 ```
 
-- [ ] In the invited branch, issue the token with `invitationKey`. Construct a typed invitation snapshot before the insert so TypeScript guarantees `responseOrigin` is written.
+- [x] In the invited branch, issue the token with `invitationKey`. Construct a typed invitation snapshot before the insert so TypeScript guarantees `responseOrigin` is written.
 
 ```ts
 const notificationSnapshot: InvitationNotificationSnapshot = {
@@ -285,9 +285,9 @@ const notificationSnapshot: InvitationNotificationSnapshot & {
 } = { /* complete object above */ };
 ```
 
-- [ ] Keep `buildEventEmailContext({ websiteUrl: null })` unchanged in this delta because its website fallback is unrelated to the response link and its returned website is not persisted here. Do not route invitation origin through that fallback helper.
+- [x] Keep `buildEventEmailContext({ websiteUrl: null })` unchanged in this delta because its website fallback is unrelated to the response link and its returned website is not persisted here. Do not route invitation origin through that fallback helper.
 
-- [ ] Run focused GREEN and the legacy service suite in Docker.
+- [x] Run focused GREEN and the legacy service suite in Docker.
 
 ```powershell
 docker compose -p session-invitations-test -f docker-compose.session-grants-test.yml -f docker-compose.session-invitations-test.yml run --rm api-tools sh -lc './node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitations.integration.test.ts src/modules/session-grants/service.integration.test.ts'
@@ -304,7 +304,7 @@ Expected: gated cases prove DB origin and atomic rejection; ungated immediate-gr
 
 **Consumes:** Task 1 key/origin helpers and Task 2 snapshot. **Produces:** worker no longer reads current Event URL or `PRIS_FRONTEND_URL`.
 
-- [ ] Add failing integration assertions for this exact sequence:
+- [x] Add failing integration assertions for this exact sequence:
 
   1. Create invitation while Event website is `http://localhost:3004`.
   2. Change Event website to `http://127.0.0.1:3004` before first worker claim.
@@ -312,17 +312,17 @@ Expected: gated cases prove DB origin and atomic rejection; ungated immediate-gr
   4. Fail before send, retry after another Event URL change, and prove link/token/deadline/origin remain identical.
   5. Create a new invitation after the change and prove it uses the new Event origin.
 
-- [ ] Add failing worker cases for missing, non-string, and invalid/non-root `notification_snapshot.responseOrigin`. Expected: item becomes `failed`, transport send count stays zero, error/log text contains no rejected URL, and token hash/ciphertext/deadline remain unchanged.
+- [x] Add failing worker cases for missing, non-string, and invalid/non-root `notification_snapshot.responseOrigin`. Expected: item becomes `failed`, transport send count stays zero, error/log text contains no rejected URL, and token hash/ciphertext/deadline remain unchanged.
 
-- [ ] Preserve existing wrong-key, unknown-delivery, restart, accepted/declined/expired suppression, and no-entitlement-before-acceptance assertions.
+- [x] Preserve existing wrong-key, unknown-delivery, restart, accepted/declined/expired suppression, and no-entitlement-before-acceptance assertions.
 
-- [ ] Run focused RED in Docker. Expected: links still follow `PRIS_FRONTEND_URL` or invited snapshot validation is absent.
+- [x] Run focused RED in Docker. Expected: links still follow `PRIS_FRONTEND_URL` or invited snapshot validation is absent.
 
 ```powershell
 docker compose -p session-invitations-test -f docker-compose.session-grants-test.yml -f docker-compose.session-invitations-test.yml run --rm api-tools sh -lc './node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitation-email.integration.test.ts'
 ```
 
-- [ ] In the invited mail branch, read the encryption key independently and validate the untrusted snapshot origin before decrypting/rendering. Do not join `events` and do not add Event URL to the worker query.
+- [x] In the invited mail branch, read the encryption key independently and validate the untrusted snapshot origin before decrypting/rendering. Do not join `events` and do not add Event URL to the worker query.
 
 ```ts
 const invitationSnapshot =
@@ -344,9 +344,9 @@ rendered = renderInvitationEmail(
 );
 ```
 
-- [ ] Keep the existing catch/audit path. It must record a safe error code/message and release the claim without logging snapshot content or raw URL/token. Do not change retry state transitions.
+- [x] Keep the existing catch/audit path. It must record a safe error code/message and release the claim without logging snapshot content or raw URL/token. Do not change retry state transitions.
 
-- [ ] Run focused GREEN, Task 1 compile recheck, and invitation unit suites in Docker.
+- [x] Run focused GREEN, Task 1 compile recheck, and invitation unit suites in Docker.
 
 ```powershell
 docker compose -p session-invitations-test -f docker-compose.session-grants-test.yml -f docker-compose.session-invitations-test.yml run --rm api-tools sh -lc './node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitation-email.integration.test.ts && npm run test:session-invitations && npm run build'
@@ -366,7 +366,7 @@ Expected: integration and unit suites pass; `rg` finds no `readInvitationConfig`
 
 **Consumes:** Tasks 1–3. **Produces:** reproducible Docker proof with no invitation frontend ENV.
 
-- [ ] Change review Events to store explicit local website roots. Use `http://localhost:3004` for links captured outside the Docker network; browser harness may continue replacing only the origin with `http://pris-server:3004` in memory as the completed verification design requires.
+- [x] Change review Events to store explicit local website roots. Use `http://localhost:3004` for links captured outside the Docker network; browser harness may continue replacing only the origin with `http://pris-server:3004` in memory as the completed verification design requires.
 
 ```sql
 INSERT INTO events (
@@ -376,11 +376,11 @@ INSERT INTO events (
 );
 ```
 
-- [ ] Replace fixture `readInvitationConfig(process.env)` with `readInvitationEncryptionKey(process.env)`. Every fixture-created invited item that the worker can claim must store a complete snapshot including `responseOrigin`; terminal/suppressed rows may use the same valid shape to keep fixture behavior realistic.
+- [x] Replace fixture `readInvitationConfig(process.env)` with `readInvitationEncryptionKey(process.env)`. Every fixture-created invited item that the worker can claim must store a complete snapshot including `responseOrigin`; terminal/suppressed rows may use the same valid shape to keep fixture behavior realistic.
 
-- [ ] Remove `PRIS_FRONTEND_URL` from `api-tools`, `api-server`, and `worker` in `docker-compose.session-invitations-test.yml`. Keep `SESSION_INVITATION_ENCRYPTION_KEY`, `NEXT_PUBLIC_API_URL`, browser `BASE_URL_PRIS`, and explicit `CORS_ORIGIN` unchanged.
+- [x] Remove `PRIS_FRONTEND_URL` from `api-tools`, `api-server`, and `worker` in `docker-compose.session-invitations-test.yml`. Keep `SESSION_INVITATION_ENCRYPTION_KEY`, `NEXT_PUBLIC_API_URL`, browser `BASE_URL_PRIS`, and explicit `CORS_ORIGIN` unchanged.
 
-- [ ] In `session-invitations-e2e-accept-latest.mjs`, assert the captured public link uses the Event snapshot origin before extracting the token and replacing only the origin for private Docker navigation.
+- [x] In `session-invitations-e2e-accept-latest.mjs`, assert the captured public link uses the Event snapshot origin before extracting the token and replacing only the origin for private Docker navigation.
 
 ```js
 const mailed = new URL(href);
@@ -389,7 +389,7 @@ assert.equal(mailed.pathname, "/th/sessions/confirm");
 const token = mailed.searchParams.get("token");
 ```
 
-- [ ] Prove obsolete runtime coupling is gone with a host source inspection. Expected: no application/test/Compose reference; historical plans/evidence may retain old text until updated in the final step.
+- [x] Prove obsolete runtime coupling is gone with a host source inspection. Expected: no application/test/Compose reference; historical plans/evidence may retain old text until updated in the final step.
 
 ```powershell
 rg -n "PRIS_FRONTEND_URL|readInvitationConfig" src review docker-compose.session-invitations-test.yml
@@ -397,9 +397,9 @@ rg -n "PRIS_FRONTEND_URL|readInvitationConfig" src review docker-compose.session
 
 Expected: no matches.
 
-- [ ] Recreate only the isolated Docker test project resources needed for this run, apply the existing guarded test-harness schema prerequisites, and seed fresh fixtures. Verify database identity before reset/provision. Do not use `db:push`, a host runner, production credentials, or a shared database.
+- [x] Recreate only the isolated Docker test project resources needed for this run, apply the existing guarded test-harness schema prerequisites, and seed fresh fixtures. Verify database identity before reset/provision. Do not use `db:push`, a host runner, production credentials, or a shared database.
 
-- [ ] Run complete API invitation regression in Docker:
+- [x] Run complete API invitation regression in Docker:
 
 ```powershell
 docker compose -p session-invitations-test -f docker-compose.session-grants-test.yml -f docker-compose.session-invitations-test.yml run --rm api-tools sh -lc 'npm run test:session-invitations && npm run test:session-invitations:integration && npm run test:session-grants && npm run build'
@@ -407,7 +407,7 @@ docker compose -p session-invitations-test -f docker-compose.session-grants-test
 
 Expected: all commands exit 0. Existing lifecycle/capacity/security/mail/writer/check-in/payment compatibility tests remain green.
 
-- [ ] Refresh the ignored browser-token file from the current guarded fixture without printing or copying tokens into tracked evidence. Run this after the runtime schema clone and fixture cleanup described above, before creating the browser container so Compose reads the new file.
+- [x] Refresh the ignored browser-token file from the current guarded fixture without printing or copying tokens into tracked evidence. Run this after the runtime schema clone and fixture cleanup described above, before creating the browser container so Compose reads the new file.
 
 ```powershell
 $fixtureResult = docker compose -p session-invitations-test -f docker-compose.session-grants-test.yml -f docker-compose.session-invitations-test.yml run --rm api-tools ./node_modules/.bin/tsx review/session-invitations-review-fixture.ts setup | ConvertFrom-Json
@@ -425,7 +425,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Review token file is not ignored by Git' }
 
 Expected: the final command exits 0. Do not display the file or include it in `git add`.
 
-- [ ] Start the isolated runtime stack and use the completed review harness sequence: run the full browser review, which creates the `INV-CAND-2` invitation; run the worker once through fake transport; then run the focused captured-mail acceptance check. All processes stay inside Docker.
+- [x] Start the isolated runtime stack and use the completed review harness sequence: run the full browser review, which creates the `INV-CAND-2` invitation; run the worker once through fake transport; then run the focused captured-mail acceptance check. All processes stay inside Docker.
 
 ```powershell
 docker compose -p session-invitations-test -f docker-compose.session-grants-test.yml -f docker-compose.session-invitations-test.yml up -d postgres fake-mail api-server worker backoffice-server pris-server browser
@@ -436,7 +436,7 @@ docker compose -p session-invitations-test -f docker-compose.session-grants-test
 
 Expected: fake link origin equals the Event snapshot origin, PRIS confirmation page loads, acceptance creates exactly one entitlement, and no raw link/token is written to tracked evidence.
 
-- [ ] Update only stale origin/config statements in `final-readiness.md` and `gates.json` with actual commands/revisions/results. State that production now requires:
+- [x] Update only stale origin/config statements in `final-readiness.md` and `gates.json` with actual commands/revisions/results. State that production now requires:
 
   - valid `events.website_url` for the target Event;
   - the authoritative migration/provisioning gap for `events.website_url` to be resolved before deployment;
@@ -446,7 +446,7 @@ Expected: fake link origin equals the Event snapshot origin, PRIS confirmation p
 
   Remove the obsolete action to configure `PRIS_FRONTEND_URL`. Do not alter historical facts about tests run against the previous revision; add a dated focused-delta verification entry instead.
 
-- [ ] Run final source/evidence inspection. Confirm no schema/migration/Backoffice/Pris2026/conference-web files changed, no raw token/mail capture was staged, and the pre-existing untracked continuation prompt remains untouched.
+- [x] Run final source/evidence inspection. Confirm no schema/migration/Backoffice/Pris2026/conference-web files changed, no raw token/mail capture was staged, and the pre-existing untracked continuation prompt remains untouched.
 
 ```powershell
 git diff --check
@@ -455,7 +455,7 @@ git diff --stat
 rg -n "PRIS_FRONTEND_URL|readInvitationConfig" src review docker-compose.session-invitations-test.yml
 ```
 
-- [ ] Explicitly stage only files in this plan. Review staged diff, then create one commit after every check above passes. Do not push.
+- [x] Explicitly stage only files in this plan. Review staged diff, then create one commit after every check above passes. Do not push.
 
 ```powershell
 git add -- src/modules/session-grants/invitation-token.ts src/modules/session-grants/invitation-token.test.ts src/modules/session-grants/email-template.ts src/modules/session-grants/service.ts src/modules/session-grants/invitations.integration.test.ts src/modules/session-grants/email-jobs.ts src/modules/session-grants/invitation-email.integration.test.ts review/session-invitations-review-fixture.ts review/session-invitations-e2e-accept-latest.mjs docker-compose.session-invitations-test.yml docs/superpowers/verification/admin-session-invitations/final-readiness.md docs/superpowers/verification/admin-session-invitations/gates.json
@@ -479,19 +479,19 @@ browser commands plus results. No production operation or push performed.
 
 ## Acceptance checklist
 
-- [ ] Gated invitation creation requires a valid `events.website_url` and fails atomically otherwise.
-- [ ] Ungated immediate grant behavior does not require an Event website.
-- [ ] Snapshot contains normalized `responseOrigin`; raw token remains only encrypted/hash-protected as before.
-- [ ] First send and every retry use snapshot origin, even after Event website changes.
-- [ ] New invitation after Event website changes uses the new origin.
-- [ ] Worker never rereads current Event website and never falls back to `PRIS_FRONTEND_URL` or `CONFER_URL`.
-- [ ] Missing/invalid snapshot origin sends no email and does not rotate token/deadline.
-- [ ] `SESSION_INVITATION_ENCRYPTION_KEY` remains mandatory and stable.
-- [ ] `CORS_ORIGIN` remains an explicit trusted-origin deployment setting.
-- [ ] No application/test/Compose dependency on `PRIS_FRONTEND_URL` remains.
-- [ ] No database schema/migration, Backoffice, Pris2026, conference-web, payment, registration, or check-in change is included.
-- [ ] Focused and full Docker verification pass at the final source revision.
-- [ ] One explicit-file commit is created; nothing is pushed.
+- [x] Gated invitation creation requires a valid `events.website_url` and fails atomically otherwise.
+- [x] Ungated immediate grant behavior does not require an Event website.
+- [x] Snapshot contains normalized `responseOrigin`; raw token remains only encrypted/hash-protected as before.
+- [x] First send and every retry use snapshot origin, even after Event website changes.
+- [x] New invitation after Event website changes uses the new origin.
+- [x] Worker never rereads current Event website and never falls back to `PRIS_FRONTEND_URL` or `CONFER_URL`.
+- [x] Missing/invalid snapshot origin sends no email and does not rotate token/deadline.
+- [x] `SESSION_INVITATION_ENCRYPTION_KEY` remains mandatory and stable.
+- [x] `CORS_ORIGIN` remains an explicit trusted-origin deployment setting.
+- [x] No application/test/Compose dependency on `PRIS_FRONTEND_URL` remains.
+- [x] No database schema/migration, Backoffice, Pris2026, conference-web, payment, registration, or check-in change is included.
+- [x] Focused and full Docker verification pass at the final source revision.
+- [x] One explicit-file commit is created; nothing is pushed.
 
 ## Deployment preflight after implementation
 

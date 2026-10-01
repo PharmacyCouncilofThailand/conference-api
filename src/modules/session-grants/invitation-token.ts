@@ -20,9 +20,7 @@ export function hashInvitationToken(rawToken: string): string {
   return createHash("sha256").update(rawToken, "utf8").digest("hex");
 }
 
-export function readInvitationConfig(
-  env: NodeJS.ProcessEnv,
-): { key: Buffer; frontendOrigin: string } {
+export function readInvitationEncryptionKey(env: NodeJS.ProcessEnv): Buffer {
   const encoded = env.SESSION_INVITATION_ENCRYPTION_KEY?.trim() ?? "";
   const key = Buffer.from(encoded, "base64");
   if (key.length !== 32 || key.toString("base64") !== encoded) {
@@ -33,20 +31,27 @@ export function readInvitationConfig(
     );
   }
 
+  return key;
+}
+
+export function parseInvitationFrontendOrigin(
+  value: string | null | undefined,
+  nodeEnv: string | undefined,
+): string {
   let url: URL;
   try {
-    url = new URL(env.PRIS_FRONTEND_URL ?? "");
+    url = new URL(value?.trim() ?? "");
   } catch {
     throw new GrantError(
       503,
       "SESSION_INVITATION_CONFIG_ERROR",
-      "Invitation frontend is not configured",
+      "Event invitation website is not configured",
     );
   }
 
   const localhost = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   const localHttp =
-    env.NODE_ENV !== "production" && localhost && url.protocol === "http:";
+    nodeEnv !== "production" && localhost && url.protocol === "http:";
   if (
     (!localHttp && url.protocol !== "https:") ||
     url.username ||
@@ -58,11 +63,11 @@ export function readInvitationConfig(
     throw new GrantError(
       503,
       "SESSION_INVITATION_CONFIG_ERROR",
-      "Invitation frontend must be a trusted origin",
+      "Event invitation website must be a trusted origin",
     );
   }
 
-  return { key, frontendOrigin: url.origin };
+  return url.origin;
 }
 
 export function issueInvitationToken(

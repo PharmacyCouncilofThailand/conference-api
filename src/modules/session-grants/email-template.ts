@@ -16,6 +16,10 @@ export interface GrantNotificationSnapshot {
   participantUrl: string | null;
 }
 
+export interface InvitationNotificationSnapshot extends GrantNotificationSnapshot {
+  responseOrigin: string;
+}
+
 export class GrantEmailTemplateError extends Error {
   constructor(message: string) {
     super(message);

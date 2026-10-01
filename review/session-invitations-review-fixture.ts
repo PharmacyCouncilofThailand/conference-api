@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import postgres from "postgres";
 import {
   issueInvitationToken,
-  readInvitationConfig,
+  readInvitationEncryptionKey,
 } from "../src/modules/session-grants/invitation-token.js";
 
 const PREFIX = "inv-review-20261001";
@@ -91,7 +91,7 @@ async function setup(sql: postgres.Sql): Promise<void> {
 
   await cleanup(sql);
   const passwordHash = await bcrypt.hash(PASSWORD, 10);
-  const { key } = readInvitationConfig(process.env);
+  const key = readInvitationEncryptionKey(process.env);
   const now = new Date();
   const future = (hours: number) => new Date(now.getTime() + hours * 3_600_000);
   const past = (hours: number) => new Date(now.getTime() - hours * 3_600_000);
@@ -107,12 +107,12 @@ async function setup(sql: postgres.Sql): Promise<void> {
       RETURNING id`;
 
     const [event] = await tx<Array<{ id: number }>>`
-      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,max_capacity,status)
-      VALUES (${EVENT_CODE},'Session Invitation Review Event','multi_session',${past(24)},${future(96)},1000,'published')
+      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,max_capacity,status,website_url)
+      VALUES (${EVENT_CODE},'Session Invitation Review Event','multi_session',${past(24)},${future(96)},1000,'published','http://localhost:3004')
       RETURNING id`;
     const [eventB] = await tx<Array<{ id: number }>>`
-      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,max_capacity,status)
-      VALUES (${EVENT_B_CODE},'Invitation Review Event B','multi_session',${past(24)},${future(96)},1000,'published')
+      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,max_capacity,status,website_url)
+      VALUES (${EVENT_B_CODE},'Invitation Review Event B','multi_session',${past(24)},${future(96)},1000,'published','http://localhost:3004')
       RETURNING id`;
 
     const sessions = await tx<Array<{ id: number; session_code: string }>>`
@@ -217,8 +217,17 @@ async function setup(sql: postgres.Sql): Promise<void> {
         recipient_email_snapshot,notification_snapshot,email_status,attempt_count,last_error_code,created_at
       ) SELECT
         ${itemId},${batchId},r.id,r.reg_code,concat(r.first_name,' ',r.last_name),'invited',NULL,
-        r.email,'{}'::jsonb,${emailStatus},${emailStatus === 'failed' ? 1 : 0},${emailStatus === 'failed' ? 'SYNTHETIC_FAILED' : null},clock_timestamp()
-      FROM registrations r WHERE r.id=${registrationId}`;
+        r.email,jsonb_build_object(
+          'registrationId',r.id,'regCode',r.reg_code,'personName',concat(r.first_name,' ',r.last_name),
+          'eventId',e.id,'eventName',e.event_name,'eventShortName',e.event_name,
+          'eventDates',e.start_date::text || ' - ' || e.end_date::text,'eventVenue','Synthetic review venue',
+          'sessionId',s.id,'sessionName',s.session_name,'sessionType',s.session_type,
+          'startTime',to_char(s.start_time,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'endTime',to_char(s.end_time,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'room',s.room,'participantUrl',NULL,'responseOrigin',e.website_url
+        ),${emailStatus},${emailStatus === 'failed' ? 1 : 0},${emailStatus === 'failed' ? 'SYNTHETIC_FAILED' : null},clock_timestamp()
+      FROM registrations r JOIN events e ON e.id=r.event_id JOIN sessions s ON s.id=${sessionId}
+      WHERE r.id=${registrationId}`;
       await tx`INSERT INTO session_invitations (
         id,grant_item_id,registration_id,session_id,status,token_hash,token_ciphertext,expires_at,
         responded_at,closed_at,created_by,created_at

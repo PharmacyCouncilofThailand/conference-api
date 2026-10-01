@@ -14,6 +14,7 @@ import {
   renderGrantEmail,
   renderInvitationEmail,
   type GrantNotificationSnapshot,
+  type InvitationNotificationSnapshot,
 } from "./email-template.js";
 import {
   effectiveDeadline,
@@ -24,7 +25,8 @@ import {
   buildInvitationUrl,
   decryptInvitationToken,
   hashInvitationToken,
-  readInvitationConfig,
+  readInvitationEncryptionKey,
+  parseInvitationFrontendOrigin,
 } from "./invitation-token.js";
 import type {
   GrantDatabase,
@@ -345,11 +347,16 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
               { code: "INVITATION_PAYLOAD_INVALID" },
             );
           }
-          const config = readInvitationConfig(process.env);
+          const invitationSnapshot = snapshot as InvitationNotificationSnapshot;
+          const responseOrigin = parseInvitationFrontendOrigin(
+            invitationSnapshot.responseOrigin,
+            process.env.NODE_ENV,
+          );
+          const key = readInvitationEncryptionKey(process.env);
           const rawToken = decryptInvitationToken(
             invitation.id,
             invitation.tokenCiphertext as TokenEnvelope,
-            config.key,
+            key,
           );
           if (hashInvitationToken(rawToken) !== invitation.tokenHash) {
             throw Object.assign(
@@ -359,7 +366,7 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
           }
           rendered = renderInvitationEmail(
             snapshot,
-            buildInvitationUrl(rawToken, config.frontendOrigin),
+            buildInvitationUrl(rawToken, responseOrigin),
             effectiveDeadline(
               expiresAt,
               startTime,

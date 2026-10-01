@@ -75,13 +75,15 @@ assert.doesNotMatch(message.subject, /payment|receipt|ชำระเงิน|�
 const href = message.html.match(/href="([^"]*\/sessions\/confirm\?token=[a-f0-9]{64})"/i)?.[1];
 assert.ok(href, 'Invitation response URL missing from synthetic mail');
 const mailed = new URL(href);
+assert.equal(mailed.origin, 'http://localhost:3004');
+assert.equal(mailed.pathname, '/th/sessions/confirm');
 const token = mailed.searchParams.get('token');
 assert.match(token || '', /^[a-f0-9]{64}$/);
 
 const chrome = await launchChrome();
 const cdp = await connect();
 try {
-  const browserUrl = `${PRIS_URL}/th/sessions/confirm?token=${token}`;
+  const browserUrl = new URL(mailed.pathname + mailed.search, PRIS_URL).toString();
   await cdp.send('Page.navigate',{url:browserUrl});
   await waitFor(cdp, `document.body.innerText.includes('ยืนยันเข้าร่วม')`, 'PRIS invitation response');
   await clickText(cdp, 'ยืนยันเข้าร่วม');
@@ -95,5 +97,5 @@ try {
 } finally {
   cdp.close();
   chrome.child.kill('SIGKILL');
-  fs.rmSync(chrome.profile,{recursive:true,force:true});
+  fs.rmSync(chrome.profile,{recursive:true,force:true,maxRetries:5,retryDelay:100});
 }

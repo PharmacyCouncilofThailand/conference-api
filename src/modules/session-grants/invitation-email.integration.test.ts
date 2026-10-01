@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import test from "node:test";
+import { readFile } from "node:fs/promises";
+import test, { before } from "node:test";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "../../database/schema.js";
 import {
@@ -45,6 +46,15 @@ function invitationUrl(html: string): string {
   return match[1].replaceAll("&amp;", "&");
 }
 
+before(async () => {
+  const sql = openSessionGrantTestDatabase();
+  try {
+    await sql.unsafe(await readFile(new URL("../../../review/session-invitations-test-harness-prerequisites.sql", import.meta.url), "utf8"));
+  } finally {
+    await sql.end({ timeout: 2 });
+  }
+});
+
 test(
   "invitation mail sends without entitlement and retry keeps the original credential while closed invitations suppress",
   { timeout: 90_000 },
@@ -62,10 +72,10 @@ test(
       RETURNING id
     `;
     const [event] = await sql<Array<{id:number}>>`
-      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,status)
+      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,status,website_url)
       VALUES (
         ${eventCode},'Invitation Mail Event','multi_session',
-        clock_timestamp(),clock_timestamp()+interval '5 days','published'
+        clock_timestamp(),clock_timestamp()+interval '5 days','published','http://localhost:3004'
       ) RETURNING id
     `;
     const [ticket] = await sql<Array<{id:number}>>`
@@ -121,6 +131,45 @@ test(
       await sql.end({timeout:2});
     });
 
+    for (const [index, origin] of [undefined, null, 17, { value: "https://pris.example.test" },
+      "https://pris.example.test/private-origin", "https://user:private@pris.example.test", "https://pris.example.test/?private=query"].entries()) {
+      await t.test(`invalid snapshot origin case ${index} fails safely without delivery or credential mutation`, async () => {
+        const [registration] = await sql<Array<{ id: number }>>`
+          INSERT INTO registrations (reg_code,event_id,ticket_type_id,email,first_name,last_name,status)
+          VALUES (${`INV-MAIL-${unique}-INVALID-${index}`},${event.id},${ticket.id},
+            ${`invalid-${unique}-${index}@example.invalid`},'Invalid','Origin','confirmed') RETURNING id
+        `;
+        const batch = await createGrant(database, { actorId: actor.id, idempotencyKey: randomUUID(),
+          sessionId: session.id, registrationIds: [registration.id] });
+        const itemId = batch.batch.results[0]!.id;
+        await sql`UPDATE registration_session_grant_items SET notification_snapshot=
+          (notification_snapshot - 'responseOrigin') || ${JSON.stringify(origin === undefined ? {} : { responseOrigin: origin })}::jsonb
+          WHERE id=${itemId}::uuid`;
+        const credential = async () => {
+          const [row] = await sql`
+            SELECT token_hash,token_ciphertext,expires_at,status FROM session_invitations WHERE grant_item_id=${itemId}::uuid
+          `;
+          return JSON.stringify(row);
+        };
+        const before = await credential();
+        let sends = 0;
+        await runGrantEmailsOnce(database, { async send() { sends += 1; return {}; } }, new Date());
+        assert.equal(sends, 0);
+        assert.equal((await credential()) === before, true, "invalid snapshot must preserve credentials/deadline");
+        const [state] = await sql`
+          SELECT gi.email_status,gi.last_error_code,gi.claim_token,gi.claimed_until,a.error_message
+          FROM registration_session_grant_items gi JOIN registration_session_grant_email_attempts a ON a.item_id=gi.id
+          WHERE gi.id=${itemId}::uuid ORDER BY a.attempt_no DESC LIMIT 1
+        `;
+        assert.equal(state.email_status, "failed");
+        assert.equal(state.last_error_code, "SESSION_INVITATION_CONFIG_ERROR");
+        assert.equal(state.claim_token, null);
+        assert.equal(state.claimed_until, null);
+        assert.equal(String(state.error_message).includes("private"), false);
+        assert.equal(String(state.error_message).includes("pris.example.test"), false);
+      });
+    }
+
     const retryBatch = await createGrant(database,{
       actorId:actor.id,idempotencyKey:randomUUID(),sessionId:session.id,
       registrationIds:[registrations[0]!.id],
@@ -128,6 +177,8 @@ test(
     const retryItem = retryBatch.batch.results[0]!;
     assert.equal(retryItem.outcome,"invited");
     assert.equal(retryItem.registrationSessionId,null);
+
+    await sql`UPDATE events SET website_url='http://127.0.0.1:3004' WHERE id=${event.id}`;
 
     let firstHtml = "";
     const firstRun = await runGrantEmailsOnce(database,{
@@ -168,6 +219,8 @@ test(
     }
     assert.equal(firstRun.failed,1);
     const firstUrl=invitationUrl(firstHtml);
+    assert.equal(new URL(firstUrl).origin, "http://localhost:3004");
+    assert.equal(new URL(firstUrl).pathname, "/th/sessions/confirm");
     const firstToken=new URL(firstUrl).searchParams.get("token");
     assert.ok(firstToken);
     const [storedRetryInvitation]=await sql<Array<{
@@ -183,6 +236,7 @@ test(
       createHash("sha256").update(firstToken!).digest("hex"),
     );
 
+    await sql`UPDATE events SET website_url='http://[::1]:3004/' WHERE id=${event.id}`;
     const retryResult=await retryGrantEmails(database,{
       actorId:actor.id,batchId:retryBatch.batch.batchId,itemIds:[retryItem.id],
       acknowledgeUnknown:false,
@@ -196,7 +250,43 @@ test(
       },
     },new Date());
     assert.equal(secondRun.sent,1);
-    assert.equal(invitationUrl(retryHtml),firstUrl);
+    assert.equal(invitationUrl(retryHtml) === firstUrl, true, "retry must preserve response URL without logging credential");
+    assert.equal(retryHtml === firstHtml, true, "retry must preserve snapshotted deadline and content");
+    const [retryAfter] = await sql`
+      SELECT token_hash,status,token_ciphertext,expires_at FROM session_invitations WHERE grant_item_id=${retryItem.id}::uuid
+    `;
+    assert.equal(JSON.stringify(retryAfter) === JSON.stringify(storedRetryInvitation), true);
+
+    const [newRegistration] = await sql<Array<{ id: number }>>`
+      INSERT INTO registrations (reg_code,event_id,ticket_type_id,email,first_name,last_name,status)
+      VALUES (${`INV-MAIL-${unique}-NEW`},${event.id},${ticket.id},${`new-${unique}@example.invalid`},'New','Origin','confirmed') RETURNING id
+    `;
+    const newBatch = await createGrant(database, { actorId: actor.id, idempotencyKey: randomUUID(), sessionId: session.id,
+      registrationIds: [newRegistration.id] });
+    let newOrigin = "";
+    let newToken = "";
+    const newRun = await runGrantEmailsOnce(database, { async send(input) {
+      const url = new URL(invitationUrl(input.html));
+      newOrigin = url.origin;
+      newToken = url.searchParams.get("token")!;
+      return {};
+    } }, new Date());
+    assert.equal(newRun.sent, 1);
+    assert.equal(newOrigin, "http://[::1]:3004");
+    await respondToInvitation(database, newToken, "accepted");
+    await sql`UPDATE registration_session_grant_items SET email_status='pending'
+      WHERE id=${newBatch.batch.results[0]!.id}::uuid`;
+    let acceptedSends = 0;
+    const acceptedRun = await runGrantEmailsOnce(database, { async send() { acceptedSends += 1; return {}; } }, new Date());
+    assert.equal(acceptedRun.suppressed, 1);
+    assert.equal(acceptedSends, 0);
+    await sql`UPDATE session_invitations SET expires_at=clock_timestamp()-interval '1 minute'
+      WHERE grant_item_id=${retryItem.id}::uuid`;
+    await sql`UPDATE registration_session_grant_items SET email_status='pending' WHERE id=${retryItem.id}::uuid`;
+    let expiredSends = 0;
+    const expiredRun = await runGrantEmailsOnce(database, { async send() { expiredSends += 1; return {}; } }, new Date());
+    assert.equal(expiredRun.suppressed, 1);
+    assert.equal(expiredSends, 0);
 
     const declineBatch=await createGrant(database,{
       actorId:actor.id,idempotencyKey:randomUUID(),sessionId:session.id,
@@ -228,6 +318,17 @@ test(
     const keyItem=keyBatch.batch.results[0]!;
     const originalKey=process.env.SESSION_INVITATION_ENCRYPTION_KEY;
     try {
+      delete process.env.SESSION_INVITATION_ENCRYPTION_KEY;
+      let missingKeySends = 0;
+      await runGrantEmailsOnce(database, { async send() { missingKeySends += 1; return {}; } }, new Date());
+      assert.equal(missingKeySends, 0);
+      const [missingKeyState] = await sql`
+        SELECT email_status,last_error_code FROM registration_session_grant_items WHERE id=${keyItem.id}::uuid
+      `;
+      assert.equal(missingKeyState.email_status, "failed");
+      assert.equal(missingKeyState.last_error_code, "SESSION_INVITATION_CONFIG_ERROR");
+      await retryGrantEmails(database, { actorId: actor.id, batchId: keyBatch.batch.batchId,
+        itemIds: [keyItem.id], acknowledgeUnknown: false });
       process.env.SESSION_INVITATION_ENCRYPTION_KEY=Buffer.alloc(32,9).toString("base64");
       let keySendCalls=0;
       await runGrantEmailsOnce(database,{

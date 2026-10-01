@@ -11,6 +11,7 @@ import {
   sessions,
 } from "../../database/schema.js";
 import { buildEventEmailContext } from "../../services/emailTemplates.types.js";
+import type { InvitationNotificationSnapshot } from "./email-template.js";
 import {
   effectiveDeadline,
   effectiveInvitationStatus,
@@ -18,7 +19,8 @@ import {
 } from "./invitation-policy.js";
 import {
   issueInvitationToken,
-  readInvitationConfig,
+  readInvitationEncryptionKey,
+  parseInvitationFrontendOrigin,
 } from "./invitation-token.js";
 import { readInvitationCapacity } from "./invitations.js";
 import {
@@ -364,6 +366,7 @@ export async function createGrant(
         eventStartDate: events.startDate,
         eventEndDate: events.endDate,
         eventLocation: events.location,
+        eventWebsiteUrl: events.websiteUrl,
       })
       .from(sessions)
       .innerJoin(events, eq(sessions.eventId, events.id))
@@ -649,14 +652,17 @@ export async function createGrant(
       reasons.set(registrationId, reasonCode);
     }
 
-    let invitationConfig:
-      | ReturnType<typeof readInvitationConfig>
-      | null = null;
+    let invitationKey: Buffer | null = null;
+    let invitationFrontendOrigin: string | null = null;
     let configuredCapacity:
       | Awaited<ReturnType<typeof readInvitationCapacity>>
       | null = null;
     if (session.adminGrantRequiresConfirmation) {
-      invitationConfig = readInvitationConfig(process.env);
+      invitationKey = readInvitationEncryptionKey(process.env);
+      invitationFrontendOrigin = parseInvitationFrontendOrigin(
+        session.eventWebsiteUrl,
+        process.env.NODE_ENV,
+      );
       configuredCapacity = await readInvitationCapacity(
         tx,
         session.id,
@@ -718,13 +724,35 @@ export async function createGrant(
         session.adminGrantRequiresConfirmation &&
         !reasonCode &&
         registration &&
-        invitationConfig
+        invitationKey && invitationFrontendOrigin
       ) {
         const invitationId = randomUUID();
         const issued = issueInvitationToken(
           invitationId,
-          invitationConfig.key,
+          invitationKey,
         );
+        const notificationSnapshot: InvitationNotificationSnapshot & {
+          registrationId: number;
+          eventId: number;
+          sessionId: number;
+        } = {
+          registrationId,
+          regCode: registration.regCode,
+          personName: nameSnapshot,
+          eventId: session.eventId,
+          eventName: eventEmailContext.eventName,
+          eventShortName: eventEmailContext.shortName,
+          eventDates: eventEmailContext.dates,
+          eventVenue: eventEmailContext.venue,
+          sessionId: session.id,
+          sessionName: session.sessionName,
+          sessionType: session.sessionType,
+          startTime: session.startTime.toISOString(),
+          endTime: session.endTime.toISOString(),
+          room: session.room,
+          participantUrl: null,
+          responseOrigin: invitationFrontendOrigin,
+        };
 
         await tx
           .insert(registrationSessionGrantItems)
@@ -738,23 +766,7 @@ export async function createGrant(
             outcome: "invited",
             reasonCode: null,
             recipientEmailSnapshot: registration.email,
-            notificationSnapshot: {
-              registrationId,
-              regCode: registration.regCode,
-              personName: nameSnapshot,
-              eventId: session.eventId,
-              eventName: eventEmailContext.eventName,
-              eventShortName: eventEmailContext.shortName,
-              eventDates: eventEmailContext.dates,
-              eventVenue: eventEmailContext.venue,
-              sessionId: session.id,
-              sessionName: session.sessionName,
-              sessionType: session.sessionType,
-              startTime: session.startTime.toISOString(),
-              endTime: session.endTime.toISOString(),
-              room: session.room,
-              participantUrl: null,
-            },
+            notificationSnapshot,
             emailStatus: "pending",
           });
 

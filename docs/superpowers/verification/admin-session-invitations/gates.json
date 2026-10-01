@@ -1,5 +1,54 @@
 {
-  "updatedAt": "2026-10-01",
+  "updatedAt": "2026-10-02",
+  "eventOriginDelta": {
+    "date": "2026-10-02",
+    "status": "PASS",
+    "parentRevision": "eecbdeb8db7fd85a0a010d8bf44f73408eb44e97",
+    "runtimeDiffIdentity": "39bf1edecb0441c1cc99be7a9cd3d2e205f19c78",
+    "tasks": { "1": "PASSED", "2": "PASSED", "3": "PASSED", "4": "PASSED" },
+    "dueDependencies": [],
+    "comprehensiveFinal": {
+      "status": "PASS",
+      "project": "session-invitations-test",
+      "composeFiles": ["docker-compose.session-grants-test.yml", "docker-compose.session-invitations-test.yml"],
+      "apiCommand": "run --rm api-tools sh -lc './node_modules/.bin/tsx --test src/modules/session-grants/migration.integration.test.ts && ./node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitation-migration.integration.test.ts && ./node_modules/.bin/tsx --test src/modules/session-grants/invitation-token.test.ts && ./node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitations.integration.test.ts src/modules/session-grants/service.integration.test.ts && ./node_modules/.bin/tsx --test --test-concurrency=1 src/modules/session-grants/invitation-email.integration.test.ts && npm run test:session-invitations && npm run test:session-invitations:integration && npm run test:session-grants && npm run build'",
+      "apiExitCode": 0,
+      "tokenTests": 5,
+      "creationServiceTests": 5,
+      "emailTests": 8,
+      "invitationUnitTests": 19,
+      "migrationTests": 4,
+      "invitationMigrationTests": 2,
+      "serializedIntegrationTests": 18,
+      "grantUnitTests": 19,
+      "typescriptBuild": "PASS",
+      "runtimeCommands": [
+        "exec -T browser node /workspace/conference-api/review/session-invitations-review-e2e.mjs",
+        "run --rm worker sh -lc 'ADMIN_SESSION_GRANTS_ENABLED=true ./node_modules/.bin/tsx src/modules/session-grants/jobs-runner.ts --once'",
+        "exec -T browser node /workspace/conference-api/review/session-invitations-e2e-accept-latest.mjs",
+        "run --rm worker sh -lc './node_modules/.bin/tsx src/modules/session-grants/jobs-runner.ts --healthcheck'"
+      ],
+      "runtimeExitCodes": [0, 0, 0, 0],
+      "browserGateGroups": 7,
+      "fakeWorker": { "claimed": 1, "sent": 1, "failed": 0, "unknown": 0 },
+      "publicOrigin": "http://localhost:3004",
+      "publicPath": "/th/sessions/confirm",
+      "acceptedCandidateEntitlements": 1,
+      "workerBacklog": 0,
+      "obsoleteRuntimeEnv": "ABSENT",
+      "otherRepositoryDiffs": "CLEAN_AFTER_AUTHORIZED_GENERATED_CONFIG_RESTORATION",
+      "evidence": "final-readiness.md section 13 contains exact commands, guarded fresh-state preparation, observed assertions, historical failures and scope closure."
+    },
+    "productionOperations": "NONE",
+    "productionBlockers": [
+      "Close authoritative events.website_url migration/provisioning gap and existing historical prerequisites",
+      "Set canonical HTTPS root for production Event PRIS-2026",
+      "Provision stable server-only SESSION_INVITATION_ENCRYPTION_KEY in API and worker",
+      "Include Event website origin in API CORS_ORIGIN",
+      "Point Pris2026 NEXT_PUBLIC_API_URL to deployed API"
+    ],
+    "productionPrisFrontendUrlRequired": false
+  },
   "gates": {
     "ENV-01": {
       "status": "PASS",
@@ -103,7 +152,8 @@
     },
     "SEC-04": {
       "status": "PASS",
-      "evidence": "PRIS_FRONTEND_URL requires trusted HTTPS origin in production; localhost HTTP only outside production; credentials/path/query/hash rejected."
+      "historicalEvidence": "PRIS_FRONTEND_URL requires trusted HTTPS origin in production; localhost HTTP only outside production; credentials/path/query/hash rejected.",
+      "evidence": "2026-10-02 Event-origin delta: events.website_url is validated at creation and normalized into durable responseOrigin. Production HTTPS root and local-only non-production HTTP rules, safe errors, immutable retry origin and invalid-snapshot no-send behavior passed focused Docker token/creation/email checks. See final-readiness.md section 13 for source identities and commands."
     },
     "SEC-05": {
       "status": "PASS",

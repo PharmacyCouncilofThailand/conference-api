@@ -8,7 +8,6 @@ services:
 
   api-tools:
     environment:
-      PRIS_FRONTEND_URL: http://localhost:3004
       SESSION_INVITATION_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
       SESSION_GRANTS_FAKE_MAIL_URL: http://fake-mail:8025
     volumes:
@@ -27,7 +26,6 @@ services:
 
   api-server:
     environment:
-      PRIS_FRONTEND_URL: http://localhost:3004
       SESSION_INVITATION_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
       CORS_ORIGIN: http://backoffice-server:3001,http://web-server:3003,http://pris-server:3004
     volumes:
@@ -36,7 +34,6 @@ services:
 
   worker:
     environment:
-      PRIS_FRONTEND_URL: http://localhost:3004
       SESSION_INVITATION_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
     volumes:
       - ../Pris2026:/workspace/Pris2026

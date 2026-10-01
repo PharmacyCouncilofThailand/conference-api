@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import test from "node:test";
+import { readFile } from "node:fs/promises";
+import test, { before } from "node:test";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "../../database/schema.js";
 import {
@@ -21,11 +22,121 @@ import {
 import type { GrantDatabase, TokenEnvelope } from "./types.js";
 import { GrantError } from "./types.js";
 
+before(async () => {
+  const sql = openSessionGrantTestDatabase();
+  try {
+    await sql.unsafe(await readFile(new URL("../../../review/session-invitations-test-harness-prerequisites.sql", import.meta.url), "utf8"));
+  } finally {
+    await sql.end({ timeout: 2 });
+  }
+});
+
 function asDatabase(
   client: ReturnType<typeof openSessionGrantTestDatabase>,
 ): GrantDatabase {
   return drizzle(client, { schema }) as GrantDatabase;
 }
+
+test("Event origins reject atomically, snapshot immutably, replay, and leave ungated grants compatible", async (t) => {
+  const sql = openSessionGrantTestDatabase();
+  const database = asDatabase(sql);
+  const unique = randomUUID();
+  const [actor] = await sql<Array<{ id: number }>>`
+    INSERT INTO backoffice_users (email,password_hash,role,first_name,last_name)
+    VALUES (${`origin-${unique}@example.invalid`},'synthetic','admin','Origin','Admin') RETURNING id
+  `;
+  const eventIds: number[] = [];
+  t.after(async () => {
+    await sql`DELETE FROM session_invitations WHERE created_by=${actor.id}`;
+    await sql`DELETE FROM registration_session_grant_items WHERE batch_id IN (
+      SELECT id FROM registration_session_grant_batches WHERE actor_id=${actor.id}
+    )`;
+    await sql`DELETE FROM registration_session_grant_batches WHERE actor_id=${actor.id}`;
+    for (const eventId of eventIds) {
+      await sql`DELETE FROM registration_sessions WHERE session_id IN (SELECT id FROM sessions WHERE event_id=${eventId})`;
+      await sql`DELETE FROM registrations WHERE event_id=${eventId}`;
+      await sql`DELETE FROM sessions WHERE event_id=${eventId}`;
+      await sql`DELETE FROM ticket_types WHERE event_id=${eventId}`;
+      await sql`DELETE FROM events WHERE id=${eventId}`;
+    }
+    await sql`DELETE FROM backoffice_users WHERE id=${actor.id}`;
+    await sql.end({ timeout: 2 });
+  });
+  for (const [index, website] of ["http://localhost:3004/", null, "https://pris.example.test/pris", null].entries()) {
+    const gated = index !== 3;
+    const [event] = await sql<Array<{ id: number }>>`
+      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,status,website_url)
+      VALUES (${`ORIGIN-${unique}-${index}`},'Origin Event','multi_session',clock_timestamp(),
+        clock_timestamp()+interval '5 days','published',${website}) RETURNING id
+    `;
+    eventIds.push(event.id);
+    const [ticket] = await sql<Array<{ id: number }>>`
+      INSERT INTO ticket_types (event_id,category,priority,name,price,currency,quota)
+      VALUES (${event.id},'primary','regular','Origin Ticket',100,'THB',20) RETURNING id
+    `;
+    const [session] = await sql<Array<{ id: number }>>`
+      INSERT INTO sessions (event_id,session_code,session_name,start_time,end_time,max_capacity,is_active,admin_grant_requires_confirmation)
+      VALUES (${event.id},${`ORIGIN-${unique}-${index}`},'Origin Session',clock_timestamp()+interval '2 days',
+        clock_timestamp()+interval '2 days 1 hour',20,true,${gated}) RETURNING id
+    `;
+    const regs = await sql<Array<{ id: number }>>`
+      INSERT INTO registrations (reg_code,event_id,ticket_type_id,email,first_name,last_name,status)
+      SELECT ${`ORIGIN-${unique}-${index}-`} || gs,${event.id},${ticket.id},
+        'origin-' || ${unique} || '-' || ${index} || '-' || gs || '@example.invalid','Origin','Recipient','confirmed'
+      FROM generate_series(1,2) gs RETURNING id
+    `;
+    const input = { actorId: actor.id, idempotencyKey: randomUUID(), sessionId: session.id, registrationIds: [regs[0]!.id] };
+    if (index === 1 || index === 2) {
+      const counts = async () => {
+        const [row] = await sql`
+          SELECT (SELECT count(*)::int FROM registration_session_grant_batches WHERE event_id=${event.id}) AS batches,
+            (SELECT count(*)::int FROM registration_session_grant_items WHERE batch_id IN
+              (SELECT id FROM registration_session_grant_batches WHERE event_id=${event.id})) AS items,
+            (SELECT count(*)::int FROM session_invitations WHERE session_id=${session.id}) AS invitations,
+            (SELECT count(*)::int FROM registration_sessions WHERE session_id=${session.id}) AS entitlements
+        `;
+        const capacity = await readInvitationCapacity(database, session.id, new Date());
+        return { ...row, reserved: capacity.reservedCount };
+      };
+      const before = await counts();
+      await assert.rejects(() => createGrant(database, input), (error: unknown) =>
+        error instanceof GrantError && error.code === "SESSION_INVITATION_CONFIG_ERROR" &&
+        !error.message.includes(website || "never-present-secret"));
+      assert.deepEqual(await counts(), before);
+      continue;
+    }
+    const first = await createGrant(database, input);
+    const readOrigin = async (itemId: string) => {
+      const [row] = await sql<Array<{ origin: string | null }>>`
+        SELECT notification_snapshot->>'responseOrigin' AS origin FROM registration_session_grant_items WHERE id=${itemId}::uuid
+      `;
+      return row.origin;
+    };
+    if (!gated) {
+      assert.equal(first.batch.addedCount, 1);
+      assert.equal(first.batch.invitedCount, 0);
+      assert.equal(await readOrigin(first.batch.results[0]!.id), null);
+      continue;
+    }
+    const itemId = first.batch.results[0]!.id;
+    assert.equal(await readOrigin(itemId), "http://localhost:3004");
+    await sql`UPDATE events SET website_url='http://127.0.0.1:3004/' WHERE id=${event.id}`;
+    const replay = await createGrant(database, input);
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.batch.batchId, first.batch.batchId);
+    assert.equal(await readOrigin(itemId), "http://localhost:3004");
+    const next = await createGrant(database, { ...input, idempotencyKey: randomUUID(), registrationIds: [regs[1]!.id] });
+    assert.equal(await readOrigin(next.batch.results[0]!.id), "http://127.0.0.1:3004");
+    await sql`UPDATE events SET website_url=NULL WHERE id=${event.id}`;
+    assert.equal((await createGrant(database, input)).batch.batchId, first.batch.batchId);
+    const [counts] = await sql<Array<{ invitations: number; items: number }>>`
+      SELECT (SELECT count(*)::int FROM session_invitations WHERE session_id=${session.id}) AS invitations,
+        (SELECT count(*)::int FROM registration_session_grant_items WHERE batch_id IN
+          (SELECT id FROM registration_session_grant_batches WHERE event_id=${event.id})) AS items
+    `;
+    assert.deepEqual({ ...counts }, { invitations: 2, items: 2 });
+  }
+});
 
 async function insertPendingInvitation(
   sql: ReturnType<typeof openSessionGrantTestDatabase>,
@@ -132,10 +243,10 @@ test(
       RETURNING id
     `;
     const [event] = await sql<Array<{ id: number }>>`
-      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,status)
+      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,status,website_url)
       VALUES (
         ${`INV-READ-${unique}`},'Invitation Reader Event','multi_session',
-        clock_timestamp(),clock_timestamp()+interval '5 days','published'
+        clock_timestamp(),clock_timestamp()+interval '5 days','published','http://localhost:3004'
       ) RETURNING id
     `;
     const [ticket] = await sql<Array<{ id: number }>>`
@@ -410,10 +521,10 @@ test(
       RETURNING id
     `;
     const [event] = await sql<Array<{id:number}>>`
-      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,status)
+      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,status,website_url)
       VALUES (
         ${eventCode},'Invitation Create Event','multi_session',
-        clock_timestamp(),clock_timestamp()+interval '5 days','published'
+        clock_timestamp(),clock_timestamp()+interval '5 days','published','http://localhost:3004'
       ) RETURNING id
     `;
     const [ticket] = await sql<Array<{id:number}>>`
@@ -696,10 +807,10 @@ test(
       RETURNING id
     `;
     const [event] = await sql<Array<{id:number}>>`
-      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,status)
+      INSERT INTO events (event_code,event_name,event_type,start_date,end_date,status,website_url)
       VALUES (
         ${eventCode},'Invitation Response Event','multi_session',
-        clock_timestamp(),clock_timestamp()+interval '5 days','published'
+        clock_timestamp(),clock_timestamp()+interval '5 days','published','http://localhost:3004'
       ) RETURNING id
     `;
     const [ticket] = await sql<Array<{id:number}>>`

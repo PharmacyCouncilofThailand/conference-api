@@ -5,7 +5,8 @@ import {
   decryptInvitationToken,
   hashInvitationToken,
   issueInvitationToken,
-  readInvitationConfig,
+  readInvitationEncryptionKey,
+  parseInvitationFrontendOrigin,
 } from "./invitation-token.js";
 import { GrantError } from "./types.js";
 
@@ -87,36 +88,41 @@ test("raw invitation credential format is exactly 64 lowercase hex characters", 
   }
 });
 
-test("invitation config requires exact 32-byte base64 key and trusted frontend origin", () => {
-  const valid = readInvitationConfig({
-    NODE_ENV: "production",
+test("encryption key configuration requires only canonical base64 of exactly 32 bytes", () => {
+  assert.equal(readInvitationEncryptionKey({
     SESSION_INVITATION_ENCRYPTION_KEY: keyBase64,
-    PRIS_FRONTEND_URL: "https://pris.example.test",
-  } as NodeJS.ProcessEnv);
-  assert.equal(valid.key.equals(key), true);
-  assert.equal(valid.frontendOrigin, "https://pris.example.test");
-
-  const local = readInvitationConfig({
-    NODE_ENV: "test",
-    SESSION_INVITATION_ENCRYPTION_KEY: keyBase64,
-    PRIS_FRONTEND_URL: "http://localhost:3004",
-  } as NodeJS.ProcessEnv);
-  assert.equal(local.frontendOrigin, "http://localhost:3004");
-
-  const invalidEnvs: NodeJS.ProcessEnv[] = [
-    { NODE_ENV: "production", SESSION_INVITATION_ENCRYPTION_KEY: "bad", PRIS_FRONTEND_URL: "https://pris.example.test" },
-    { NODE_ENV: "production", SESSION_INVITATION_ENCRYPTION_KEY: keyBase64, PRIS_FRONTEND_URL: "http://pris.example.test" },
-    { NODE_ENV: "production", SESSION_INVITATION_ENCRYPTION_KEY: keyBase64, PRIS_FRONTEND_URL: "https://user:pass@pris.example.test" },
-    { NODE_ENV: "production", SESSION_INVITATION_ENCRYPTION_KEY: keyBase64, PRIS_FRONTEND_URL: "https://pris.example.test/path" },
-    { NODE_ENV: "production", SESSION_INVITATION_ENCRYPTION_KEY: keyBase64, PRIS_FRONTEND_URL: "https://pris.example.test/?query=x" },
-    { NODE_ENV: "production", SESSION_INVITATION_ENCRYPTION_KEY: keyBase64, PRIS_FRONTEND_URL: "not-a-url" },
-  ];
-
-  for (const env of invalidEnvs) {
+  }).equals(key), true);
+  for (const encoded of [undefined, "", "bad", keyBase64.slice(0, -1),
+    Buffer.alloc(31).toString("base64"), Buffer.alloc(33).toString("base64"),
+    keyBase64.replace(/=$/, "==")]) {
     assertSafeError(
-      () => readInvitationConfig(env),
+      () => readInvitationEncryptionKey({ SESSION_INVITATION_ENCRYPTION_KEY: encoded }),
       "SESSION_INVITATION_CONFIG_ERROR",
-      [keyBase64, env.PRIS_FRONTEND_URL ?? ""],
+      [encoded || "never-present-secret"],
     );
+  }
+});
+
+test("Event invitation origins normalize root URLs and enforce production/local rules", () => {
+  for (const nodeEnv of ["production", "test", "development", undefined]) {
+    for (const value of ["https://pris.example.test", "https://pris.example.test/"]) {
+      assert.equal(parseInvitationFrontendOrigin(value, nodeEnv), "https://pris.example.test");
+    }
+  }
+  for (const nodeEnv of ["test", "development"]) {
+    for (const origin of ["http://localhost:3004", "http://127.0.0.1:3004", "http://[::1]:3004"]) {
+      assert.equal(parseInvitationFrontendOrigin(`${origin}/`, nodeEnv), origin);
+    }
+  }
+  for (const nodeEnv of ["production", "test", "development"]) {
+    const invalid = [null, undefined, "", "   ", "not-a-url", "http://pris.example.test",
+      "https://user:pass@pris.example.test", "https://pris.example.test/pris",
+      "https://pris.example.test/?query=x", "https://pris.example.test/#fragment",
+      "ftp://localhost:3004"];
+    if (nodeEnv === "production") invalid.push("http://localhost:3004", "http://127.0.0.1:3004", "http://[::1]:3004");
+    for (const value of invalid) {
+      assertSafeError(() => parseInvitationFrontendOrigin(value, nodeEnv),
+        "SESSION_INVITATION_CONFIG_ERROR", [value?.trim() || "never-present-secret"]);
+    }
   }
 });
