@@ -12,6 +12,8 @@
 
 **Related completed design:** [2026-10-01-admin-session-invitations-design.md](../specs/2026-10-01-admin-session-invitations-design.md)
 
+**Execution prompt:** [2026-10-02-session-invitation-event-website-url-implementation-prompt.md](2026-10-02-session-invitation-event-website-url-implementation-prompt.md)
+
 ## Global constraints
 
 - Change only invitation response-link origin selection and its directly owned tests, fixtures, runtime configuration, and readiness evidence.
