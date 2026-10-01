@@ -651,7 +651,14 @@ try {
       }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });
       return true;
     })()`);
-    await clickText(pageCdp, 'เพิ่มสิทธิ์ Session');
+    await waitFor(pageCdp, `(() => {
+      const el = [...document.querySelectorAll('button,a')].find((node) =>
+        (node.textContent || '').includes('เพิ่มสิทธิ์ Session') && !node.disabled && node.offsetParent !== null
+      );
+      if (!el) return false;
+      el.click();
+      return true;
+    })()`, 'click visible detail grant action after mobile reflow');
     await waitFor(pageCdp, `(() => {
       const dialog = document.querySelector('dialog[open]');
       return !!dialog && dialog.contains(document.activeElement);
