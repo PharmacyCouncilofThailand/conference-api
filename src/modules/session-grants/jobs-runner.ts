@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { closeDatabase, db } from "../../database/index.js";
 import {
+  closeInactiveInvitationBatch,
   createGrantMailTransport,
   getGrantMailBacklogHealth,
   runGrantEmailsOnce,
@@ -54,11 +55,21 @@ async function run(): Promise<void> {
 
     const transport = createGrantMailTransport(process.env, timeoutMs);
     do {
+      const cleanup = await closeInactiveInvitationBatch(db);
       let claimed = 0;
       if (process.env.ADMIN_SESSION_GRANTS_ENABLED?.trim().toLowerCase() === "true") {
         const result = await runGrantEmailsOnce(db, transport, new Date());
         claimed = result.claimed;
-        console.log(JSON.stringify({ at: new Date().toISOString(), ...result }));
+        console.log(JSON.stringify({
+          at: new Date().toISOString(),
+          ...result,
+          cleanup,
+        }));
+      } else if (once || cleanup.invitationsClosed > 0) {
+        console.log(JSON.stringify({
+          at: new Date().toISOString(),
+          cleanup,
+        }));
       }
       if (!once && !stopping) {
         await waitForNextRun(claimed > 0 ? busyGapMs : intervalMs);

@@ -231,13 +231,40 @@ export default async function (fastify: FastifyInstance) {
             // Find registration with all linked sessions
             const registration = await db.query.registrations.findFirst({
                 where: ilike(registrations.regCode, regCode),
+                columns: {
+                    id: true,
+                    regCode: true,
+                    status: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                },
                 with: {
-                    event: true,
-                    ticketType: true,
+                    event: {
+                        columns: { eventName: true },
+                    },
+                    ticketType: {
+                        columns: { name: true },
+                    },
                     registrationSessions: {
+                        columns: {
+                            id: true,
+                            sessionId: true,
+                            checkedInAt: true,
+                            source: true,
+                        },
                         with: {
-                            session: true,
-                            ticketType: true,
+                            session: {
+                                columns: {
+                                    sessionName: true,
+                                    sessionType: true,
+                                    startTime: true,
+                                    endTime: true,
+                                },
+                            },
+                            ticketType: {
+                                columns: { name: true },
+                            },
                         },
                     },
                 }

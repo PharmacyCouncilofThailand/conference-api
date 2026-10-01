@@ -6,12 +6,44 @@ import {
   registrationSessionGrantItems,
   registrationSessions,
   registrations,
+  sessionInvitations,
+  sessions,
 } from "../../database/schema.js";
 import { sendNipaMailHtml } from "../../services/emailService.js";
-import { renderGrantEmail, type GrantNotificationSnapshot } from "./email-template.js";
-import type { GrantDatabase } from "./types.js";
+import {
+  renderGrantEmail,
+  renderInvitationEmail,
+  type GrantNotificationSnapshot,
+} from "./email-template.js";
+import {
+  effectiveDeadline,
+  effectiveInvitationStatus,
+} from "./invitation-policy.js";
+import { closeInactiveInvitations } from "./invitations.js";
+import {
+  buildInvitationUrl,
+  decryptInvitationToken,
+  hashInvitationToken,
+  readInvitationConfig,
+} from "./invitation-token.js";
+import type {
+  GrantDatabase,
+  InvitationStatus,
+  TokenEnvelope,
+} from "./types.js";
 
 const CLAIM_LEASE_MS = 180_000;
+
+function invitationMailDate(value: unknown, field: string): Date {
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (!Number.isFinite(date.getTime())) {
+    throw Object.assign(
+      new Error(`Invalid invitation ${field}`),
+      { code: "INVITATION_PAYLOAD_INVALID" },
+    );
+  }
+  return date;
+}
 
 export interface GrantMailTransport {
   send(input: {
@@ -111,7 +143,10 @@ interface ClaimedMail {
   attemptId: string;
   attemptNo: number;
   claimToken: string;
+  kind: "added" | "invited";
   registrationSessionId: number | null;
+  invitationId: string | null;
+  forceSuppressed: boolean;
   recipient: string;
   subject: string;
   html: string;
@@ -209,6 +244,7 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
     const [item] = await tx
       .select({
         id: registrationSessionGrantItems.id,
+        outcome: registrationSessionGrantItems.outcome,
         registrationSessionId: registrationSessionGrantItems.registrationSessionId,
         recipient: registrationSessionGrantItems.recipientEmailSnapshot,
         notificationSnapshot: registrationSessionGrantItems.notificationSnapshot,
@@ -226,16 +262,126 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
     const attemptNo = item.attemptCount + 1;
     const claimToken = randomUUID();
     const attemptId = randomUUID();
-    let rendered: ReturnType<typeof renderGrantEmail>;
+    const kind = item.outcome === "invited" ? "invited" : "added";
+    let invitationId: string | null = null;
+    let forceSuppressed = false;
+    let rendered:
+      | ReturnType<typeof renderGrantEmail>
+      | ReturnType<typeof renderInvitationEmail>;
+
     try {
-      if (!item.recipient || !item.notificationSnapshot) throw new Error("Missing durable recipient/template snapshot");
-      rendered = renderGrantEmail(item.notificationSnapshot as unknown as GrantNotificationSnapshot);
+      if (!item.recipient || !item.notificationSnapshot) {
+        throw new Error("Missing durable recipient/template snapshot");
+      }
+      const snapshot =
+        item.notificationSnapshot as unknown as GrantNotificationSnapshot;
+
+      if (kind === "invited") {
+        const [invitation] = await tx
+          .select({
+            id: sessionInvitations.id,
+            status: sessionInvitations.status,
+            tokenHash: sessionInvitations.tokenHash,
+            tokenCiphertext: sessionInvitations.tokenCiphertext,
+            expiresAt: sessionInvitations.expiresAt,
+            registrationStatus: registrations.status,
+            registrationEventId: registrations.eventId,
+            sessionEventId: sessions.eventId,
+            sessionIsActive: sessions.isActive,
+            startTime: sql<Date>`(${sessions.startTime} AT TIME ZONE 'UTC')`,
+          })
+          .from(sessionInvitations)
+          .innerJoin(
+            registrations,
+            eq(sessionInvitations.registrationId, registrations.id),
+          )
+          .innerJoin(
+            sessions,
+            eq(sessionInvitations.sessionId, sessions.id),
+          )
+          .where(eq(sessionInvitations.grantItemId, item.id))
+          .limit(1);
+
+        if (!invitation) {
+          throw Object.assign(
+            new Error("Invitation email payload is unavailable"),
+            { code: "INVITATION_PAYLOAD_INVALID" },
+          );
+        }
+        invitationId = invitation.id;
+        const expiresAt = invitationMailDate(
+          invitation.expiresAt,
+          "expiry",
+        );
+        const startTime = invitationMailDate(
+          invitation.startTime,
+          "session start",
+        );
+        const effectiveStatus = effectiveInvitationStatus(
+          {
+            status: invitation.status as InvitationStatus,
+            expiresAt,
+            startTime,
+            isActive: invitation.sessionIsActive,
+            registrationConfirmed:
+              invitation.registrationStatus === "confirmed",
+            eventMatches:
+              invitation.registrationEventId === invitation.sessionEventId,
+          },
+          now,
+        );
+
+        if (effectiveStatus !== "pending") {
+          forceSuppressed = true;
+          rendered = {
+            subject: `คำเชิญเข้าร่วมเซสชัน: ${snapshot.sessionName} — ${snapshot.eventName}`,
+            html: "",
+            templateVersion: "session-invitation-v1" as const,
+          };
+        } else {
+          if (!invitation.tokenCiphertext) {
+            throw Object.assign(
+              new Error("Invitation email payload is unavailable"),
+              { code: "INVITATION_PAYLOAD_INVALID" },
+            );
+          }
+          const config = readInvitationConfig(process.env);
+          const rawToken = decryptInvitationToken(
+            invitation.id,
+            invitation.tokenCiphertext as TokenEnvelope,
+            config.key,
+          );
+          if (hashInvitationToken(rawToken) !== invitation.tokenHash) {
+            throw Object.assign(
+              new Error("Invitation email payload is unavailable"),
+              { code: "INVITATION_PAYLOAD_INVALID" },
+            );
+          }
+          rendered = renderInvitationEmail(
+            snapshot,
+            buildInvitationUrl(rawToken, config.frontendOrigin),
+            effectiveDeadline(
+              expiresAt,
+              startTime,
+            ).toISOString(),
+          );
+        }
+      } else {
+        rendered = renderGrantEmail(snapshot);
+      }
     } catch (error) {
+      const errorCode =
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        typeof (error as { code?: unknown }).code === "string"
+          ? String((error as { code: string }).code).slice(0, 100)
+          : "TEMPLATE_INVALID";
       await tx.update(registrationSessionGrantItems).set({
         emailStatus: "failed",
         attemptCount: attemptNo,
         lastAttemptAt: now,
-        lastErrorCode: "TEMPLATE_INVALID",
+        lastErrorCode: errorCode,
         claimToken: null,
         claimedUntil: null,
       }).where(eq(registrationSessionGrantItems.id, item.id));
@@ -247,13 +393,17 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
         trigger: item.nextTrigger,
         triggeredBy: item.nextTriggeredBy,
         recipientEmail: item.recipient ?? "invalid@example.invalid",
-        templateVersion: "session-grant-v1",
+        templateVersion:
+          kind === "invited" ? "session-invitation-v1" : "session-grant-v1",
         subjectSnapshot: "ไม่สามารถสร้างข้อความแจ้งเตือนได้",
         result: "failed",
         startedAt: now,
         finishedAt: now,
-        errorCode: "TEMPLATE_INVALID",
-        errorMessage: error instanceof Error ? error.message.slice(0, 500) : "Invalid template snapshot",
+        errorCode,
+        errorMessage:
+          error instanceof Error
+            ? error.message.slice(0, 500)
+            : "Invalid template snapshot",
       });
       return null;
     }
@@ -285,7 +435,10 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
       attemptId,
       attemptNo,
       claimToken,
+      kind,
       registrationSessionId: item.registrationSessionId,
+      invitationId,
+      forceSuppressed,
       recipient: item.recipient!,
       subject: rendered.subject,
       html: rendered.html,
@@ -293,18 +446,72 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
   });
 }
 
-async function relationStillActive(database: GrantDatabase, claim: ClaimedMail): Promise<boolean> {
-  if (!claim.registrationSessionId) return false;
+async function relationStillActive(
+  database: GrantDatabase,
+  claim: ClaimedMail,
+): Promise<boolean> {
+  if (claim.kind === "added") {
+    if (!claim.registrationSessionId) return false;
+    const [row] = await database
+      .select({ id: registrationSessions.id })
+      .from(registrationSessions)
+      .innerJoin(
+        registrations,
+        eq(registrationSessions.registrationId, registrations.id),
+      )
+      .where(and(
+        eq(registrationSessions.id, claim.registrationSessionId),
+        eq(registrations.status, "confirmed"),
+      ))
+      .limit(1);
+    return Boolean(row);
+  }
+
+  if (!claim.invitationId) return false;
   const [row] = await database
-    .select({ id: registrationSessions.id })
-    .from(registrationSessions)
-    .innerJoin(registrations, eq(registrationSessions.registrationId, registrations.id))
-    .where(and(
-      eq(registrationSessions.id, claim.registrationSessionId),
-      eq(registrations.status, "confirmed"),
-    ))
+    .select({
+      status: sessionInvitations.status,
+      expiresAt: sessionInvitations.expiresAt,
+      registrationStatus: registrations.status,
+      registrationEventId: registrations.eventId,
+      sessionEventId: sessions.eventId,
+      sessionIsActive: sessions.isActive,
+      startTime: sql<Date>`(${sessions.startTime} AT TIME ZONE 'UTC')`,
+      dbNow: sql<Date>`clock_timestamp()`,
+    })
+    .from(sessionInvitations)
+    .innerJoin(
+      registrations,
+      eq(sessionInvitations.registrationId, registrations.id),
+    )
+    .innerJoin(
+      sessions,
+      eq(sessionInvitations.sessionId, sessions.id),
+    )
+    .where(eq(sessionInvitations.id, claim.invitationId))
     .limit(1);
-  return Boolean(row);
+  if (!row) return false;
+
+  try {
+    return effectiveInvitationStatus(
+      {
+        status: row.status as InvitationStatus,
+        expiresAt: invitationMailDate(row.expiresAt, "expiry"),
+        startTime: invitationMailDate(
+          row.startTime,
+          "session start",
+        ),
+        isActive: row.sessionIsActive,
+        registrationConfirmed:
+          row.registrationStatus === "confirmed",
+        eventMatches:
+          row.registrationEventId === row.sessionEventId,
+      },
+      invitationMailDate(row.dbNow, "database time"),
+    ) === "pending";
+  } catch {
+    return false;
+  }
 }
 
 async function finalize(
@@ -357,10 +564,18 @@ export async function runGrantEmailsOnce(
   if (!claim) return stats;
   stats.claimed = 1;
 
-  if (!(await relationStillActive(database, claim))) {
+  if (
+    claim.forceSuppressed ||
+    !(await relationStillActive(database, claim))
+  ) {
+    const invitation = claim.kind === "invited";
     if (await finalize(database, claim, now, "suppressed", {
-      errorCode: "ENTITLEMENT_NOT_ACTIVE",
-      errorMessage: "Registration/session entitlement is no longer active",
+      errorCode: invitation
+        ? "INVITATION_NOT_PENDING"
+        : "ENTITLEMENT_NOT_ACTIVE",
+      errorMessage: invitation
+        ? "Invitation is no longer pending"
+        : "Registration/session entitlement is no longer active",
     })) stats.suppressed = 1;
     return stats;
   }
@@ -401,6 +616,46 @@ export async function runGrantEmailsOnce(
   return stats;
 }
 
+export async function closeInactiveInvitationBatch(
+  database: GrantDatabase,
+  limit = 10,
+): Promise<{ sessionsInspected: number; invitationsClosed: number }> {
+  const boundedLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
+  const rows = await database.execute(sql`
+    SELECT DISTINCT i.session_id
+    FROM session_invitations i
+    JOIN registrations r ON r.id=i.registration_id
+    JOIN sessions s ON s.id=i.session_id
+    WHERE i.status='pending'
+      AND (
+        NOT s.is_active
+        OR r.status <> 'confirmed'
+        OR r.event_id <> s.event_id
+        OR clock_timestamp() >= LEAST(
+          i.expires_at,
+          (s.start_time AT TIME ZONE 'UTC')
+        )
+      )
+    ORDER BY i.session_id
+    LIMIT ${boundedLimit}
+  `);
+  const candidates =
+    rows as unknown as Array<{ session_id: number | string }>;
+  let invitationsClosed = 0;
+  for (const row of candidates) {
+    const sessionId = Number(row.session_id);
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0) continue;
+    invitationsClosed += await closeInactiveInvitations(
+      database,
+      sessionId,
+    );
+  }
+  return {
+    sessionsInspected: candidates.length,
+    invitationsClosed,
+  };
+}
+
 export async function getGrantMailBacklogHealth(database: GrantDatabase, now: Date) {
   const [row] = await database
     .select({
@@ -435,6 +690,7 @@ export async function retryGrantEmails(
       ? await tx
         .select({
           id: registrationSessionGrantItems.id,
+          outcome: registrationSessionGrantItems.outcome,
           emailStatus: registrationSessionGrantItems.emailStatus,
           registrationSessionId: registrationSessionGrantItems.registrationSessionId,
         })
@@ -472,22 +728,95 @@ export async function retryGrantEmails(
         skipped.push({ itemId, reasonCode: "EMAIL_NOT_RETRYABLE" });
         continue;
       }
-      if (!item.registrationSessionId) {
-        skipped.push({ itemId, reasonCode: "ENTITLEMENT_NOT_ACTIVE" });
-        continue;
-      }
-      const [active] = await tx
-        .select({ id: registrationSessions.id })
-        .from(registrationSessions)
-        .innerJoin(registrations, eq(registrationSessions.registrationId, registrations.id))
-        .where(and(
-          eq(registrationSessions.id, item.registrationSessionId),
-          eq(registrations.status, "confirmed"),
-        ))
-        .limit(1);
-      if (!active) {
-        skipped.push({ itemId, reasonCode: "ENTITLEMENT_NOT_ACTIVE" });
-        continue;
+      if (item.outcome === "invited") {
+        const [invitation] = await tx
+          .select({
+            status: sessionInvitations.status,
+            tokenCiphertext: sessionInvitations.tokenCiphertext,
+            expiresAt: sessionInvitations.expiresAt,
+            registrationStatus: registrations.status,
+            registrationEventId: registrations.eventId,
+            sessionEventId: sessions.eventId,
+            sessionIsActive: sessions.isActive,
+            startTime: sql<Date>`(${sessions.startTime} AT TIME ZONE 'UTC')`,
+            dbNow: sql<Date>`clock_timestamp()`,
+          })
+          .from(sessionInvitations)
+          .innerJoin(
+            registrations,
+            eq(sessionInvitations.registrationId, registrations.id),
+          )
+          .innerJoin(
+            sessions,
+            eq(sessionInvitations.sessionId, sessions.id),
+          )
+          .where(eq(sessionInvitations.grantItemId, item.id))
+          .limit(1);
+        const invitationPending =
+          invitation &&
+          invitation.tokenCiphertext &&
+          effectiveInvitationStatus(
+            {
+              status: invitation.status as InvitationStatus,
+              expiresAt: invitationMailDate(
+                invitation.expiresAt,
+                "expiry",
+              ),
+              startTime: invitationMailDate(
+                invitation.startTime,
+                "session start",
+              ),
+              isActive: invitation.sessionIsActive,
+              registrationConfirmed:
+                invitation.registrationStatus === "confirmed",
+              eventMatches:
+                invitation.registrationEventId === invitation.sessionEventId,
+            },
+            invitationMailDate(
+              invitation.dbNow,
+              "database time",
+            ),
+          ) === "pending";
+        if (!invitationPending) {
+          skipped.push({
+            itemId,
+            reasonCode: "INVITATION_NOT_PENDING",
+          });
+          continue;
+        }
+      } else {
+        if (!item.registrationSessionId) {
+          skipped.push({
+            itemId,
+            reasonCode: "ENTITLEMENT_NOT_ACTIVE",
+          });
+          continue;
+        }
+        const [active] = await tx
+          .select({ id: registrationSessions.id })
+          .from(registrationSessions)
+          .innerJoin(
+            registrations,
+            eq(
+              registrationSessions.registrationId,
+              registrations.id,
+            ),
+          )
+          .where(and(
+            eq(
+              registrationSessions.id,
+              item.registrationSessionId,
+            ),
+            eq(registrations.status, "confirmed"),
+          ))
+          .limit(1);
+        if (!active) {
+          skipped.push({
+            itemId,
+            reasonCode: "ENTITLEMENT_NOT_ACTIVE",
+          });
+          continue;
+        }
       }
       await tx.update(registrationSessionGrantItems).set({
         emailStatus: "pending",

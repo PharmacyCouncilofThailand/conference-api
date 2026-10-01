@@ -25,6 +25,42 @@ const run = async () => {
   const db = drizzle(client);
 
   try {
+    // Refuse before any row write when historical sources would create a new
+    // entitlement for an invitation-gated session. Existing entitlements are
+    // left untouched by this preflight.
+    const guardedTargets = await db.execute(sql`
+      SELECT s.id
+      FROM sessions s
+      WHERE s.admin_grant_requires_confirmation = true
+        AND (
+          EXISTS (
+            SELECT 1 FROM registrations r
+            WHERE r.session_id = s.id
+              AND NOT EXISTS (
+                SELECT 1 FROM registration_sessions rs
+                WHERE rs.registration_id = r.id
+                  AND rs.session_id = s.id
+              )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM ticket_sessions ts
+            JOIN registrations r ON r.ticket_type_id = ts.ticket_type_id
+            WHERE ts.session_id = s.id
+              AND r.session_id IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM registration_sessions rs
+                WHERE rs.registration_id = r.id
+                  AND rs.session_id = s.id
+              )
+          )
+        )
+      LIMIT 1
+    `);
+    if ((guardedTargets as unknown[]).length > 0) {
+      throw new Error("SESSION_INVITATION_REQUIRED");
+    }
+
     // ──────────────────────────────────────────────
     // Step 1: Migrate registrations that have sessionId (workshop addons)
     // ──────────────────────────────────────────────
@@ -183,7 +219,11 @@ const run = async () => {
       if (existingLinks.length === 0) {
         // Find main sessions for this event
         const mainSessions = await db
-          .select({ id: sessions.id })
+          .select({
+            id: sessions.id,
+            adminGrantRequiresConfirmation:
+              sessions.adminGrantRequiresConfirmation,
+          })
           .from(sessions)
           .where(
             and(
@@ -193,6 +233,7 @@ const run = async () => {
           );
 
         for (const ms of mainSessions) {
+          if (ms.adminGrantRequiresConfirmation) continue;
           await db.insert(ticketSessions).values({
             ticketTypeId: pt.id,
             sessionId: ms.id,
@@ -222,6 +263,7 @@ const run = async () => {
 
   } catch (error) {
     console.error("❌ Migration error:", error);
+    throw error;
   } finally {
     await client.end();
     console.log("\n✅ Migration complete");

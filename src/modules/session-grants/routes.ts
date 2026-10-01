@@ -1,11 +1,14 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../database/index.js";
 import {
   registrationSessionGrantBatches,
   registrationSessionGrantEmailAttempts,
   registrationSessionGrantItems,
+  registrations,
+  sessionInvitations,
+  sessions,
 } from "../../database/schema.js";
 import {
   createGrantSchema,
@@ -14,8 +17,12 @@ import {
   retryEmailsSchema,
 } from "./schemas.js";
 import { retryGrantEmails } from "./email-jobs.js";
+import {
+  effectiveDeadline,
+  effectiveInvitationStatus,
+} from "./invitation-policy.js";
 import { createGrant, getGrantBatch } from "./service.js";
-import type { GrantDatabase } from "./types.js";
+import type { GrantDatabase, InvitationStatus } from "./types.js";
 import { GrantError } from "./types.js";
 
 const batchIdSchema = z.string().uuid();
@@ -135,6 +142,10 @@ export default async function sessionGrantRoutes(
           eq(registrationSessionGrantItems.batchId, registrationSessionGrantBatches.id),
         )
         .where(whereClause);
+      const [{ now: rawNow }] = await database.execute<{
+        now: Date | string;
+      }>(sql`SELECT clock_timestamp() AS now`);
+      const now = rawNow instanceof Date ? rawNow : new Date(rawNow);
       const rows = await database
         .select({
           batchId: registrationSessionGrantBatches.id,
@@ -147,18 +158,95 @@ export default async function sessionGrantRoutes(
           reasonCode: registrationSessionGrantItems.reasonCode,
           emailStatus: registrationSessionGrantItems.emailStatus,
           attemptCount: registrationSessionGrantItems.attemptCount,
+          invitationId: sessionInvitations.id,
+          invitationStatus: sessionInvitations.status,
+          invitationExpiresAt: sessionInvitations.expiresAt,
+          invitationRespondedAt: sessionInvitations.respondedAt,
+          registrationStatus: registrations.status,
+          registrationEventId: registrations.eventId,
+          sessionEventId: sessions.eventId,
+          sessionIsActive: sessions.isActive,
+          sessionStartTime: sessions.startTime,
         })
         .from(registrationSessionGrantItems)
         .innerJoin(
           registrationSessionGrantBatches,
           eq(registrationSessionGrantItems.batchId, registrationSessionGrantBatches.id),
         )
+        .leftJoin(
+          sessionInvitations,
+          eq(sessionInvitations.grantItemId, registrationSessionGrantItems.id),
+        )
+        .leftJoin(
+          registrations,
+          eq(sessionInvitations.registrationId, registrations.id),
+        )
+        .leftJoin(
+          sessions,
+          eq(sessionInvitations.sessionId, sessions.id),
+        )
         .where(whereClause)
-        .orderBy(desc(registrationSessionGrantBatches.createdAt), desc(registrationSessionGrantItems.id))
+        .orderBy(
+          desc(registrationSessionGrantBatches.createdAt),
+          desc(registrationSessionGrantItems.id),
+        )
         .limit(limit)
         .offset((page - 1) * limit);
       return reply.send({
-        batches: rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })),
+        batches: rows.map((row) => {
+          const invitation =
+            row.invitationId &&
+            row.invitationStatus &&
+            row.invitationExpiresAt &&
+            row.registrationStatus &&
+            row.registrationEventId !== null &&
+            row.sessionEventId !== null &&
+            row.sessionIsActive !== null &&
+            row.sessionStartTime
+              ? (() => {
+                  const status = effectiveInvitationStatus(
+                    {
+                      status:
+                        row.invitationStatus as InvitationStatus,
+                      expiresAt: row.invitationExpiresAt,
+                      startTime: row.sessionStartTime,
+                      isActive: row.sessionIsActive,
+                      registrationConfirmed:
+                        row.registrationStatus === "confirmed",
+                      eventMatches:
+                        row.registrationEventId === row.sessionEventId,
+                    },
+                    now,
+                  );
+                  return {
+                    invitationId: row.invitationId,
+                    invitationStatus: status,
+                    expiresAt:
+                      row.invitationExpiresAt.toISOString(),
+                    effectiveDeadline: effectiveDeadline(
+                      row.invitationExpiresAt,
+                      row.sessionStartTime,
+                    ).toISOString(),
+                    respondedAt:
+                      row.invitationRespondedAt?.toISOString() ??
+                      null,
+                  };
+                })()
+              : null;
+          return {
+            batchId: row.batchId,
+            eventId: row.eventId,
+            sessionId: row.sessionId,
+            sessionName: row.sessionName,
+            actorName: row.actorName,
+            createdAt: row.createdAt.toISOString(),
+            outcome: row.outcome,
+            reasonCode: row.reasonCode,
+            emailStatus: row.emailStatus,
+            attemptCount: row.attemptCount,
+            invitation,
+          };
+        }),
         pagination: {
           page,
           limit,

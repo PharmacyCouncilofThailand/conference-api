@@ -34,6 +34,8 @@ import type {
 } from "../../types/index.js";
 import { validatePaddingWidth, validateTrackingPrefix } from "../../modules/abstracts/tracking-format.js";
 import { appendTrackingAuditEvent } from "../../modules/abstracts/tracking.repository.js";
+import { readInvitationCapacity } from "../../modules/session-grants/invitations.js";
+import { GrantError } from "../../modules/session-grants/types.js";
 
 /**
  * Normalize allowedRoles to CSV format for consistent DB storage.
@@ -766,24 +768,65 @@ export default async function (fastify: FastifyInstance) {
             .groupBy(registrationSessions.sessionId)
           : [];
         const enrollmentBySession = new Map(enrollmentRows.map((row) => [row.sessionId, row.total]));
-        const grantSessions = sessionsWithSpeakers.map((session) => {
-          const disabledReason = !session.isActive
-            ? "SESSION_INACTIVE"
-            : session.endTime.getTime() <= serverNow.getTime()
-              ? "SESSION_ENDED"
-              : null;
-          return {
-            ...session,
-            enrollmentCount: enrollmentBySession.get(session.id) ?? 0,
-            grantEligible: disabledReason === null,
-            disabledReason,
-          };
+        const grantSessions = await Promise.all(
+          sessionsWithSpeakers.map(async (session) => {
+            const enrollmentCount =
+              enrollmentBySession.get(session.id) ?? 0;
+            if (!session.adminGrantRequiresConfirmation) {
+              const disabledReason = !session.isActive
+                ? "SESSION_INACTIVE"
+                : session.endTime.getTime() <= serverNow.getTime()
+                  ? "SESSION_ENDED"
+                  : null;
+              return {
+                ...session,
+                enrollmentCount,
+                reservedCount: 0,
+                occupiedCount: enrollmentCount,
+                seatsRemaining: null,
+                effectiveDeadline: null,
+                grantEligible: disabledReason === null,
+                disabledReason,
+              };
+            }
+
+            const capacity = await readInvitationCapacity(
+              db,
+              session.id,
+              serverNow,
+            );
+            const disabledReason = !session.isActive
+              ? "SESSION_INACTIVE"
+              : session.startTime.getTime() <= serverNow.getTime()
+                ? "SESSION_RESPONSE_CLOSED"
+                : null;
+            return {
+              ...session,
+              enrollmentCount: capacity.currentEnrollmentCount,
+              reservedCount: capacity.reservedCount,
+              occupiedCount: capacity.occupiedCount,
+              seatsRemaining: capacity.seatsRemaining,
+              effectiveDeadline: session.startTime.toISOString(),
+              grantEligible: disabledReason === null,
+              disabledReason,
+            };
+          }),
+        );
+        return reply.send({
+          sessions: grantSessions,
+          serverNow: serverNow.toISOString(),
         });
-        return reply.send({ sessions: grantSessions, serverNow: serverNow.toISOString() });
       }
 
       return reply.send({ sessions: sessionsWithSpeakers });
     } catch (error) {
+      if (error instanceof GrantError) {
+        return reply.status(error.statusCode).send({
+          error: error.message,
+          code: error.code,
+          ...error.details,
+        });
+      }
       fastify.log.error(error);
       return reply.status(500).send({ error: "Failed to fetch sessions" });
     }

@@ -78,3 +78,74 @@ Next: Implementation T06 — scoped public HTTP API and request-secret redaction
 - Focused public/admin route regression 3/3 PASS; pure policy/token/public-route suite 11/11 PASS; session-grants unit 17/17 PASS; full migration/integration chain PASS; API Docker build PASS.
 
 T00–T06 coherent checkpoint: all current source-state Docker verification passed. Next: create grouped API commit for T00–T06 without staging the pre-existing untracked continuation prompt, then continue Implementation T07.
+
+## Implementation T07 — completed
+
+- RED invitation mail integration proved invited items with null registrationSessionId were still treated as legacy grants. The first worker branch exposed a DB-boundary timestamp bug (`currentStartTime.getTime is not a function`); normalized PostgreSQL timestamp/string values at the mail-policy boundary without changing deadline semantics.
+- Added Thai `session-invitation-v1` template with exact stored names/session data, Bangkok time/deadline, one response-page link, and no purchase/payment/receipt wording.
+- Mail claim/recheck/retry now branches by immutable item outcome. Invitations decrypt the original encrypted credential only while effectively pending, verify the decrypted token hash against persisted token_hash, reuse the same token/deadline on retry, and never create another invitation/seat/entitlement.
+- Closed/expired/revoked invitations suppress mail without transport. Missing/wrong key or invalid ciphertext fails safely while retaining the pending invitation for explicit operator recovery.
+- Failed/unknown retry preserves legacy acknowledgement rules. Invitation-specific tests prove unknown acknowledgement, pre-send restart recovery, stable token hash/deadline, concurrent decline during transport, and no entitlement creation.
+- Added bounded stale-invitation cleanup outside the mail-claim transaction. Worker invokes cleanup even when new-grant sending is disabled.
+- Docker focused + legacy mail suites PASS 9/9; API build PASS. Real fake-mail modes proved definitive pre-send failure vs unknown-after-capture classification.
+- Runtime worker initially failed because the retained runtime DB was intentionally empty. Identity checks proved the runtime DB had zero public tables and the integration DB was current 0032 with only the intentional Historical Admin migration fixture. Planned pg_dump/pg_restore schema clone completed; worker --once and health then PASS with zero backlog.
+- NipaMail request schema exposes no application link-tracking switch. Provider tracking therefore remains provider-controlled; no undocumented field was invented.
+
+Next: Implementation T08 — Admin readers and reachable entitlement-bypass closure.
+
+## Implementation T08 — completed
+
+- Verified Docker DB identity before applying the approved test-only prerequisite: `confer_session_grants_runtime_test` and `confer_session_grants_integration_test`, both owned by the isolated `session-invitations-test` Compose project; `registrations.attendee_type` was absent in both before the prerequisite.
+- Added repeatable guarded harness SQL at `review/session-invitations-test-harness-prerequisites.sql`. It refuses any database name other than the two isolated test DBs and adds only `registrations.attendee_type varchar(20)` with `IF NOT EXISTS`. No `db:push`, production DB, or production migration was touched.
+- Deployment limitation: current `src/database/schema.ts` contains `registrations.attendee_type`, introduced in commit `6fbcee9`, but the authoritative Drizzle migration chain does not create that column. Therefore migration-chain completeness is NOT proven and must not be claimed for deployment readiness. Production deployment requires an authoritative migration/provisioning decision outside this test harness.
+- BOAPI selector/list/details API-backed proof PASS: pending invitation is a reservation, not actual entitlement; invitation history remains separate from accessible sessions.
+- Check-in query was narrowed to the columns actually required by the route so unrelated current-schema fields do not make this compatibility reader depend on whole-row eager selects. REG check-in proof covers picker/specific/assigned/all before acceptance and after accepted null-ticket `admin_grant` entitlement; pending invitation never grants access and actual stats count only `registration_sessions`.
+- Canonical free-checkout payment integration PASS 2/2 after correcting its stale promo-code assertion to the service's canonical uppercase normalization. Invitation/session-grant focused integration PASS 8/8; session-grants unit PASS 19/19; API Docker build PASS.
+- PRIS ticket-authorization integration was inspected separately and remains unavailable in this retained isolated DB because historical `abstract_categories` provisioning is absent. This is unrelated to Admin Session Invitations T08 and is not counted as T08 payment evidence.
+
+Next: Implementation T09 — Backoffice invitation UI and recovery.
+
+## Implementation T09 — implementation complete / walkthrough deferred
+
+- B01–B06 updated for invitation-aware wire types, structured capacity errors, gated session capacity/deadline copy, preserved cross-page selection, deliberate Event/Session change confirmation, explicit added/invited/skipped outcomes, invitation state/history, closed-invitation retry suppression, manual refresh, Thai labels, and explicit Asia/Bangkok formatting for new invitation timestamps.
+- Capacity failure preserves selected recipients and the existing idempotency operation; changing selected payload clears the pending operation so deliberate resubmit receives a fresh key. Same unchanged ambiguous request retains the existing key.
+- Docker Backoffice build PASS. Existing selection helper PASS 4/4 through API `tsx` with Backoffice source bind-mounted. Focused lint for B01–B04/selection PASS. Repo-wide Backoffice lint remains the pre-existing baseline failure set (159 problems: 104 errors/55 warnings), including pre-existing `no-explicit-any` and hook warnings in B05/B06; no new invitation lint error remains in focused files.
+
+| Blocked task/gates | Observed failure และ evidence | Prerequisite task/step | Pending checks | สถานะ | Re-test trigger | ผล re-test/revision |
+| --- | --- | --- | --- | --- | --- | --- |
+| T09 / BOUI CDP walkthrough | `review/session-invitations-review-e2e.mjs` and invitation-aware synthetic fixture do not exist yet; T09 plan explicitly assigns BO cases to A28 while T11 owns A27/A28 creation/update | T11 A27/A28 fixture + review E2E harness | CDP Backoffice walkthrough for BOUI-01..12 against invitation-aware synthetic data | DEFERRED_DEPENDENCY | Immediately after T11 creates A27/A28 and starts the isolated runtime stack | pending |
+
+Next: Implementation T10 — Pris2026 response page and safe navigation. T09 remains non-PASS until the T11-triggered BO walkthrough is rerun.
+
+## Implementation T10 — implementation complete / browser verification deferred
+
+- Added scoped no-store GET/PUT invitation client with bearer credential only in Authorization, strict decision-only PUT body, AbortSignal support, and safe error DTO preservation. Pure helper tests PASS 5/5 including reload predicate, token absence from URL/body, 410 safe DTO, abort/network propagation.
+- Added localized `/th|en/sessions/confirm` server/client route with robots noindex/nofollow, referrer no-referrer metadata, loading/pending/terminal/error states, accept/decline actions, conflict/uncertain-write re-read, no auth/registration gate, no token storage, and home navigation without query token.
+- Added exact Thai/English `sessionInvitations` messages, explicit Asia/Bangkok display, refresh redirect exemption, confirmation-only locale switch query preservation, light-page header behavior, and route-scoped `Referrer-Policy:no-referrer` + `Cache-Control:no-store` headers.
+- Docker Pris build PASS after final change. Focused invitation lint PASS. Repo-wide Pris lint remains pre-existing baseline FAIL 32 problems (21 errors/11 warnings), dominated by root scratch/CommonJS scripts and an existing abstracts confirmation effect warning.
+
+| Blocked task/gates | Observed failure และ evidence | Prerequisite task/step | Pending checks | สถานะ | Re-test trigger | ผล re-test/revision |
+| --- | --- | --- | --- | --- | --- | --- |
+| T10 / PRIS browser cases | Invitation-aware browser fixture/E2E harness A27/A28 does not exist yet; T10 plan assigns PRIS cases to A28 and T11 owns A27/A28 creation/update | T11 A27/A28 fixture + review E2E harness | Direct link, reload, TH/EN switch preserving token only on confirm route, mobile/keyboard, accept/decline/terminal/network interruption, response headers | DEFERRED_DEPENDENCY | Immediately after T11 creates A27/A28 and starts isolated API/PRIS runtime | pending |
+
+Next: Implementation T11 — regression/configuration rehearsal/operator evidence; create A27/A28, then immediately retest older T09 BOUI and T10 PRIS deferred gates before advancing.
+
+## Deferred dependency closure — revision 18
+
+- T09 BOUI deferred browser dependency is CLOSED/PASS at Docker browser task `6bd16bcc-339f-419e-b86f-2c0ddcd82213` after A27/A28 creation and harness-only timing/auth fixes. Covered BOUI-01-05, BOUI-06, BOUI-08-12.
+- T10 PRIS deferred browser dependency is CLOSED/PASS in the same terminal run. Covered PRIS-01-03-06-07-14, PRIS-04, PRIS-05, PRIS-08-12-13.
+- The isolated runtime/integration DBs required an additional explicitly authorized historical test-harness prerequisite `events.website_url varchar(500)`. Identity was proven before mutation and the guarded repeatable prerequisite file was updated. This is a deployment limitation: the authoritative migration chain still does not prove `registrations.attendee_type` or `events.website_url`; migration completeness is not claimed.
+
+## Implementation T11 — regression/configuration/rollback evidence
+
+Detailed evidence: `docs/superpowers/verification/admin-session-invitations/t11-regression-ops-evidence.md`.
+
+- Explicit `test:session-invitations` PASS 18/18; staged `test:session-invitations:integration` PASS (migration 4, invitation migration 2, serialized integration 10); 500-load PASS requested=500/added=500; legacy/current session-grant unit set PASS 19/19.
+- Synthetic target activation preflight and guarded activation PASS with exactly one `PRIS-2026/POLICY-INNOVATION`, capacity 50, UTC convention, actual count 0; no room/date/capacity rewrite.
+- Creation rollback flag runtime proof PASS: disabled create 503 while already-issued public GET/PUT remained usable.
+- Missing invitation encryption key failed safely without deleting/closing the invitation or changing its token hash; a fresh worker with the original key later sent the same invitation with hash/expiry preserved.
+- Full synthetic flow PASS: Backoffice invitation -> worker/fake mail -> PRIS browser accept -> actual entitlement. Original registration ticket/order/source/check-in/order-item/payment metadata stayed unchanged; entitlement source is `admin_grant` with no add-on ticket reference.
+- conference-web payment/actual-entitlement reader focused tests PASS 7/7 after a Docker-volume-only no-save peer dependency install; conference-web source remained git-clean.
+- OPS-01..07 and E2E-01..06 are covered by the combined T11 evidence and prior focused race/mixed/decline/unknown-mail integration gates. Final comprehensive verification remains a separate I-FINAL requirement after T12/final source stabilization.
+
+Next: finish T11 evidence consistency check, then T12 independent review/handoff. No production activation, push, deploy, real email, or real payment.

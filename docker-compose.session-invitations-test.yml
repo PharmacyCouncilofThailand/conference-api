@@ -43,6 +43,8 @@ services:
       - pris_node_modules:/workspace/Pris2026/node_modules
 
   browser:
+    env_file:
+      - ./review/session-invitations-review-tokens.env
     environment:
       BASE_URL_PRIS: http://pris-server:3004
     volumes:

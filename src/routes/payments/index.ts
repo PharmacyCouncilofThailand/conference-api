@@ -999,6 +999,8 @@ async function processSuccessfulPaymentLegacy(
           .select({
             sessionId: ticketSessions.sessionId,
             requiresOptIn: sessions.requiresOptIn,
+            adminGrantRequiresConfirmation:
+              sessions.adminGrantRequiresConfirmation,
           })
           .from(ticketSessions)
           .innerJoin(sessions, eq(ticketSessions.sessionId, sessions.id))
@@ -1010,13 +1012,22 @@ async function processSuccessfulPaymentLegacy(
           );
 
         sessionIdsToLink = linkedSessions
-          .filter((ls) => !ls.requiresOptIn)
+          .filter(
+            (ls) =>
+              !ls.requiresOptIn &&
+              !ls.adminGrantRequiresConfirmation,
+          )
           .map((ls) => ls.sessionId);
 
-        // Fallback for primary tickets: if no ticket_sessions rows, auto-link to main session(s)
-        if (sessionIdsToLink.length === 0 && item.itemType === "ticket") {
+        // Fallback only when there is no ticket_sessions mapping. Existing paid
+        // snapshots below remain authoritative for reconciliation.
+        if (linkedSessions.length === 0 && item.itemType === "ticket") {
           const mainSessions = await tx
-            .select({ id: sessions.id })
+            .select({
+              id: sessions.id,
+              adminGrantRequiresConfirmation:
+                sessions.adminGrantRequiresConfirmation,
+            })
             .from(sessions)
             .where(
               and(
@@ -1024,7 +1035,9 @@ async function processSuccessfulPaymentLegacy(
                 eq(sessions.isMainSession, true)
               )
             );
-          sessionIdsToLink = mainSessions.map(s => s.id);
+          sessionIdsToLink = mainSessions
+            .filter((s) => !s.adminGrantRequiresConfirmation)
+            .map((s) => s.id);
 
           // Backfill ticket_sessions so future lookups work
           if (sessionIdsToLink.length > 0) {
@@ -2102,7 +2115,12 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
 
             // Check session capacity
             const [sessionData] = await db
-              .select({ maxCapacity: sessions.maxCapacity, eventId: sessions.eventId })
+              .select({
+                maxCapacity: sessions.maxCapacity,
+                eventId: sessions.eventId,
+                adminGrantRequiresConfirmation:
+                  sessions.adminGrantRequiresConfirmation,
+              })
               .from(sessions)
               .where(eq(sessions.id, workshopSessionId))
               .limit(1);
@@ -2112,6 +2130,13 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
                 success: false,
                 code: "EVENT_SESSION_MISMATCH",
                 error: "Selected workshop session does not belong to this event",
+              });
+            }
+            if (sessionData.adminGrantRequiresConfirmation) {
+              return reply.status(409).send({
+                success: false,
+                code: "SESSION_INVITATION_REQUIRED",
+                error: "Session invitation acceptance is required",
               });
             }
 

@@ -71,14 +71,19 @@ test(
     `;
     const sessions = await sql<Array<{ id: number; session_code: string }>>`
       INSERT INTO sessions (
-        event_id, session_code, session_name, start_time, end_time, is_active
+        event_id, session_code, session_name, start_time, end_time, is_active,
+        admin_grant_requires_confirmation
       ) VALUES
-        (${event.id}, ${`SG-WRITER-1-${unique}`}, 'Writer Workshop One', '2026-10-01 09:00:00', '2099-10-01 10:00:00', true),
-        (${event.id}, ${`SG-WRITER-2-${unique}`}, 'Writer Workshop Two', '2026-10-01 10:00:00', '2099-10-01 11:00:00', true)
+        (${event.id}, ${`SG-WRITER-1-${unique}`}, 'Writer Workshop One', '2026-10-01 09:00:00', '2099-10-01 10:00:00', true, false),
+        (${event.id}, ${`SG-WRITER-2-${unique}`}, 'Writer Workshop Two', '2026-10-01 10:00:00', '2099-10-01 11:00:00', true, false),
+        (${event.id}, ${`SG-WRITER-INVITE-${unique}`}, 'Invite Only Workshop', '2026-10-01 11:00:00', '2099-10-01 12:00:00', true, true)
       RETURNING id, session_code
     `;
     const session1 = sessions.find((row) => row.session_code.startsWith("SG-WRITER-1-"))!;
     const session2 = sessions.find((row) => row.session_code.startsWith("SG-WRITER-2-"))!;
+    const invitationSession = sessions.find((row) =>
+      row.session_code.startsWith("SG-WRITER-INVITE-")
+    )!;
 
     const tickets = await sql<Array<{ id: number; category: string }>>`
       INSERT INTO ticket_types (
@@ -116,35 +121,39 @@ test(
         user_id, event_id, order_number, subtotal_amount, total_amount, currency, status
       ) VALUES
         (${targetUser.id}, ${event.id}, ${`SG-WRITER-ORDER-1-${unique}`}, 200, 200, 'THB', 'pending'),
-        (${targetUser.id}, ${event.id}, ${`SG-WRITER-ORDER-2-${unique}`}, 200, 200, 'THB', 'pending')
+        (${targetUser.id}, ${event.id}, ${`SG-WRITER-ORDER-2-${unique}`}, 200, 200, 'THB', 'pending'),
+        (${targetUser.id}, ${event.id}, ${`SG-WRITER-ORDER-3-${unique}`}, 200, 200, 'THB', 'pending')
       RETURNING id, order_number
     `;
     const order1 = orders.find((row) => row.order_number.startsWith("SG-WRITER-ORDER-1-"))!;
     const order2 = orders.find((row) => row.order_number.startsWith("SG-WRITER-ORDER-2-"))!;
+    const order3 = orders.find((row) => row.order_number.startsWith("SG-WRITER-ORDER-3-"))!;
     await sql`
       INSERT INTO order_items (order_id, item_type, ticket_type_id, price, quantity)
       VALUES
         (${order1.id}, 'addon', ${addonTicket.id}, 200, 1),
-        (${order2.id}, 'addon', ${addonTicket.id}, 200, 1)
+        (${order2.id}, 'addon', ${addonTicket.id}, 200, 1),
+        (${order3.id}, 'addon', ${addonTicket.id}, 200, 1)
     `;
     await sql`
       INSERT INTO payments (order_id, amount, status, payment_provider)
       VALUES
         (${order1.id}, 200, 'pending', 'stripe'),
-        (${order2.id}, 200, 'pending', 'stripe')
+        (${order2.id}, 200, 'pending', 'stripe'),
+        (${order3.id}, 200, 'pending', 'stripe')
     `;
 
     t.after(async () => {
       await sql.unsafe("DROP INDEX IF EXISTS session_grant_test_ticket_type_unique");
-      await sql`DELETE FROM payments WHERE order_id IN (${order1.id}, ${order2.id})`;
-      await sql`DELETE FROM order_items WHERE order_id IN (${order1.id}, ${order2.id})`;
-      await sql`DELETE FROM orders WHERE id IN (${order1.id}, ${order2.id})`;
+      await sql`DELETE FROM payments WHERE order_id IN (${order1.id}, ${order2.id}, ${order3.id})`;
+      await sql`DELETE FROM order_items WHERE order_id IN (${order1.id}, ${order2.id}, ${order3.id})`;
+      await sql`DELETE FROM orders WHERE id IN (${order1.id}, ${order2.id}, ${order3.id})`;
       await sql`DELETE FROM registration_sessions
         WHERE registration_id IN (${targetRegistration.id}, ${blockerRegistration.id})`;
       await sql`DELETE FROM registrations
         WHERE id IN (${targetRegistration.id}, ${blockerRegistration.id})`;
       await sql`DELETE FROM ticket_types WHERE id IN (${primaryTicket.id}, ${addonTicket.id})`;
-      await sql`DELETE FROM sessions WHERE id IN (${session1.id}, ${session2.id})`;
+      await sql`DELETE FROM sessions WHERE id IN (${session1.id}, ${session2.id}, ${invitationSession.id})`;
       await sql`DELETE FROM events WHERE id = ${event.id}`;
       await sql`DELETE FROM users WHERE id IN (${targetUser.id}, ${blockerUser.id})`;
       await sql`DELETE FROM backoffice_users WHERE id = ${actor.id}`;
@@ -201,6 +210,52 @@ test(
     assert.equal(paidState.order_status, "paid");
     assert.equal(paidState.payment_status, "paid");
     assert.equal(paidState.sold_count, 1);
+
+    await assert.rejects(
+      () => database.transaction((tx) =>
+        processSuccessfulPaymentInTransaction(tx, logger, {
+          orderId: order3.id,
+          providerRef: `provider-${unique}-3`,
+          workshopSessionId: invitationSession.id,
+          receiptUrl: null,
+          paymentChannel: "test",
+          paymentProvider: "stripe",
+          providerStatus: "PAID",
+          paymentDetails: null,
+        }),
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof RegistrationSettlementError);
+        assert.equal(error.code, "SESSION_INVITATION_REQUIRED");
+        return true;
+      },
+    );
+
+    const [guardedPaymentState] = await sql<Array<{
+      order_status: string;
+      payment_status: string;
+      sold_count: number;
+      target_rows: number;
+    }>>`
+      SELECT
+        o.status AS order_status,
+        p.status AS payment_status,
+        tt.sold_count,
+        (
+          SELECT count(*)::int
+          FROM registration_sessions rs
+          WHERE rs.registration_id = ${targetRegistration.id}
+            AND rs.session_id = ${invitationSession.id}
+        ) AS target_rows
+      FROM orders o
+      JOIN payments p ON p.order_id = o.id
+      JOIN ticket_types tt ON tt.id = ${addonTicket.id}
+      WHERE o.id = ${order3.id}
+    `;
+    assert.equal(guardedPaymentState.order_status, "pending");
+    assert.equal(guardedPaymentState.payment_status, "pending");
+    assert.equal(guardedPaymentState.sold_count, 1);
+    assert.equal(guardedPaymentState.target_rows, 0);
 
     await sql`
       INSERT INTO registration_sessions (
