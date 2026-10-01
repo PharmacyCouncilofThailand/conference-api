@@ -29,7 +29,25 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
-const fastify = Fastify({ logger: true });
+const fastify = Fastify({
+  logger: {
+    redact: {
+      paths: ["req.headers.authorization"],
+      censor: "[REDACTED]",
+    },
+    serializers: {
+      req(request) {
+        return {
+          method: request.method,
+          url: redactInvitationRequestUrl(request.url ?? ""),
+          host: request.headers.host,
+          remoteAddress: request.socket.remoteAddress,
+          remotePort: request.socket.remotePort,
+        };
+      },
+    },
+  },
+});
 
 fastify.addHook("onSend", async (request, reply) => {
   reply.header("X-Request-Id", request.id);
@@ -176,6 +194,9 @@ import backofficeEventsRoutes from "./routes/backoffice/events.js";
 import backofficeSpeakersRoutes from "./routes/backoffice/speakers.js";
 import backofficeRegistrationsRoutes from "./routes/backoffice/registrations.js";
 import sessionGrantRoutes from "./modules/session-grants/routes.js";
+import invitationRoutes, {
+  redactInvitationRequestUrl,
+} from "./modules/session-grants/invitation-routes.js";
 import backofficeAbstractsRoutes from "./routes/backoffice/abstracts.js";
 import backofficeAbstractIdentifiersRoutes from "./routes/backoffice/abstract-identifiers.js";
 import backofficeCheckinsRoutes from "./routes/backoffice/checkins.js";
@@ -255,6 +276,7 @@ fastify.register(publicSpeakersRoutes, { prefix: "/api/speakers" });
 fastify.register(abstractSubmitRoutes, { prefix: "/api/abstracts" });
 fastify.register(abstractWordCountRoutes, { prefix: "/api/abstracts" });
 fastify.register(abstractConfirmRoutes, { prefix: "/api/abstracts/confirm" });
+fastify.register(invitationRoutes, { prefix: "/api/session-invitations" });
 fastify.register(abstractAcceptedRoutes, { prefix: "/api/abstracts" });
 fastify.register(userProfileRoutes, { prefix: "/api/users" });
 fastify.register(userAbstractsRoutes, { prefix: "/api/abstracts/user" });

@@ -1,0 +1,153 @@
+{
+  "updatedAt": "2026-10-01",
+  "gates": {
+    "ENV-01": {
+      "status": "PASS",
+      "evidence": "Docker 29.7.2; Compose 5.5.1"
+    },
+    "ENV-02": {
+      "status": "PASS",
+      "evidence": "Persistent isolated project session-invitations-test; no baseline collision; distinct project network/volumes"
+    },
+    "ENV-03": {
+      "status": "PASS",
+      "evidence": "Four lockfile installs PASS in project-owned node_modules volumes; distinct integration DB provisioned"
+    },
+    "ENV-04": {
+      "status": "PASS",
+      "evidence": "Private fake recorder captured one synthetic message through selected transport; production fake URL rejected"
+    },
+    "ENV-05": {
+      "status": "PASS",
+      "evidence": "Docker-only runtime verification; no real NipaMail/payment/provider call"
+    },
+    "BASE-01": {
+      "status": "PASS_WITH_BASELINE_LIMITATIONS",
+      "evidence": "API/BO/PRIS/WEB builds PASS. BO and PRIS repo-wide lint failures cataloged before invitation feature UI edits."
+    },
+    "BASE-02": {
+      "status": "PASS",
+      "evidence": "Existing session-grants unit and integration baseline PASS"
+    },
+    "BASE-03": {
+      "status": "PASS",
+      "evidence": "Production registration_sessions writer inventory recorded in writer-inventory.md"
+    },
+    "MIG-01": {
+      "status": "PASS",
+      "evidence": "0031->0032 clean apply; structural flag defaults false; historical batch preserved"
+    },
+    "MIG-02": {
+      "status": "PASS",
+      "evidence": "0031 duplicate/preflight behavior preserved by preceding migration suite"
+    },
+    "MIG-03": {
+      "status": "PASS",
+      "evidence": "Existing entitlement uniqueness/FK behavior preserved; 0032 adds NO ACTION invitation FKs"
+    },
+    "MIG-04": {
+      "status": "PASS",
+      "evidence": "session_invitations status/lifecycle/check/FK rejection exercised"
+    },
+    "MIG-05": {
+      "status": "PASS",
+      "evidence": "0032 lock timeout rolls back with no partial flag/count/table; succeeds after release"
+    },
+    "MIG-06": {
+      "status": "PASS",
+      "evidence": "Historical completed added/skipped batch remains valid with invited_count=0"
+    },
+    "MIG-07": {
+      "status": "PASS",
+      "evidence": "Catalog check names inspected; only exact historical outcome/completion checks dropped"
+    },
+    "DTO-01": {
+      "status": "PASS",
+      "evidence": "Stable invitation types/count fields/strict decision schema compiled; ungated old grant defaults retained"
+    },
+    "POL-01": {
+      "status": "PASS",
+      "evidence": "Effective deadline is min(snapshot expiry,current session start); exact deadline is expired."
+    },
+    "POL-02": {
+      "status": "PASS",
+      "evidence": "Accepted/declined terminal states remain terminal after deadline."
+    },
+    "POL-03": {
+      "status": "PASS",
+      "evidence": "Inactive session, cancelled registration, or event mismatch revokes pending invitation before deadline."
+    },
+    "POL-04": {
+      "status": "PASS",
+      "evidence": "Moving session start later never extends stored expiry snapshot; malformed dates fail closed."
+    },
+    "POL-05": {
+      "status": "PASS_PARTIAL",
+      "evidence": "Pure policy exact-boundary behavior proven in T02; database mutation semantics remain T05."
+    },
+    "POL-06": {
+      "status": "PASS_PARTIAL",
+      "evidence": "participantKey user/registration identity semantics proven in T02; database sibling enforcement remains T04/T05."
+    },
+    "SEC-01": {
+      "status": "PASS",
+      "evidence": "Invitation credential is 32 random bytes encoded as exactly 64 lowercase hex and persisted identifier is SHA-256 hash."
+    },
+    "SEC-02": {
+      "status": "PASS",
+      "evidence": "AES-256-GCM envelope uses 12-byte nonce, 16-byte tag and invitation ID AAD; tamper/wrong-key/wrong-ID tests fail closed."
+    },
+    "SEC-03": {
+      "status": "PASS",
+      "evidence": "SESSION_INVITATION_ENCRYPTION_KEY requires exact canonical base64 encoding of 32 bytes."
+    },
+    "SEC-04": {
+      "status": "PASS",
+      "evidence": "PRIS_FRONTEND_URL requires trusted HTTPS origin in production; localhost HTTP only outside production; credentials/path/query/hash rejected."
+    },
+    "SEC-05": {
+      "status": "PASS",
+      "evidence": "Token/config error messages verified not to contain raw token or encryption key; API build PASS."
+    },
+    "CAP-01": {
+      "status": "PASS",
+      "evidence": "Configured capacity fixture: 30 actual + 15 valid pending / capacity 50 => occupied 45, remaining 5."
+    },
+    "CAP-02": {
+      "status": "PASS",
+      "evidence": "Expired pending invitation remains stored but consumes no reservation; read-only lookup/capacity performs no normalization."
+    },
+    "CAP-03": {
+      "status": "PASS",
+      "evidence": "Pending sibling of same-user existing entitlement contributes zero reservation; legacy actual entitlement retained."
+    },
+    "READ-01": {
+      "status": "PASS",
+      "evidence": "Repeated lookup returns identical DTO and leaves status/ciphertext/respondedAt/closedAt unchanged."
+    },
+    "READ-02": {
+      "status": "PASS",
+      "evidence": "Malformed credentials fail format validation and unknown valid-format hash returns uniform 401 INVALID_INVITATION_TOKEN."
+    },
+    "READ-03": {
+      "status": "PASS",
+      "evidence": "PublicInvitationDto exposes only invitation/status/deadline/display first name/minimal session summary."
+    },
+    "READ-04": {
+      "status": "PASS_PARTIAL",
+      "evidence": "Public lookup contains no token/ciphertext; batch/history invitation metadata join remains T04."
+    },
+    "READ-05": {
+      "status": "PASS",
+      "evidence": "Legacy/null-ticket entitlement reader regression suite remains PASS in full integration chain."
+    },
+    "READ-06": {
+      "status": "PASS",
+      "evidence": "Cancelled registration maps pending invitation to 409 REGISTRATION_NOT_CONFIRMED without DB mutation."
+    },
+    "SEC-06": {
+      "status": "PASS_PARTIAL",
+      "evidence": "At-rest inspection proves token_hash != raw token and token_ciphertext JSON excludes raw token; route/log proof remains T06."
+    }
+  }
+}

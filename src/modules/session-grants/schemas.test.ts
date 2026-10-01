@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createGrantSchema,
   idempotencyKeySchema,
+  invitationDecisionSchema,
   resultQuerySchema,
   retryEmailsSchema,
 } from "./schemas.js";
@@ -65,6 +66,23 @@ test("retry schema defaults acknowledgement false and enforces a 500 item hard l
       itemIds: Array.from({ length: 501 }, () => uuid),
       acknowledgeUnknown: true,
     }).success,
+    false,
+  );
+});
+
+test("invitation decision schema is strict and accepts only accepted/declined", () => {
+  assert.deepEqual(invitationDecisionSchema.parse({ decision: "accepted" }), {
+    decision: "accepted",
+  });
+  assert.deepEqual(invitationDecisionSchema.parse({ decision: "declined" }), {
+    decision: "declined",
+  });
+  assert.equal(
+    invitationDecisionSchema.safeParse({ decision: "pending" }).success,
+    false,
+  );
+  assert.equal(
+    invitationDecisionSchema.safeParse({ decision: "accepted", now: "client-owned" }).success,
     false,
   );
 });

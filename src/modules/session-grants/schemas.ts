@@ -9,6 +9,12 @@ export const createGrantSchema = z
 
 export const idempotencyKeySchema = z.string().uuid();
 
+export const invitationDecisionSchema = z
+  .object({
+    decision: z.enum(["accepted", "declined"]),
+  })
+  .strict();
+
 export const retryEmailsSchema = z
   .object({
     itemIds: z.array(z.string().uuid()).min(1).max(500),

@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { closeDatabase, db } from "../../database/index.js";
 import {
-  createNipaMailGrantTransport,
+  createGrantMailTransport,
   getGrantMailBacklogHealth,
   runGrantEmailsOnce,
 } from "./email-jobs.js";
@@ -52,7 +52,7 @@ async function run(): Promise<void> {
       return;
     }
 
-    const transport = createNipaMailGrantTransport(timeoutMs);
+    const transport = createGrantMailTransport(process.env, timeoutMs);
     do {
       let claimed = 0;
       if (process.env.ADMIN_SESSION_GRANTS_ENABLED?.trim().toLowerCase() === "true") {

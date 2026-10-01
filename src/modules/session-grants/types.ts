@@ -5,11 +5,66 @@ export type GrantTransaction = Parameters<
   Parameters<GrantDatabase["transaction"]>[0]
 >[0];
 
+export type InvitationStatus =
+  | "pending"
+  | "accepted"
+  | "declined"
+  | "expired"
+  | "revoked";
+export type InvitationDecision = "accepted" | "declined";
+export type GrantOutcome = "added" | "invited" | "skipped";
+
+export interface TokenEnvelope {
+  version: 1;
+  nonce: string;
+  tag: string;
+  ciphertext: string;
+}
+
+export interface InvitationMetadata {
+  invitationId: string;
+  invitationStatus: InvitationStatus;
+  expiresAt: string;
+  effectiveDeadline: string;
+  respondedAt: string | null;
+}
+
+export interface InvitationCapacity {
+  currentEnrollmentCount: number;
+  reservedCount: number;
+  occupiedCount: number;
+  seatsRemaining: number;
+}
+
+export interface PublicInvitationDto {
+  invitationId: string;
+  status: InvitationStatus;
+  respondedAt: string | null;
+  effectiveDeadline: string;
+  recipientFirstName: string | null;
+  session: {
+    sessionName: string;
+    sessionType: string | null;
+    startTime: string;
+    endTime: string;
+    room: string | null;
+  };
+}
+
+export interface InvitationErrorDto {
+  error: string;
+  code: string;
+  invitation?: PublicInvitationDto;
+  capacity?: InvitationCapacity;
+}
+
 export type SkipCode =
   | "REGISTRATION_NOT_FOUND"
   | "EVENT_MISMATCH"
   | "REGISTRATION_NOT_CONFIRMED"
-  | "ALREADY_REGISTERED";
+  | "ALREADY_REGISTERED"
+  | "ALREADY_INVITED"
+  | "DUPLICATE_PARTICIPANT";
 
 export type EmailStatus =
   | "not_applicable"
@@ -34,12 +89,13 @@ export interface GrantItemDto {
   registrationId: number;
   regCode: string | null;
   name: string | null;
-  outcome: "added" | "skipped";
+  outcome: GrantOutcome;
   reasonCode: SkipCode | null;
   registrationSessionId: number | null;
   emailStatus: EmailStatus;
   attemptCount: number;
   lastErrorCode: string | null;
+  invitation: InvitationMetadata | null;
 }
 
 export interface GrantBatchDto {
@@ -48,8 +104,12 @@ export interface GrantBatchDto {
   eventId: number;
   requestedCount: number;
   addedCount: number;
+  invitedCount: number;
   skippedCount: number;
   currentEnrollmentCount: number;
+  reservedCount: number;
+  occupiedCount: number;
+  seatsRemaining: number | null;
   createdAt: string;
   results: GrantItemDto[];
   emailCounts: Record<EmailStatus, number>;
@@ -74,13 +134,16 @@ export interface AdminGrantedSessionDto {
 }
 
 export class GrantError extends Error {
-  readonly statusCode: number;
-  readonly code: string;
-
-  constructor(statusCode: number, code: string, message: string) {
+  constructor(
+    readonly statusCode: number,
+    readonly code: string,
+    message: string,
+    readonly details?: {
+      invitation?: PublicInvitationDto;
+      capacity?: InvitationCapacity;
+    },
+  ) {
     super(message);
     this.name = "GrantError";
-    this.statusCode = statusCode;
-    this.code = code;
   }
 }

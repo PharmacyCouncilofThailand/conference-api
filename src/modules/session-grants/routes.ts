@@ -50,7 +50,11 @@ function adminActor(request: FastifyRequest, reply: FastifyReply): { id: number;
 
 function sendGrantError(reply: FastifyReply, error: unknown) {
   if (error instanceof GrantError) {
-    return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+    return reply.status(error.statusCode).send({
+      error: error.message,
+      code: error.code,
+      ...error.details,
+    });
   }
   return reply.status(500).send({ error: "Session grant request failed", code: "SESSION_GRANT_FAILED" });
 }

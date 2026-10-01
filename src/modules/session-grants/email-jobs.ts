@@ -30,6 +30,77 @@ export function createNipaMailGrantTransport(timeoutMs = 15_000): GrantMailTrans
   };
 }
 
+function fakeTransportFailure(
+  message: string,
+  code: string,
+  deliveryState: "failed" | "unknown",
+): GrantMailTransportFailure {
+  return Object.assign(new Error(message), { code, deliveryState });
+}
+
+export function createFakeGrantMailTransport(
+  fakeMailUrl: string,
+  timeoutMs = 15_000,
+): GrantMailTransport {
+  const origin = new URL(fakeMailUrl);
+  if (origin.origin !== "http://fake-mail:8025" || origin.pathname !== "/") {
+    throw new Error("SESSION_GRANTS_FAKE_MAIL_URL must use the isolated fake-mail service");
+  }
+
+  return {
+    async send(input) {
+      try {
+        const response = await fetch(new URL("/messages", origin), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(input),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) {
+          throw fakeTransportFailure(
+            `Fake mail rejected request with HTTP ${response.status}`,
+            `FAKE_MAIL_HTTP_${response.status}`,
+            "failed",
+          );
+        }
+        const payload = await response.json() as { messageId?: unknown };
+        return {
+          providerMessageId: typeof payload.messageId === "string"
+            ? payload.messageId
+            : undefined,
+        };
+      } catch (error) {
+        if (
+          typeof error === "object"
+          && error !== null
+          && "deliveryState" in error
+        ) {
+          throw error;
+        }
+        throw fakeTransportFailure(
+          "Fake mail delivery outcome is unknown",
+          error instanceof Error && error.name === "TimeoutError"
+            ? "FAKE_MAIL_TIMEOUT"
+            : "FAKE_MAIL_TRANSPORT_UNKNOWN",
+          "unknown",
+        );
+      }
+    },
+  };
+}
+
+export function createGrantMailTransport(
+  environment: NodeJS.ProcessEnv = process.env,
+  timeoutMs = 15_000,
+): GrantMailTransport {
+  const fakeMailUrl = environment.SESSION_GRANTS_FAKE_MAIL_URL?.trim();
+  if (!fakeMailUrl) return createNipaMailGrantTransport(timeoutMs);
+  if (environment.NODE_ENV !== "test") {
+    throw new Error("SESSION_GRANTS_FAKE_MAIL_URL is allowed only when NODE_ENV=test");
+  }
+  return createFakeGrantMailTransport(fakeMailUrl, timeoutMs);
+}
+
 export interface GrantMailTransportFailure extends Error {
   code?: string;
   deliveryState?: "failed" | "unknown";

@@ -14,8 +14,12 @@ function batch(batchId: string, sessionId = 12): GrantBatchDto {
     eventId: 3,
     requestedCount: 1,
     addedCount: 1,
+    invitedCount: 0,
     skippedCount: 0,
     currentEnrollmentCount: 1,
+    reservedCount: 0,
+    occupiedCount: 1,
+    seatsRemaining: null,
     createdAt: "2026-09-30T00:00:00.000Z",
     results: [],
     emailCounts: {

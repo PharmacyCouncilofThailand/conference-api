@@ -299,6 +299,7 @@ export const sessions = pgTable("sessions", {
   sessionType: sessionTypeEnum("session_type").default("other"),
   isMainSession: boolean("is_main_session").notNull().default(false),
   requiresOptIn: boolean("requires_opt_in").notNull().default(false),
+  adminGrantRequiresConfirmation: boolean("admin_grant_requires_confirmation").notNull().default(false),
   description: text("description"),
   room: varchar("room", { length: 100 }),
   startTime: timestamp("start_time").notNull(),
@@ -769,6 +770,7 @@ export const registrationSessionGrantBatches = pgTable(
     sessionNameSnapshot: text("session_name_snapshot").notNull(),
     requestedCount: integer("requested_count").notNull(),
     addedCount: integer("added_count").notNull().default(0),
+    invitedCount: integer("invited_count").notNull().default(0),
     skippedCount: integer("skipped_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -787,12 +789,16 @@ export const registrationSessionGrantBatches = pgTable(
       sql`${table.addedCount} >= 0`,
     ),
     check(
+      "session_grant_batches_invited_nonnegative",
+      sql`${table.invitedCount} >= 0`,
+    ),
+    check(
       "registration_session_grant_batches_skipped_count_check",
       sql`${table.skippedCount} >= 0`,
     ),
     check(
       "registration_session_grant_batches_completion_count_check",
-      sql`${table.completedAt} is null or ${table.requestedCount} = ${table.addedCount} + ${table.skippedCount}`,
+      sql`${table.completedAt} is null or ${table.requestedCount} = ${table.addedCount} + ${table.invitedCount} + ${table.skippedCount}`,
     ),
   ],
 );
@@ -850,7 +856,7 @@ export const registrationSessionGrantItems = pgTable(
     ),
     check(
       "registration_session_grant_items_outcome_check",
-      sql`${table.outcome} in ('added', 'skipped')`,
+      sql`${table.outcome} in ('added', 'invited', 'skipped')`,
     ),
     check(
       "registration_session_grant_items_email_status_check",
@@ -867,7 +873,51 @@ export const registrationSessionGrantItems = pgTable(
     check(
       "registration_session_grant_items_outcome_email_check",
       sql`(${table.outcome} = 'skipped' and ${table.emailStatus} = 'not_applicable' and ${table.reasonCode} is not null)
-        or (${table.outcome} = 'added' and ${table.emailStatus} <> 'not_applicable' and ${table.reasonCode} is null)`,
+        or (${table.outcome} in ('added', 'invited') and ${table.emailStatus} <> 'not_applicable' and ${table.reasonCode} is null)`,
+    ),
+  ],
+);
+
+export const sessionInvitations = pgTable(
+  "session_invitations",
+  {
+    id: uuid("id").primaryKey(),
+    registrationId: integer("registration_id")
+      .notNull()
+      .references(() => registrations.id),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => sessions.id),
+    grantItemId: uuid("grant_item_id")
+      .notNull()
+      .unique()
+      .references(() => registrationSessionGrantItems.id),
+    status: varchar("status", { length: 16 }).notNull(),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+    tokenCiphertext: jsonb("token_ciphertext"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closeReason: varchar("close_reason", { length: 64 }),
+    createdBy: integer("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("session_invitations_pending_pair_unique")
+      .on(table.registrationId, table.sessionId)
+      .where(sql`${table.status} = 'pending'`),
+    index("session_invitations_pending_capacity_idx")
+      .on(table.sessionId, table.expiresAt, table.registrationId)
+      .where(sql`${table.status} = 'pending'`),
+    check(
+      "session_invitations_status_check",
+      sql`${table.status} in ('pending', 'accepted', 'declined', 'expired', 'revoked')`,
+    ),
+    check(
+      "session_invitations_lifecycle_check",
+      sql`(${table.status} = 'pending' and ${table.respondedAt} is null and ${table.closedAt} is null and ${table.tokenCiphertext} is not null)
+        or (${table.status} in ('accepted', 'declined') and ${table.respondedAt} is not null and ${table.closedAt} is not null and ${table.tokenCiphertext} is null)
+        or (${table.status} in ('expired', 'revoked') and ${table.respondedAt} is null and ${table.closedAt} is not null and ${table.tokenCiphertext} is null)`,
     ),
   ],
 );
