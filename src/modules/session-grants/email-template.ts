@@ -1,5 +1,5 @@
-export const GRANT_EMAIL_TEMPLATE_VERSION = "session-grant-v1" as const;
-export const INVITATION_EMAIL_TEMPLATE_VERSION = "session-invitation-v1" as const;
+export const GRANT_EMAIL_TEMPLATE_VERSION = "session-grant-v2" as const;
+export const INVITATION_EMAIL_TEMPLATE_VERSION = "session-invitation-v2" as const;
 
 export interface GrantNotificationSnapshot {
   personName: string | null;
@@ -60,12 +60,23 @@ function parseInstant(value: string, field: string): Date {
 function formatThaiDateTimeRange(startTime: string, endTime: string): string {
   const start = parseInstant(startTime, "startTime");
   const end = parseInstant(endTime, "endTime");
-  const formatter = new Intl.DateTimeFormat("th-TH", {
+  const dateFormatter = new Intl.DateTimeFormat("th-TH", {
     dateStyle: "long",
-    timeStyle: "short",
     timeZone: "Asia/Bangkok",
   });
-  return `${formatter.format(start)} ถึง ${formatter.format(end)}`;
+  const timeFormatter = new Intl.DateTimeFormat("th-TH", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "Asia/Bangkok",
+  });
+  const startDate = dateFormatter.format(start);
+  const endDate = dateFormatter.format(end);
+  const startClock = timeFormatter.format(start).replace(":", ".");
+  const endClock = timeFormatter.format(end).replace(":", ".");
+  return startDate === endDate
+    ? `วันที่ ${startDate} เวลา ${startClock} – ${endClock} น.`
+    : `วันที่ ${startDate} เวลา ${startClock} น. – วันที่ ${endDate} เวลา ${endClock} น.`;
 }
 
 export function renderInvitationEmail(
@@ -88,23 +99,31 @@ export function renderInvitationEmail(
     timeStyle: "short",
     timeZone: "Asia/Bangkok",
   });
-  const formattedDeadline = deadlineFormatter.format(deadlineInstant);
+  const deadlineParts = deadlineFormatter.formatToParts(deadlineInstant);
+  const deadlinePart = (type: Intl.DateTimeFormatPartTypes) => deadlineParts.find((part) => part.type === type)?.value;
+  const formattedDeadline = `วันที่ ${deadlinePart("day")} ${deadlinePart("month")} ${deadlinePart("year")} เวลา ${deadlinePart("hour")}.${deadlinePart("minute")} น.`;
 
-  const subject = `คำเชิญเข้าร่วมเซสชัน: ${snapshot.sessionName} — ${snapshot.eventName}`;
+  const subject = `คำเชิญเข้าร่วมเซสชัน ${snapshot.sessionName} ในงาน ${snapshot.eventName}`;
   const html = `<!doctype html>
 <html lang="th">
   <body>
-    <p>เรียน ${escapeHtml(personName)}</p>
-    <p>คุณได้รับคำเชิญให้เข้าร่วมเซสชันต่อไปนี้</p>
-    <p><strong>งาน:</strong> ${escapeHtml(snapshot.eventName)}</p>
-    <p><strong>สถานที่งาน:</strong> ${escapeHtml(venue)}</p>
-    <p><strong>เซสชัน:</strong> ${escapeHtml(snapshot.sessionName)}</p>
-    <p><strong>วันและเวลา:</strong> ${escapeHtml(formattedTime)} (เวลาไทย)</p>
-    <p><strong>ห้อง:</strong> ${escapeHtml(room)}</p>
-    <p><strong>ตอบรับภายใน:</strong> ${escapeHtml(formattedDeadline)} (เวลาไทย)</p>
-    <p>สิทธิ์เข้าร่วมจะเริ่มใช้งานหลังจากคุณยืนยันเข้าร่วมผ่านหน้าตอบรับเท่านั้น</p>
-    <p>คำตอบที่ส่งแล้วเป็นคำตอบสุดท้าย หากต้องการแก้ไขกรุณาติดต่อผู้จัดงาน</p>
-    <p><a href="${escapeHtml(responsePageUrl)}">ตอบรับคำเชิญเข้าร่วม Session</a></p>
+    <p>เรียน คุณ${escapeHtml(personName)}</p>
+    <p>สภาเภสัชกรรมแห่งประเทศไทยขอเรียนเชิญท่านเข้าร่วมเซสชันดังรายละเอียดต่อไปนี้</p>
+    <ul>
+      <li>งาน: ${escapeHtml(snapshot.eventName)}</li>
+      <li>สถานที่จัดงาน: ${escapeHtml(venue)}</li>
+      <li>เซสชัน: ${escapeHtml(snapshot.sessionName)}</li>
+      <li>วันและเวลา: ${escapeHtml(formattedTime)} (เวลาประเทศไทย)</li>
+      <li>ห้อง: ${escapeHtml(room)}</li>
+      <li>กำหนดตอบรับภายใน: ${escapeHtml(formattedDeadline)} (เวลาประเทศไทย)</li>
+    </ul>
+    <p>ทั้งนี้ สิทธิ์เข้าร่วมเซสชันจะมีผลก็ต่อเมื่อท่านยืนยันการเข้าร่วมผ่านหน้าตอบรับเท่านั้น และเมื่อส่งคำตอบแล้วจะถือเป็นที่สิ้นสุด หากประสงค์จะแก้ไขคำตอบ กรุณาติดต่อผู้จัดงานโดยตรง</p>
+    <p><a href="${escapeHtml(responsePageUrl)}">ตอบรับคำเชิญเข้าร่วมเซสชัน</a></p>
+    <p>จึงเรียนมาเพื่อโปรดพิจารณา</p>
+    <p>ขอแสดงความนับถือ</p>
+    <p>สภาเภสัชกรรมแห่งประเทศไทย</p>
+    <p>(The Pharmacy Council of Thailand)</p>
+    <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
   </body>
 </html>`;
 
@@ -120,24 +139,29 @@ export function renderGrantEmail(snapshot: GrantNotificationSnapshot): {
   html: string;
   templateVersion: typeof GRANT_EMAIL_TEMPLATE_VERSION;
 } {
-  const participantUrl = safeHttpUrl(snapshot.participantUrl ?? "");
   const personName = snapshot.personName?.trim() || "ผู้เข้าร่วมงาน";
   const room = snapshot.room?.trim() || "ไม่ระบุ";
   const formattedTime = formatThaiDateTimeRange(snapshot.startTime, snapshot.endTime);
 
-  const subject = `เพิ่มสิทธิ์เข้าร่วมเซสชัน: ${snapshot.sessionName} — ${snapshot.eventName}`;
+  const subject = `แจ้งการเพิ่มสิทธิ์เข้าร่วมเซสชัน ${snapshot.sessionName} ในงาน ${snapshot.eventName}`;
   const html = `<!doctype html>
 <html lang="th">
   <body>
-    <p>เรียน ${escapeHtml(personName)}</p>
-    <p>ผู้ดูแลได้เพิ่มสิทธิ์เข้าร่วมเซสชันให้คุณเรียบร้อยแล้ว</p>
-    <p><strong>งาน:</strong> ${escapeHtml(snapshot.eventName)}</p>
-    <p><strong>รหัสลงทะเบียน:</strong> ${escapeHtml(snapshot.regCode)}</p>
-    <p><strong>เซสชัน:</strong> ${escapeHtml(snapshot.sessionName)}</p>
-    <p><strong>วันและเวลา:</strong> ${escapeHtml(formattedTime)}</p>
-    <p><strong>ห้อง:</strong> ${escapeHtml(room)}</p>
-    <p>ใช้รหัสลงทะเบียนเดิมเพื่อเข้าร่วมเซสชันนี้</p>
-    <p><a href="${escapeHtml(participantUrl)}">ดูรายละเอียด</a></p>
+    <p>เรียน คุณ${escapeHtml(personName)}</p>
+    <p>สภาเภสัชกรรมแห่งประเทศไทยขอเรียนแจ้งว่า ผู้ดูแลระบบได้เพิ่มสิทธิ์เข้าร่วมเซสชันให้แก่ท่านเรียบร้อยแล้ว โดยมีรายละเอียดดังนี้</p>
+    <ul>
+      <li>งาน: ${escapeHtml(snapshot.eventName)}</li>
+      <li>รหัสลงทะเบียน: ${escapeHtml(snapshot.regCode)}</li>
+      <li>เซสชัน: ${escapeHtml(snapshot.sessionName)}</li>
+      <li>วันและเวลา: ${escapeHtml(formattedTime)}</li>
+      <li>สถานที่: ห้อง ${escapeHtml(room)}</li>
+    </ul>
+    <p>ทั้งนี้ ท่านสามารถใช้รหัสลงทะเบียนเดิมในการเข้าร่วมเซสชันดังกล่าวได้</p>
+    <p>จึงเรียนมาเพื่อโปรดทราบ</p>
+    <p>ขอแสดงความนับถือ</p>
+    <p>สภาเภสัชกรรมแห่งประเทศไทย</p>
+    <p>(The Pharmacy Council of Thailand)</p>
+    <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
   </body>
 </html>`;
 

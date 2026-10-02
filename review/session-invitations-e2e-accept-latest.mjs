@@ -70,7 +70,7 @@ async function clickText(cdp, text) {
 const mail = await (await fetch(`${MAIL_URL}/messages`)).json();
 const message = [...(mail.messages || [])].reverse().find((entry) => entry.recipient === RECIPIENT);
 assert.ok(message, 'Synthetic invitation email not captured');
-assert.match(message.subject, /^คำเชิญเข้าร่วมเซสชัน:/);
+assert.match(message.subject, /^คำเชิญเข้าร่วมเซสชัน .+ ในงาน /);
 assert.doesNotMatch(message.subject, /payment|receipt|ชำระเงิน|ใบเสร็จ/i);
 const href = message.html.match(/href="([^"]*\/sessions\/confirm\?token=[a-f0-9]{64})"/i)?.[1];
 assert.ok(href, 'Invitation response URL missing from synthetic mail');

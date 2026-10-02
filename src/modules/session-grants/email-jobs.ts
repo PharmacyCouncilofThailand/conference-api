@@ -11,6 +11,8 @@ import {
 } from "../../database/schema.js";
 import { sendNipaMailHtml } from "../../services/emailService.js";
 import {
+  GRANT_EMAIL_TEMPLATE_VERSION,
+  INVITATION_EMAIL_TEMPLATE_VERSION,
   renderGrantEmail,
   renderInvitationEmail,
   type GrantNotificationSnapshot,
@@ -336,9 +338,9 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
         if (effectiveStatus !== "pending") {
           forceSuppressed = true;
           rendered = {
-            subject: `คำเชิญเข้าร่วมเซสชัน: ${snapshot.sessionName} — ${snapshot.eventName}`,
+            subject: `คำเชิญเข้าร่วมเซสชัน ${snapshot.sessionName} ในงาน ${snapshot.eventName}`,
             html: "",
-            templateVersion: "session-invitation-v1" as const,
+            templateVersion: INVITATION_EMAIL_TEMPLATE_VERSION,
           };
         } else {
           if (!invitation.tokenCiphertext) {
@@ -401,7 +403,7 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
         triggeredBy: item.nextTriggeredBy,
         recipientEmail: item.recipient ?? "invalid@example.invalid",
         templateVersion:
-          kind === "invited" ? "session-invitation-v1" : "session-grant-v1",
+          kind === "invited" ? INVITATION_EMAIL_TEMPLATE_VERSION : GRANT_EMAIL_TEMPLATE_VERSION,
         subjectSnapshot: "ไม่สามารถสร้างข้อความแจ้งเตือนได้",
         result: "failed",
         startedAt: now,
