@@ -40,7 +40,7 @@ test("ticket PNG export enforces ownership, PNG limits, scoped expiring links an
     assert.equal(created.headers["cache-control"], "private, no-store");
     const downloaded = await app.inject({ url: link });
     assert.equal(downloaded.statusCode, 200);
-    assert.equal(downloaded.headers["content-type"], "image/png");
+    assert.equal(downloaded.headers["content-type"], "application/octet-stream");
     assert.equal(downloaded.headers["content-disposition"], 'attachment; filename="PRIS2026-Ticket.png"');
     assert.equal(downloaded.headers["x-content-type-options"], "nosniff");
     assert.equal(downloaded.headers["referrer-policy"], "no-referrer");

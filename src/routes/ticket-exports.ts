@@ -79,6 +79,7 @@ export default async function ticketExportRoutes(app: FastifyInstance, options: 
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return reply.code(410).send({ success: false, error: "Download expired. Please create a new export." });
     }
-    return reply.type("image/png").header("Content-Disposition", 'attachment; filename="PRIS2026-Ticket.png"').send(png);
+    // Generic binary avoids advertising an image-viewer target; LINE still controls native saving.
+    return reply.type("application/octet-stream").header("Content-Disposition", 'attachment; filename="PRIS2026-Ticket.png"').send(png);
   });
 }
