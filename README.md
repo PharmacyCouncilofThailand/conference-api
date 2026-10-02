@@ -134,3 +134,9 @@ accp-api/
 - Auth: `POST /auth/login`, `POST /auth/register`
 - Backoffice: `/api/backoffice/*`
 - Public: `/api/speakers`, `/api/abstracts`
+
+### Ticket PNG downloads
+
+`POST /api/ticket-exports/registrations/:registrationId` accepts an `image/png` body (up to 3 MiB) with the attendee's bearer token. Only owned confirmed registrations can create exports. It returns a scoped download path and an expiry 5 minutes later. `GET` on that path returns the PNG as an attachment without requiring a login token.
+
+Exports are private temporary files; expired files are removed every minute and at startup. `TICKET_EXPORT_DIR` optionally selects the private storage directory (default: OS temporary directory). Run one API instance, or configure a **shared private directory** for replicas using the same signing secret. A restart that loses temporary files invalidates existing downloads; the user can generate a new export. Serve both frontend and API over HTTPS in production. Native LINE download support must be confirmed on actual Android/iOS devices.

@@ -7,8 +7,8 @@ import jwt from "@fastify/jwt";
 import rateLimit from "@fastify/rate-limit";
 import { ApiError } from "./errors/ApiError.js";
 import { db } from "./database/index.js";
-import { abstractTrackingRuntime } from "./database/schema.js";
-import { eq } from "drizzle-orm";
+import { abstractTrackingRuntime, registrations } from "./database/schema.js";
+import { and, eq } from "drizzle-orm";
 import fastifyStatic from "@fastify/static";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -39,7 +39,7 @@ const fastify = Fastify({
       req(request) {
         return {
           method: request.method,
-          url: redactInvitationRequestUrl(request.url ?? ""),
+          url: redactInvitationRequestUrl(request.url ?? "").replace(/(\/api\/ticket-exports\/)[^/?]+/g, "$1[REDACTED]"),
           host: request.headers.host,
           remoteAddress: request.socket.remoteAddress,
           remotePort: request.socket.remotePort,
@@ -187,6 +187,7 @@ import resetPasswordRoutes from "./routes/auth/reset-password.js";
 import resubmitDocumentRoutes from "./routes/auth/resubmit-document.js";
 import ssoRoutes from "./routes/auth/sso.js";
 import { uploadRoutes } from "./routes/upload/index.js";
+import ticketExportRoutes from "./routes/ticket-exports.js";
 import backofficeLoginRoutes from "./routes/backoffice/login.js";
 import backofficeUsersRoutes from "./routes/backoffice/users.js";
 import backofficeVerificationsRoutes from "./routes/backoffice/verifications.js";
@@ -266,6 +267,16 @@ fastify.register(forgotPasswordRoutes, { prefix: "/auth" });
 fastify.register(resetPasswordRoutes, { prefix: "/auth" });
 fastify.register(resubmitDocumentRoutes, { prefix: "/auth" });
 fastify.register(uploadRoutes, { prefix: "/api/upload" });
+fastify.register(ticketExportRoutes, {
+  prefix: "/api/ticket-exports",
+  secret: JWT_SECRET,
+  isOwnedConfirmed: async (userId: number, registrationId: number) => {
+    const rows = await db.select({ id: registrations.id }).from(registrations).where(and(
+      eq(registrations.id, registrationId), eq(registrations.userId, userId), eq(registrations.status, "confirmed"),
+    )).limit(1);
+    return rows.length === 1;
+  },
+});
 fastify.register(backofficeLoginRoutes, { prefix: "/backoffice" });
 
 // Public API routes
