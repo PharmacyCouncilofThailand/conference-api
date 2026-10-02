@@ -185,8 +185,8 @@ test(
       async send(input) {
         firstHtml=input.html;
         assert.match(input.subject,/คำเชิญเข้าร่วมเซสชัน/);
-        assert.match(input.html,/ตอบรับคำเชิญเข้าร่วม Session/);
-        assert.match(input.html,/สิทธิ์เข้าร่วมจะเริ่มใช้งานหลังจากคุณยืนยันเข้าร่วม/);
+        assert.match(input.html,/ตอบรับคำเชิญเข้าร่วมเซสชัน/);
+        assert.match(input.html,/สิทธิ์เข้าร่วมเซสชันจะมีผลก็ต่อเมื่อท่านยืนยันการเข้าร่วมผ่านหน้าตอบรับเท่านั้น/);
         throw failedTransport();
       },
     },new Date());
