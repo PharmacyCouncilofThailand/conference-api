@@ -325,7 +325,7 @@ export async function luckyWheelAdminRoutes(
 
   fastify.get(
     "/events/:eventId/qr-codes/:qrId",
-    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    { config: { rateLimit: false }, preHandler: adminRateLimit, logLevel: "silent" },
     async (request, reply) => {
       const params = request.params as { eventId?: unknown; qrId?: unknown };
       const event = eventIdSchema.safeParse(params.eventId);
@@ -344,7 +344,7 @@ export async function luckyWheelAdminRoutes(
 
   fastify.get(
     "/events/:eventId/qr-codes/:qrId/claims",
-    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    { config: { rateLimit: false }, preHandler: adminRateLimit, logLevel: "silent" },
     async (request, reply) => {
       const params = request.params as { eventId?: unknown; qrId?: unknown };
       const event = eventIdSchema.safeParse(params.eventId);
@@ -364,7 +364,7 @@ export async function luckyWheelAdminRoutes(
 
   fastify.patch(
     "/events/:eventId/qr-codes/:qrId",
-    { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 4 * 1024 },
+    { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 4 * 1024, logLevel: "silent" },
     async (request, reply) => {
       const params = request.params as { eventId?: unknown; qrId?: unknown };
       const event = eventIdSchema.safeParse(params.eventId);

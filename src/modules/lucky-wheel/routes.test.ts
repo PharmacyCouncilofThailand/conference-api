@@ -981,3 +981,44 @@ test("attendee QR preview does not log the raw QR identifier", async (t) => {
   assert.equal(response.statusCode, 200);
   assert.equal(logs.join("").includes(qrId), false);
 });
+
+test("admin QR detail, recipient list and status change do not log the raw QR identifier", async (t) => {
+  const qrId = "00000000-0000-4000-8000-000000000195";
+  const logs: string[] = [];
+  const app = Fastify({
+    logger: { level: "info", stream: { write(line: string) { logs.push(line); } } } as any,
+  });
+  await app.register(rateLimit, { max: 600, timeWindow: "1 minute" });
+  app.addHook("preHandler", async (request) => {
+    (request as any).user = { id: 7, role: "admin", email: "admin@example.invalid" };
+  });
+  const qr = {
+    id: qrId, eventId: 3, date: "2026-10-29", name: "Morning",
+    status: "open" as const, createdBy: 7, createdAt: "2026-10-29T02:00:00.000Z",
+    openedBy: 7, openedAt: "2026-10-29T02:00:00.000Z", openedReason: "Begin",
+    closedBy: null, closedAt: null, closedReason: null,
+  };
+  await app.register(luckyWheelAdminRoutes, {
+    database: {} as WheelDatabase,
+    validateAdminActorFn: async () => ({ id: 7, role: "admin", email: "admin@example.invalid" }),
+    readQrProjectionFn: async () => ({
+      ...qr, currentDeadline: "2026-10-29T12:00:00.000Z",
+      claimUrl: `https://pris.example.com/th/lucky-wheel/claim#${qrId}`,
+      qrDataUrl: "data:image/png;base64,AA==",
+    }),
+    readQrClaimsFn: async () => ({
+      eventId: 3, qrId, items: [],
+      pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 },
+    }),
+    setQrStatusFn: async () => ({ ...qr, status: "closed" as const, replayed: false }),
+  });
+  await app.ready();
+  t.after(async () => app.close());
+  const path = `/events/3/qr-codes/${qrId}`;
+  assert.equal((await app.inject({ method: "GET", url: path })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: `${path}/claims` })).statusCode, 200);
+  assert.equal((await app.inject({ method: "PATCH", url: path, payload: {
+    status: "closed", reason: "End", idempotencyKey: randomUUID(),
+  } })).statusCode, 200);
+  assert.equal(logs.join("").includes(qrId), false);
+});
