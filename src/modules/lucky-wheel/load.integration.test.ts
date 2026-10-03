@@ -84,6 +84,10 @@ async function bootstrap(sqlClient: SqlClient) {
     await readFile(resolve(process.cwd(), "drizzle", "0034_lucky_wheel.sql"), "utf8")
   ).replaceAll("--> statement-breakpoint", "");
   await sqlClient.unsafe(migration);
+  const creditMigration = (
+    await readFile(resolve(process.cwd(), "drizzle", "0035_lucky_wheel_qr_credits.sql"), "utf8")
+  ).replaceAll("--> statement-breakpoint", "");
+  await sqlClient.unsafe(creditMigration);
 }
 
 async function createAttendees(
@@ -146,6 +150,7 @@ async function createWheelFixture(
   code: string,
   prizeId: string,
   stock: number,
+  day: string,
 ) {
   const [event] = await sqlClient<Array<{ id: number }>>`
     INSERT INTO events (event_code) VALUES (${code}) RETURNING id
@@ -184,13 +189,60 @@ async function createWheelFixture(
     "T12 load fixture",
     randomUUID(),
   );
+  const [wheel] = await sqlClient<Array<{ id: string }>>`
+    SELECT id FROM lucky_wheels WHERE event_id = ${event.id}
+  `;
+  const startAt = new Date(`${day}T00:00:00.000+07:00`);
+  const endAt = new Date(startAt.getTime() + 24 * 60 * 60 * 1000);
+  const [window] = await sqlClient<Array<{ id: string }>>`
+    INSERT INTO lucky_wheel_days (wheel_id, event_id, play_date, start_at, end_at)
+    VALUES (
+      ${wheel.id}, ${event.id}, ${day}::date,
+      ${startAt.toISOString()}::timestamptz, ${endAt.toISOString()}::timestamptz
+    ) RETURNING id
+  `;
+  const [qr] = await sqlClient<Array<{ id: string }>>`
+    INSERT INTO lucky_wheel_qr_codes (
+      day_id, event_id, play_date, name, created_by,
+      status, opened_by, opened_at, opened_reason
+    ) VALUES (
+      ${window.id}, ${event.id}, ${day}::date, 'Load QR', ${admin.id},
+      'open', ${admin.id}, clock_timestamp(), 'Load test'
+    ) RETURNING id
+  `;
   return {
     eventId: event.id,
     sessionId: session.id,
     configurationVersion: published.version,
     poolRevision: stocked.poolRevision,
+    scheduleVersion: 1,
+    qrId: qr.id,
     prizeId,
   };
+}
+
+async function grantLoadCredits(
+  sqlClient: SqlClient,
+  eventId: number,
+  sessionId: number,
+  day: string,
+  qrId: string,
+): Promise<void> {
+  await sqlClient`
+    INSERT INTO lucky_wheel_credit_claims (
+      qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at
+    )
+    SELECT
+      ${qrId}, ${eventId}, ${day}::date, r.user_id, dc.id, d.end_at
+    FROM registrations r
+    JOIN registration_sessions rs
+      ON rs.registration_id = r.id AND rs.session_id = ${sessionId}
+    JOIN session_daily_checkins dc
+      ON dc.registration_session_id = rs.id AND dc.attendance_date = ${day}::date
+    JOIN lucky_wheel_qr_codes q ON q.id = ${qrId}
+    JOIN lucky_wheel_days d ON d.id = q.day_id
+    WHERE r.event_id = ${eventId} AND r.status = 'confirmed' AND dc.cancelled_at IS NULL
+  `;
 }
 
 function statusCounts(responses: Array<{ statusCode: number }>) {
@@ -280,6 +332,7 @@ test(
       "LW-T12-LOAD",
       "00000000-0000-4000-8000-000000001201",
       250,
+      day,
     );
     const attendees = await createAttendees(
       setupSql,
@@ -290,6 +343,7 @@ test(
       "t12-load",
     );
     assert.equal(attendees.length, 102);
+    await grantLoadCredits(setupSql, main.eventId, main.sessionId, day, main.qrId);
 
     const manyStarted = performance.now();
     const manyResponses = await Promise.all(
@@ -302,6 +356,7 @@ test(
             eventId: main.eventId,
             configurationVersion: main.configurationVersion,
             poolRevision: main.poolRevision,
+            scheduleVersion: main.scheduleVersion,
             idempotencyKey: randomUUID(),
           },
         }),
@@ -327,6 +382,7 @@ test(
             eventId: main.eventId,
             configurationVersion: main.configurationVersion,
             poolRevision: main.poolRevision,
+            scheduleVersion: main.scheduleVersion,
             idempotencyKey: sameKey,
           },
         }),
@@ -349,6 +405,7 @@ test(
         eventId: main.eventId,
         configurationVersion: main.configurationVersion,
         poolRevision: main.poolRevision,
+        scheduleVersion: main.scheduleVersion,
         idempotencyKey: lostKey,
       },
     });
@@ -472,6 +529,7 @@ test(
       "LW-T12-LAST",
       "00000000-0000-4000-8000-000000001202",
       1,
+      day,
     );
     const finalUsers = await createAttendees(
       setupSql,
@@ -482,6 +540,7 @@ test(
       "t12-final",
     );
     const finalStarted = performance.now();
+    await grantLoadCredits(setupSql, finalUnit.eventId, finalUnit.sessionId, day, finalUnit.qrId);
     const finalResponses = await Promise.all(
       finalUsers.map(({ user_id }) =>
         app.inject({
@@ -492,6 +551,7 @@ test(
             eventId: finalUnit.eventId,
             configurationVersion: finalUnit.configurationVersion,
             poolRevision: finalUnit.poolRevision,
+            scheduleVersion: finalUnit.scheduleVersion,
             idempotencyKey: randomUUID(),
           },
         }),
@@ -523,20 +583,32 @@ test(
     assert.deepEqual(finalState, { remaining: 0, spins: 1 });
 
     const [invariants] = await setupSql<Array<{
-      duplicate_spins: number;
+      duplicate_credit_spends: number;
+      duplicate_qr_claims: number;
       negative_stock: number;
       duplicate_checkins: number;
+      final_unspent_credits: number;
     }>>`
       SELECT
         (
           SELECT count(*)::int
           FROM (
-            SELECT event_id, user_id, play_date, count(*)
+            SELECT credit_claim_id
             FROM lucky_wheel_spins
-            GROUP BY event_id, user_id, play_date
+            WHERE credit_claim_id IS NOT NULL
+            GROUP BY credit_claim_id
             HAVING count(*) > 1
-          ) duplicate_spins
-        ) AS duplicate_spins,
+          ) duplicate_spends
+        ) AS duplicate_credit_spends,
+        (
+          SELECT count(*)::int
+          FROM (
+            SELECT qr_id, user_id
+            FROM lucky_wheel_credit_claims
+            GROUP BY qr_id, user_id
+            HAVING count(*) > 1
+          ) duplicate_claims
+        ) AS duplicate_qr_claims,
         (
           SELECT count(*)::int
           FROM lucky_wheel_segments
@@ -551,16 +623,22 @@ test(
             GROUP BY registration_session_id, attendance_date
             HAVING count(*) > 1
           ) duplicate_checkins
-        ) AS duplicate_checkins
+        ) AS duplicate_checkins,
+        (
+          SELECT count(*)::int FROM lucky_wheel_credit_claims
+          WHERE event_id = ${finalUnit.eventId} AND spent_at IS NULL AND revoked_at IS NULL
+        ) AS final_unspent_credits
     `;
     assert.deepEqual(invariants, {
-      duplicate_spins: 0,
+      duplicate_credit_spends: 0,
+      duplicate_qr_claims: 0,
       negative_stock: 0,
       duplicate_checkins: 0,
+      final_unspent_credits: 99,
     });
 
     console.log(JSON.stringify({
-      scenario: "lucky-wheel-t12-load",
+      scenario: "lucky-wheel-shared-qr-load",
       differentUsers: {
         requests: 100,
         statusCounts: statusCounts(manyResponses),

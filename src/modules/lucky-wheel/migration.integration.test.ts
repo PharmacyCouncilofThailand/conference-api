@@ -20,6 +20,10 @@ async function applyMigration(sql: Sql): Promise<void> {
   await sql.unsafe(await migrationSql("0034_lucky_wheel.sql"));
 }
 
+async function applyCreditMigration(sql: Sql): Promise<void> {
+  await sql.unsafe(await migrationSql("0035_lucky_wheel_qr_credits.sql"));
+}
+
 async function bootstrapDependencies(sql: Sql): Promise<void> {
   await sql.unsafe(`
     CREATE TABLE events (
@@ -194,4 +198,107 @@ test("lucky wheel migration enforces stock, identity, idempotency and historical
     SELECT count(*)::int AS "spinCount" FROM lucky_wheel_spins
   `;
   assert.equal(spinCount, 1);
+
+  const [legacySpin] = await sql<Array<{ id: string }>>`
+    SELECT id FROM lucky_wheel_spins WHERE idempotency_key = ${requestId}
+  `;
+  await sql`
+    INSERT INTO lucky_wheel_redemptions (spin_id, event_id)
+    VALUES (${legacySpin.id}, ${eventA.id})
+  `;
+
+  await applyCreditMigration(sql);
+  await applyCreditMigration(sql);
+  const [legacy] = await sql<Array<{ creditClaimId: string | null; redemptionCount: number }>>`
+    SELECT s.credit_claim_id AS "creditClaimId", count(r.id)::int AS "redemptionCount"
+    FROM lucky_wheel_spins s
+    LEFT JOIN lucky_wheel_redemptions r ON r.spin_id = s.id
+    WHERE s.id = ${legacySpin.id}
+    GROUP BY s.id
+  `;
+  assert.equal(legacy.creditClaimId, null);
+  assert.equal(legacy.redemptionCount, 1);
+
+  const [day] = await sql<Array<{ id: string }>>`
+    INSERT INTO lucky_wheel_days (wheel_id, event_id, play_date, start_at, end_at)
+    VALUES (${wheel.id}, ${eventA.id}, '2026-10-29', '2026-10-29T02:00:00Z', '2026-10-29T12:00:00Z') RETURNING id
+  `;
+  await assert.rejects(sql`
+    INSERT INTO lucky_wheel_days (wheel_id, event_id, play_date, start_at, end_at)
+    VALUES (${wheel.id}, ${eventB.id}, '2026-10-30', '2026-10-30T02:00:00Z', '2026-10-30T12:00:00Z')
+  `);
+  const [qrA] = await sql<Array<{ id: string }>>`
+    INSERT INTO lucky_wheel_qr_codes (day_id, event_id, play_date, name, created_by)
+    VALUES (${day.id}, ${eventA.id}, '2026-10-29', 'Morning', ${admin.id}) RETURNING id
+  `;
+  const [qrB] = await sql<Array<{ id: string }>>`
+    INSERT INTO lucky_wheel_qr_codes (day_id, event_id, play_date, name, created_by)
+    VALUES (${day.id}, ${eventA.id}, '2026-10-29', 'Afternoon', ${admin.id}) RETURNING id
+  `;
+  await assert.rejects(sql`
+    INSERT INTO lucky_wheel_qr_codes (day_id, event_id, play_date, name, created_by)
+    VALUES (${day.id}, ${eventB.id}, '2026-10-29', 'Wrong event', ${admin.id})
+  `);
+  const [creditA] = await sql<Array<{ id: string }>>`
+    INSERT INTO lucky_wheel_credit_claims (qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at)
+    VALUES (${qrA.id}, ${eventA.id}, '2026-10-29', ${user.id}, ${attendanceId}, '2026-10-29T12:00:00Z') RETURNING id
+  `;
+  const [creditB] = await sql<Array<{ id: string }>>`
+    INSERT INTO lucky_wheel_credit_claims (qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at)
+    VALUES (${qrB.id}, ${eventA.id}, '2026-10-29', ${user.id}, ${attendanceId}, '2026-10-29T12:00:00Z') RETURNING id
+  `;
+  await assert.rejects(sql`
+    INSERT INTO lucky_wheel_credit_claims (qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at)
+    VALUES (${qrA.id}, ${eventA.id}, '2026-10-29', ${user.id}, ${attendanceId}, '2026-10-29T12:00:00Z')
+  `);
+  await assert.rejects(sql`
+    INSERT INTO lucky_wheel_credit_claims (qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at)
+    VALUES (${qrA.id}, ${eventA.id}, '2026-10-30', ${user.id}, ${attendanceId}, '2026-10-29T12:00:00Z')
+  `);
+
+  for (const [creditId, key] of [
+    [creditA.id, '00000000-0000-4000-8000-000000000071'],
+    [creditB.id, '00000000-0000-4000-8000-000000000072'],
+  ]) {
+    await sql`
+      INSERT INTO lucky_wheel_spins (
+        wheel_id, event_id, user_id, play_date, attendance_id, attendance_checked_in_at,
+        segment_id, outcome_kind, awarded_name_th, awarded_name_en,
+        configuration_version, pool_revision, configuration_snapshot, outcome_snapshot,
+        idempotency_key, request_hash, credit_claim_id
+      ) VALUES (
+        ${wheel.id}, ${eventA.id}, ${user.id}, '2026-10-29', ${attendanceId}, '2026-10-29T03:10:00Z',
+        ${loseId}, 'no_prize', 'เสียใจด้วย', 'No prize',
+        1, 1, '{}'::jsonb, '{}'::jsonb, ${key}, repeat('d', 64), ${creditId}
+      )
+    `;
+  }
+  await assert.rejects(sql`
+    INSERT INTO lucky_wheel_spins (
+      wheel_id, event_id, user_id, play_date, attendance_id, attendance_checked_in_at,
+      segment_id, outcome_kind, awarded_name_th, awarded_name_en,
+      configuration_version, pool_revision, configuration_snapshot, outcome_snapshot,
+      idempotency_key, request_hash, credit_claim_id
+    ) VALUES (
+      ${wheel.id}, ${eventA.id}, ${user.id}, '2026-10-29', ${attendanceId}, '2026-10-29T03:11:00Z',
+      ${loseId}, 'no_prize', 'เสียใจด้วย', 'No prize',
+      1, 1, '{}'::jsonb, '{}'::jsonb, '00000000-0000-4000-8000-000000000073', repeat('e', 64), ${creditA.id}
+    )
+  `);
+  await assert.rejects(sql`
+    INSERT INTO lucky_wheel_spins (
+      wheel_id, event_id, user_id, play_date, attendance_id, attendance_checked_in_at,
+      segment_id, outcome_kind, awarded_name_th, awarded_name_en,
+      configuration_version, pool_revision, configuration_snapshot, outcome_snapshot,
+      idempotency_key, request_hash
+    ) VALUES (
+      ${wheel.id}, ${eventA.id}, ${user.id}, '2026-10-29', ${attendanceId}, '2026-10-29T03:12:00Z',
+      ${loseId}, 'no_prize', 'เสียใจด้วย', 'No prize',
+      1, 1, '{}'::jsonb, '{}'::jsonb, '00000000-0000-4000-8000-000000000074', repeat('f', 64)
+    )
+  `);
+  const [{ finalSpinCount }] = await sql<Array<{ finalSpinCount: number }>>`
+    SELECT count(*)::int AS "finalSpinCount" FROM lucky_wheel_spins
+  `;
+  assert.equal(finalSpinCount, 3);
 });

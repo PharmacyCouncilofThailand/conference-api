@@ -23,6 +23,8 @@ import {
   WheelError,
   type WheelDatabase,
 } from "./service.js";
+import { editDayWindow } from "./day-schedule.js";
+import { revokeCreditClaim, setQrStatus } from "./qr-credits.js";
 
 async function bootstrap(sql: ReturnType<typeof postgres>) {
   await resetSessionGrantIntegrationSchema(sql);
@@ -76,10 +78,13 @@ async function bootstrap(sql: ReturnType<typeof postgres>) {
   const migration = (await readFile(resolve(process.cwd(), "drizzle", "0034_lucky_wheel.sql"), "utf8"))
     .replaceAll("--> statement-breakpoint", "");
   await sql.unsafe(migration);
+  const creditMigration = (await readFile(resolve(process.cwd(), "drizzle", "0035_lucky_wheel_qr_credits.sql"), "utf8"))
+    .replaceAll("--> statement-breakpoint", "");
+  await sql.unsafe(creditMigration);
 }
 
 test(
-  "lucky wheel service serializes publication, stock, pause and spin races without duplicate daily awards",
+  "lucky wheel service serializes publication, stock, pause and credit spending races",
   { timeout: 180_000 },
   async (t) => {
     const originalRewardKey = process.env.LUCKY_WHEEL_TOKEN_ENCRYPTION_KEY;
@@ -153,7 +158,7 @@ test(
       RETURNING id
     `;
 
-    const claimedAdmin = { id: admin.id, role: "admin", email: admin.email };
+    const claimedAdmin = { id: admin.id, role: "admin" as const, email: admin.email };
     assert.ok(await validateAdminActor(database, claimedAdmin, event.id));
     assert.equal(
       await validateAdminActor(
@@ -240,8 +245,71 @@ test(
         error.code === "WHEEL_UPDATED",
     );
 
+    const [wheel] = await setupSql<Array<{ id: string }>>`
+      SELECT id FROM lucky_wheels WHERE event_id = ${event.id}
+    `;
+    const dayStart = new Date(`${day}T00:00:00.000+07:00`);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+    const [currentDay] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_days (wheel_id, event_id, play_date, start_at, end_at)
+      VALUES (
+        ${wheel.id}, ${event.id}, ${day}::date,
+        ${dayStart.toISOString()}::timestamptz, ${dayEnd.toISOString()}::timestamptz
+      ) RETURNING id
+    `;
+    for (let index = 0; index < 5; index += 1) {
+      const [qr] = await setupSql<Array<{ id: string }>>`
+        INSERT INTO lucky_wheel_qr_codes (
+          day_id, event_id, play_date, name, created_by
+        ) VALUES (
+          ${currentDay.id}, ${event.id}, ${day}::date, ${`QR ${index + 1}`}, ${admin.id}
+        ) RETURNING id
+      `;
+      await setupSql`
+        INSERT INTO lucky_wheel_credit_claims (
+          qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at
+        ) VALUES (
+          ${qr.id}, ${event.id}, ${day}::date, ${user.id},
+          ${attendance.id}, ${dayEnd.toISOString()}::timestamptz
+        )
+      `;
+    }
+    const priorStart = new Date(dayStart.getTime() - 24 * 60 * 60 * 1000);
+    const priorDay = new Date(priorStart.getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const [priorAttendance] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO session_daily_checkins (
+        id, registration_session_id, attendance_date, checked_in_at
+      ) VALUES (
+        ${randomUUID()}, ${registrationSession.id}, ${priorDay}::date,
+        ${new Date(priorStart.getTime() + 9 * 60 * 60 * 1000).toISOString()}::timestamptz
+      ) RETURNING id
+    `;
+    const [priorDayRow] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_days (wheel_id, event_id, play_date, start_at, end_at)
+      VALUES (
+        ${wheel.id}, ${event.id}, ${priorDay}::date,
+        ${priorStart.toISOString()}::timestamptz, ${dayStart.toISOString()}::timestamptz
+      ) RETURNING id
+    `;
+    const [priorQr] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_qr_codes (day_id, event_id, play_date, name, created_by)
+      VALUES (${priorDayRow.id}, ${event.id}, ${priorDay}::date, 'Yesterday', ${admin.id})
+      RETURNING id
+    `;
+    await setupSql`
+      INSERT INTO lucky_wheel_credit_claims (
+        qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at
+      ) VALUES (
+        ${priorQr.id}, ${event.id}, ${priorDay}::date, ${user.id},
+        ${priorAttendance.id}, ${dayStart.toISOString()}::timestamptz
+      )
+    `;
+
     const beforeStock = await getEligibility(database, { id: user.id }, event.id);
     assert.equal(beforeStock.blockCode, "OUT_OF_STOCK");
+    assert.equal(beforeStock.unspentCredits, 5);
+    assert.equal(beforeStock.spendableCredits, 0);
+    assert.equal(beforeStock.hasExpiredPriorDayCredit, true);
 
     const stockKey = randomUUID();
     const stocked = await adjustStock(
@@ -249,25 +317,25 @@ test(
       claimedAdmin,
       event.id,
       prizeId,
-      101,
+      105,
       "initial load",
       stockKey,
     );
     assert.deepEqual(
       { before: stocked.before, after: stocked.after, poolRevision: stocked.poolRevision },
-      { before: 0, after: 101, poolRevision: 2 },
+      { before: 0, after: 105, poolRevision: 2 },
     );
     const stockReplay = await adjustStock(
       database,
       claimedAdmin,
       event.id,
       prizeId,
-      101,
+      105,
       "initial load",
       stockKey,
     );
     assert.equal(stockReplay.replayed, true);
-    assert.equal(stockReplay.after, 101);
+    assert.equal(stockReplay.after, 105);
     await assert.rejects(
       () => adjustStock(database, claimedAdmin, event.id, prizeId, 102, "initial load", stockKey),
       (error: unknown) => error instanceof WheelError && error.code === "IDEMPOTENCY_CONFLICT",
@@ -277,12 +345,95 @@ test(
     assert.equal(eligibility.eligible, true);
     assert.equal(eligibility.configurationVersion, 2);
     assert.equal(eligibility.poolRevision, 2);
+    assert.equal(eligibility.unspentCredits, 5);
+    assert.equal(eligibility.spendableCredits, 5);
+    assert.equal(eligibility.currentWindow?.version, 1);
+    assert.equal(eligibility.latestSpin, null);
+
+    const [noCreditUser] = await setupSql<Array<{ id: number }>>`
+      INSERT INTO users (status) VALUES ('active') RETURNING id
+    `;
+    const [noCreditRegistration] = await setupSql<Array<{ id: number }>>`
+      INSERT INTO registrations (event_id, user_id, status)
+      VALUES (${event.id}, ${noCreditUser.id}, 'confirmed') RETURNING id
+    `;
+    const [noCreditSession] = await setupSql<Array<{ id: number }>>`
+      INSERT INTO registration_sessions (registration_id, session_id)
+      VALUES (${noCreditRegistration.id}, ${mainSession.id}) RETURNING id
+    `;
+    await setupSql`
+      INSERT INTO session_daily_checkins (id, registration_session_id, attendance_date, checked_in_at)
+      VALUES (${randomUUID()}, ${noCreditSession.id}, ${day}::date, clock_timestamp())
+    `;
+    const noCreditEligibility = await getEligibility(database, { id: noCreditUser.id }, event.id);
+    assert.equal(noCreditEligibility.blockCode, "NO_CREDIT");
+    assert.equal(noCreditEligibility.unspentCredits, 0);
+    assert.equal(noCreditEligibility.spendableCredits, 0);
+
+    await setupSql`
+      UPDATE lucky_wheel_days
+      SET end_at = clock_timestamp() - interval '1 minute', version = 2
+      WHERE id = ${currentDay.id}
+    `;
+    const shortened = await getEligibility(database, { id: user.id }, event.id);
+    assert.equal(shortened.blockCode, "DAY_WINDOW_CLOSED");
+    assert.equal(shortened.unspentCredits, 5);
+    assert.equal(shortened.spendableCredits, 0);
+    await setupSql`
+      UPDATE lucky_wheel_days
+      SET end_at = ${dayEnd.toISOString()}::timestamptz, version = 3
+      WHERE id = ${currentDay.id}
+    `;
+    assert.equal((await getEligibility(database, { id: user.id }, event.id)).spendableCredits, 5);
+    await setupSql`
+      UPDATE lucky_wheel_days
+      SET start_at = clock_timestamp() + interval '1 minute', version = 4
+      WHERE id = ${currentDay.id}
+    `;
+    assert.equal((await getEligibility(database, { id: user.id }, event.id)).blockCode, "DAY_WINDOW_CLOSED");
+    await setupSql`
+      UPDATE lucky_wheel_days
+      SET start_at = ${dayStart.toISOString()}::timestamptz, version = 5
+      WHERE id = ${currentDay.id}
+    `;
+
+    const [secondRegistration] = await setupSql<Array<{ id: number }>>`
+      INSERT INTO registrations (event_id, user_id, status)
+      VALUES (${event.id}, ${user.id}, 'confirmed') RETURNING id
+    `;
+    await setupSql`
+      INSERT INTO registration_sessions (registration_id, session_id)
+      VALUES (${secondRegistration.id}, ${mainSession.id})
+    `;
+    assert.equal((await getEligibility(database, { id: user.id }, event.id)).eligible, true);
+
+    await setupSql`
+      UPDATE session_daily_checkins
+      SET cancelled_at = clock_timestamp(),
+          cancellation_reason = 'correct mistaken scan'
+      WHERE id = ${attendance.id}
+    `;
+    const cancelledEligibility = await getEligibility(database, { id: user.id }, event.id);
+    assert.equal(cancelledEligibility.blockCode, "CHECKIN_REQUIRED");
+    assert.equal(cancelledEligibility.unspentCredits, 5);
+    assert.equal(cancelledEligibility.spendableCredits, 0);
+
+    const [replacementAttendance] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO session_daily_checkins (
+        id, registration_session_id, attendance_date, checked_in_at
+      ) VALUES (
+        ${randomUUID()}, ${registrationSession.id}, ${day}::date, clock_timestamp()
+      ) RETURNING id
+    `;
+    assert.equal((await getEligibility(database, { id: user.id }, event.id)).eligible, true);
+    assert.equal((await getEligibility(database, { id: user.id }, event.id)).spendableCredits, 5);
 
     const sameUserKey = randomUUID();
     const sameUserInput = {
       eventId: event.id,
       configurationVersion: 2,
       poolRevision: 2,
+      scheduleVersion: 5,
       idempotencyKey: sameUserKey,
     };
     const sameUserResults = await Promise.all(
@@ -293,13 +444,31 @@ test(
     assert.equal(sameUserResults.filter((result) => result.created).length, 1);
     assert.equal(new Set(sameUserResults.map((result) => result.spin.id)).size, 1);
     assert.equal(sameUserResults[0].spin.playDate, day);
-    assert.equal(sameUserResults[0].spin.attendanceId, attendance.id);
+    assert.equal(sameUserResults[0].spin.attendanceId, replacementAttendance.id);
+    const afterFirstSpin = await getEligibility(database, { id: user.id }, event.id);
+    assert.equal(afterFirstSpin.latestSpin?.id, sameUserResults[0].spin.id);
+    assert.equal(afterFirstSpin.eligible, true);
+    const fiveSpins = [sameUserResults[0].spin];
+    for (let index = 0; index < 4; index += 1) {
+      const next = await createSpin(database, { id: user.id }, {
+        ...sameUserInput, idempotencyKey: randomUUID(),
+      });
+      assert.equal(next.created, true);
+      fiveSpins.push(next.spin);
+    }
+    assert.equal(new Set(fiveSpins.map((spin) => spin.id)).size, 5);
+    await assert.rejects(
+      () => createSpin(database, { id: user.id }, {
+        ...sameUserInput, idempotencyKey: randomUUID(),
+      }),
+      (error: unknown) => error instanceof WheelError && error.code === "NO_CREDIT",
+    );
 
     await setupSql`
       UPDATE session_daily_checkins
       SET cancelled_at = clock_timestamp(),
           cancellation_reason = 'post-allocation correction'
-      WHERE id = ${attendance.id}
+      WHERE id = ${replacementAttendance.id}
     `;
     const replayAfterAttendanceUndo = await createSpin(
       database,
@@ -382,10 +551,32 @@ test(
       FROM registrations
       WHERE event_id = ${event.id}
         AND user_id <> ${user.id}
+        AND user_id <> ${noCreditUser.id}
       ORDER BY user_id
       LIMIT 100
     `;
     assert.equal(bulkUsers.length, 100);
+    const [bulkQr] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_qr_codes (day_id, event_id, play_date, name, created_by)
+      VALUES (${currentDay.id}, ${event.id}, ${day}::date, 'Bulk', ${admin.id})
+      RETURNING id
+    `;
+    await setupSql`
+      INSERT INTO lucky_wheel_credit_claims (
+        qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at
+      )
+      SELECT
+        ${bulkQr.id}, ${event.id}, ${day}::date, r.user_id, dc.id,
+        ${dayEnd.toISOString()}::timestamptz
+      FROM registrations r
+      JOIN registration_sessions rs ON rs.registration_id = r.id AND rs.session_id = ${mainSession.id}
+      JOIN session_daily_checkins dc
+        ON dc.registration_session_id = rs.id AND dc.attendance_date = ${day}::date
+      WHERE r.event_id = ${event.id}
+        AND r.user_id <> ${user.id}
+        AND r.user_id <> ${noCreditUser.id}
+        AND dc.cancelled_at IS NULL
+    `;
 
     const bulkResults = await Promise.all(
       bulkUsers.map(({ user_id }) =>
@@ -396,6 +587,7 @@ test(
             eventId: event.id,
             configurationVersion: 2,
             poolRevision: 2,
+            scheduleVersion: 5,
             idempotencyKey: randomUUID(),
           },
         ),
@@ -417,7 +609,7 @@ test(
       JOIN lucky_wheel_segments seg ON seg.wheel_id = w.id AND seg.id = ${prizeId}
       WHERE w.event_id = ${event.id}
     `;
-    assert.deepEqual(afterLoad, { remaining: 0, pool_revision: 3, spin_count: 101 });
+    assert.deepEqual(afterLoad, { remaining: 0, pool_revision: 3, spin_count: 105 });
 
     await adjustStock(
       database,
@@ -519,13 +711,22 @@ test(
       VALUES (${cancelledRegistration.id}, ${mainSession.id})
       RETURNING id
     `;
-    await setupSql`
+    const [cancelledAttendance] = await setupSql<Array<{ id: string }>>`
       INSERT INTO session_daily_checkins (
         id, registration_session_id, attendance_date, checked_in_at,
         cancelled_at, cancellation_reason
       ) VALUES (
         ${randomUUID()}, ${cancelledRegistrationSession.id}, ${day}::date,
         clock_timestamp(), clock_timestamp(), 'cancelled before allocation'
+      )
+      RETURNING id
+    `;
+    await setupSql`
+      INSERT INTO lucky_wheel_credit_claims (
+        qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at
+      ) VALUES (
+        ${bulkQr.id}, ${event.id}, ${day}::date, ${cancelledUser.id},
+        ${cancelledAttendance.id}, ${dayEnd.toISOString()}::timestamptz
       )
     `;
     await assert.rejects(
@@ -537,6 +738,7 @@ test(
             eventId: event.id,
             configurationVersion: 3,
             poolRevision: 4,
+            scheduleVersion: 5,
             idempotencyKey: randomUUID(),
           },
         ),
@@ -550,7 +752,7 @@ test(
     assert.equal(state.segments.length, 1);
     assert.equal(state.segments[0].id, prizeId);
     assert.equal(state.segments[0].remaining, 25);
-    assert.equal(state.segments[0].allocated, 101);
+    assert.equal(state.segments[0].allocated, 105);
     assert.equal(state.segments[0].collected, 0);
     assert.ok(state.audit.length >= 8);
     assert.ok(state.audit.some((entry) => entry.operation === "stock_adjust"));
@@ -578,7 +780,7 @@ test(
     assert.deepEqual(firstHistoryPage.pagination, {
       page: 1,
       pageSize: 20,
-      total: 101,
+      total: 105,
       totalPages: 6,
     });
 
@@ -586,21 +788,21 @@ test(
       page: 6,
       pageSize: 20,
     });
-    assert.equal(lastHistoryPage.spins.length, 1);
+    assert.equal(lastHistoryPage.spins.length, 5);
 
     const dayHistory = await readAdminSpins(database, claimedAdmin, event.id, {
       date: day,
       page: 1,
       pageSize: 100,
     });
-    assert.equal(dayHistory.pagination.total, 101);
+    assert.equal(dayHistory.pagination.total, 105);
 
     const prizeHistory = await readAdminSpins(database, claimedAdmin, event.id, {
       segmentId: prizeId,
       page: 1,
       pageSize: 100,
     });
-    assert.equal(prizeHistory.pagination.total, 101);
+    assert.equal(prizeHistory.pagination.total, 105);
 
     const redeemedHistory = await readAdminSpins(database, claimedAdmin, event.id, {
       claimStatus: "redeemed",
@@ -617,7 +819,7 @@ test(
       page: 1,
       pageSize: 100,
     });
-    assert.equal(openHistory.pagination.total, 100);
+    assert.equal(openHistory.pagination.total, 104);
 
     const noClaimHistory = await readAdminSpins(database, claimedAdmin, event.id, {
       claimStatus: "none",
@@ -657,7 +859,158 @@ test(
         ) AS audit_rows
     `;
     assert.equal(invariants.negative_stock, 0);
-    assert.equal(invariants.duplicate_days, 0);
+    assert.equal(invariants.duplicate_days, 1);
     assert.ok(invariants.audit_rows >= 8);
+
+    // Closing a QR after its credit is earned does not revoke that credit.
+    const [raceQr] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_qr_codes (day_id, event_id, play_date, name, created_by, status)
+      VALUES (${currentDay.id}, ${event.id}, ${day}::date, 'Race A', ${admin.id}, 'open')
+      RETURNING id
+    `;
+    const [raceCredit] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_credit_claims (
+        qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at
+      )
+      SELECT ${raceQr.id}, ${event.id}, ${day}::date, ${noCreditUser.id}, c.id,
+             ${dayEnd.toISOString()}::timestamptz
+      FROM session_daily_checkins c
+      WHERE c.registration_session_id = ${noCreditSession.id} AND c.cancelled_at IS NULL
+      RETURNING id
+    `;
+    await setQrStatus(database, claimedAdmin, event.id, raceQr.id, {
+      status: "closed", reason: "projection finished", idempotencyKey: randomUUID(),
+    });
+    const raceInput = {
+      eventId: event.id, configurationVersion: 3, poolRevision: 4,
+      scheduleVersion: 5, idempotencyKey: randomUUID(),
+    };
+    await setWheelPaused(database, claimedAdmin, event.id, true, "pause credit race", randomUUID());
+    await assert.rejects(
+      () => createSpin(database, { id: noCreditUser.id }, raceInput),
+      (error: unknown) => error instanceof WheelError && error.code === "WHEEL_PAUSED",
+    );
+    await setWheelPaused(database, claimedAdmin, event.id, false, "resume credit race", randomUUID());
+    const closedWindow = await editDayWindow(database, claimedAdmin, event.id, {
+      date: day, startAt: dayStart.toISOString(),
+      endAt: new Date(Date.now() - 60_000).toISOString(),
+      expectedVersion: 5, reason: "test temporary closure",
+    });
+    assert.equal(closedWindow.version, 6);
+    await assert.rejects(
+      () => createSpin(database, { id: noCreditUser.id }, raceInput),
+      (error: unknown) => error instanceof WheelError && error.code === "DAY_WINDOW_CLOSED",
+    );
+    const reopenedWindow = await editDayWindow(database, claimedAdmin, event.id, {
+      date: day, startAt: dayStart.toISOString(), endAt: dayEnd.toISOString(),
+      expectedVersion: 6, reason: "test same-day reopening",
+    });
+    assert.equal(reopenedWindow.version, 7);
+    await assert.rejects(
+      () => createSpin(database, { id: noCreditUser.id }, raceInput),
+      (error: unknown) => error instanceof WheelError && error.code === "WHEEL_UPDATED",
+    );
+    const [unspentBeforeRace] = await setupSql<Array<{ spent_at: Date | null }>>`
+      SELECT spent_at FROM lucky_wheel_credit_claims WHERE id = ${raceCredit.id}
+    `;
+    assert.equal(unspentBeforeRace.spent_at, null);
+    const competing = await Promise.allSettled([
+      createSpin(database, { id: noCreditUser.id }, {
+        ...raceInput, scheduleVersion: 7, idempotencyKey: randomUUID(),
+      }),
+      createSpin(database, { id: noCreditUser.id }, {
+        ...raceInput, scheduleVersion: 7, idempotencyKey: randomUUID(),
+      }),
+    ]);
+    assert.equal(competing.filter((result) => result.status === "fulfilled").length, 1);
+    const rejectedCompeting = competing.find((result) => result.status === "rejected");
+    assert.ok(rejectedCompeting && rejectedCompeting.status === "rejected");
+    assert.ok(rejectedCompeting.reason instanceof WheelError);
+    assert.equal(rejectedCompeting.reason.code, "NO_CREDIT");
+    const raceWinner = competing.find((result) => result.status === "fulfilled");
+    assert.ok(raceWinner && raceWinner.status === "fulfilled");
+    assert.equal(raceWinner.value.spin.creditClaimId, raceCredit.id);
+
+    // Revocation and spin take the same lock order; exactly one may claim the credit.
+    const [revokeQr] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_qr_codes (day_id, event_id, play_date, name, created_by)
+      VALUES (${currentDay.id}, ${event.id}, ${day}::date, 'Race B', ${admin.id})
+      RETURNING id
+    `;
+    const [revokeCredit] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_credit_claims (
+        qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at
+      )
+      SELECT ${revokeQr.id}, ${event.id}, ${day}::date, ${noCreditUser.id}, c.id,
+             ${dayEnd.toISOString()}::timestamptz
+      FROM session_daily_checkins c
+      WHERE c.registration_session_id = ${noCreditSession.id} AND c.cancelled_at IS NULL
+      RETURNING id
+    `;
+    const revokeRace = await Promise.allSettled([
+      revokeCreditClaim(database, claimedAdmin, event.id, revokeCredit.id, {
+        reason: "mistaken distribution", idempotencyKey: randomUUID(),
+      }),
+      createSpin(database, { id: noCreditUser.id }, {
+        ...raceInput, scheduleVersion: 7, idempotencyKey: randomUUID(),
+      }),
+    ]);
+    assert.equal(revokeRace.filter((result) => result.status === "fulfilled").length, 1);
+    const [revokeState] = await setupSql<Array<{
+      spent_at: Date | null; revoked_at: Date | null; spin_count: number;
+    }>>`
+      SELECT c.spent_at, c.revoked_at,
+        (SELECT count(*)::int FROM lucky_wheel_spins s WHERE s.credit_claim_id = c.id) AS spin_count
+      FROM lucky_wheel_credit_claims c WHERE c.id = ${revokeCredit.id}
+    `;
+    assert.equal(Number(revokeState.spent_at !== null) + Number(revokeState.revoked_at !== null), 1);
+    assert.equal(revokeState.spin_count, revokeState.spent_at === null ? 0 : 1);
+
+    const [noPrizeQr] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_qr_codes (day_id, event_id, play_date, name, created_by)
+      VALUES (${currentDay.id}, ${event.id}, ${day}::date, 'No prize', ${admin.id})
+      RETURNING id
+    `;
+    const [noPrizeCredit] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_credit_claims (
+        qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at
+      )
+      SELECT ${noPrizeQr.id}, ${event.id}, ${day}::date, ${noCreditUser.id}, c.id,
+             ${dayEnd.toISOString()}::timestamptz
+      FROM session_daily_checkins c
+      WHERE c.registration_session_id = ${noCreditSession.id} AND c.cancelled_at IS NULL
+      RETURNING id
+    `;
+    const currentState = await readAdminWheelState(database, claimedAdmin, event.id);
+    assert.ok(currentState.wheel.configuration);
+    const withNoPrize = await publishWheel(database, claimedAdmin, event.id, 3, {
+      ...currentState.wheel.configuration,
+      segments: [
+        ...currentState.wheel.configuration.segments,
+        { id: randomUUID(), kind: "no_prize", name: { th: "เสียใจด้วย", en: "Try again" },
+          imageId: null, enabled: true, position: 1 },
+      ],
+    });
+    assert.equal(withNoPrize.version, 4);
+    const [stockBeforeNoPrize] = await setupSql<Array<{ remaining: number }>>`
+      SELECT remaining FROM lucky_wheel_segments WHERE id = ${prizeId}
+    `;
+    const noPrizeResult = await createSpin(database, { id: noCreditUser.id }, {
+      ...raceInput, configurationVersion: 4, scheduleVersion: 7,
+      idempotencyKey: randomUUID(),
+    }, () => 1);
+    assert.equal(noPrizeResult.spin.outcomeKind, "no_prize");
+    assert.equal(noPrizeResult.spin.creditClaimId, noPrizeCredit.id);
+    const [noPrizeState] = await setupSql<Array<{
+      spent_at: Date | null; redemption_count: number; remaining: number;
+    }>>`
+      SELECT c.spent_at,
+        (SELECT count(*)::int FROM lucky_wheel_redemptions WHERE spin_id = ${noPrizeResult.spin.id}) AS redemption_count,
+        (SELECT remaining FROM lucky_wheel_segments WHERE id = ${prizeId}) AS remaining
+      FROM lucky_wheel_credit_claims c WHERE c.id = ${noPrizeCredit.id}
+    `;
+    assert.ok(noPrizeState.spent_at);
+    assert.equal(noPrizeState.redemption_count, 0);
+    assert.equal(noPrizeState.remaining, stockBeforeNoPrize.remaining);
   },
 );

@@ -83,6 +83,9 @@ async function bootstrap(sqlClient: ReturnType<typeof postgres>) {
   const migration = (await readFile(resolve(process.cwd(), "drizzle", "0034_lucky_wheel.sql"), "utf8"))
     .replaceAll("--> statement-breakpoint", "");
   await sqlClient.unsafe(migration);
+  const creditMigration = (await readFile(resolve(process.cwd(), "drizzle", "0035_lucky_wheel_qr_credits.sql"), "utf8"))
+    .replaceAll("--> statement-breakpoint", "");
+  await sqlClient.unsafe(creditMigration);
 }
 
 async function createAttendee(
@@ -195,11 +198,37 @@ test(
     const published = await publishWheel(database, actorA, event.id, 1, configuration);
     assert.equal(published.version, 2);
     await adjustStock(database, actorA, event.id, prizeId, 2, "reward test stock", randomUUID());
+    const [wheel] = await setupSql<Array<{ id: string }>>`
+      SELECT id FROM lucky_wheels WHERE event_id = ${event.id}
+    `;
+    const startAt = new Date(`${day}T00:00:00.000+07:00`);
+    const endAt = new Date(startAt.getTime() + 24 * 60 * 60 * 1000);
+    const [window] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_days (wheel_id, event_id, play_date, start_at, end_at)
+      VALUES (
+        ${wheel.id}, ${event.id}, ${day}::date,
+        ${startAt.toISOString()}::timestamptz, ${endAt.toISOString()}::timestamptz
+      ) RETURNING id
+    `;
+    const [qr] = await setupSql<Array<{ id: string }>>`
+      INSERT INTO lucky_wheel_qr_codes (day_id, event_id, play_date, name, created_by)
+      VALUES (${window.id}, ${event.id}, ${day}::date, 'Reward test', ${adminA.id})
+      RETURNING id
+    `;
+    await setupSql`
+      INSERT INTO lucky_wheel_credit_claims (
+        qr_id, event_id, play_date, user_id, attendance_id, displayed_deadline_at
+      ) VALUES (
+        ${qr.id}, ${event.id}, ${day}::date, ${owner.userId},
+        ${owner.attendanceId}, ${endAt.toISOString()}::timestamptz
+      )
+    `;
 
     const spin = await createSpin(database, { id: owner.userId }, {
       eventId: event.id,
       configurationVersion: 2,
       poolRevision: 2,
+      scheduleVersion: 1,
       idempotencyKey: randomUUID(),
     });
     assert.equal(spin.created, true);

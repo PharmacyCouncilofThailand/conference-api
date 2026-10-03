@@ -65,10 +65,58 @@ export const setWheelPausedBodySchema = z.object({
   idempotencyKey: uuidKey,
 }).strict();
 
+export const wheelDayDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(value + "T00:00:00.000Z");
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+});
+
+export const dayWindowBodySchema = z.object({
+  startAt: z.string().datetime({ offset: true }),
+  endAt: z.string().datetime({ offset: true }),
+  expectedVersion: z.number().int().positive().nullable(),
+  reason: boundedText(500).nullable(),
+}).strict();
+
+export const dayChangesQuerySchema = z.object({
+  page: z.coerce.number().int().positive().max(100_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+}).strict();
+
+export const qrBatchBodySchema = z.object({
+  date: wheelDayDateSchema,
+  names: z.array(boundedText(160)).min(1).max(20).refine(
+    (names) => new Set(names.map((name) => name.toLocaleLowerCase())).size === names.length,
+    { message: "QR names must be distinct within a batch" },
+  ),
+  idempotencyKey: uuidKey,
+}).strict();
+
+export const qrListQuerySchema = z.object({
+  date: wheelDayDateSchema,
+  page: z.coerce.number().int().positive().max(100_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+}).strict();
+
+export const qrStatusBodySchema = z.object({
+  status: z.enum(["open", "closed"]),
+  reason: boundedText(500),
+  idempotencyKey: uuidKey,
+}).strict();
+
+export const qrRevocationBodySchema = z.object({
+  reason: boundedText(500),
+  idempotencyKey: uuidKey,
+}).strict();
+
+export const qrCreditClaimBodySchema = z.object({
+  qrId: uuidKey,
+}).strict();
+
 export const spinInputSchema = z.object({
   eventId: z.number().int().positive(),
   configurationVersion: z.number().int().positive(),
   poolRevision: z.number().int().positive(),
+  scheduleVersion: z.number().int().positive(),
   idempotencyKey: uuidKey,
 }).strict();
 

@@ -3,14 +3,33 @@ import { z } from "zod";
 import {
   adminSpinQuerySchema,
   attendeeSpinHistoryQuerySchema,
+  dayChangesQuerySchema,
+  dayWindowBodySchema,
   publishWheelBodySchema,
+  qrBatchBodySchema,
+  qrCreditClaimBodySchema,
+  qrListQuerySchema,
+  qrRevocationBodySchema,
+  qrStatusBodySchema,
   redemptionCorrectionBodySchema,
   redemptionInputSchema,
   rewardLookupBodySchema,
   setWheelPausedBodySchema,
   spinInputSchema,
   stockAdjustmentBodySchema,
+  wheelDayDateSchema,
 } from "./schemas.js";
+import { editDayWindow, readDayChanges, readDayWindow } from "./day-schedule.js";
+import {
+  createQrBatch,
+  readQrClaims,
+  readQrCodes,
+  readQrProjection,
+  revokeCreditClaim,
+  setQrStatus,
+  claimQrCredit,
+  previewQrCredit,
+} from "./qr-credits.js";
 import {
   adjustStock,
   createSpin,
@@ -50,6 +69,17 @@ export interface LuckyWheelRouteOptions {
   setWheelPausedFn?: typeof setWheelPaused;
   readAdminWheelStateFn?: typeof readAdminWheelState;
   readAdminSpinsFn?: typeof readAdminSpins;
+  readDayWindowFn?: typeof readDayWindow;
+  editDayWindowFn?: typeof editDayWindow;
+  readDayChangesFn?: typeof readDayChanges;
+  createQrBatchFn?: typeof createQrBatch;
+  readQrCodesFn?: typeof readQrCodes;
+  readQrProjectionFn?: typeof readQrProjection;
+  readQrClaimsFn?: typeof readQrClaims;
+  setQrStatusFn?: typeof setQrStatus;
+  revokeCreditClaimFn?: typeof revokeCreditClaim;
+  claimQrCreditFn?: typeof claimQrCredit;
+  previewQrCreditFn?: typeof previewQrCredit;
   getEligibilityFn?: typeof getEligibility;
   createSpinFn?: typeof createSpin;
   readOwnedSpinsFn?: typeof readOwnedSpins;
@@ -173,6 +203,15 @@ export async function luckyWheelAdminRoutes(
   const setWheelPausedFn = options.setWheelPausedFn ?? setWheelPaused;
   const readAdminWheelStateFn = options.readAdminWheelStateFn ?? readAdminWheelState;
   const readAdminSpinsFn = options.readAdminSpinsFn ?? readAdminSpins;
+  const readDayWindowFn = options.readDayWindowFn ?? readDayWindow;
+  const editDayWindowFn = options.editDayWindowFn ?? editDayWindow;
+  const readDayChangesFn = options.readDayChangesFn ?? readDayChanges;
+  const createQrBatchFn = options.createQrBatchFn ?? createQrBatch;
+  const readQrCodesFn = options.readQrCodesFn ?? readQrCodes;
+  const readQrProjectionFn = options.readQrProjectionFn ?? readQrProjection;
+  const readQrClaimsFn = options.readQrClaimsFn ?? readQrClaims;
+  const setQrStatusFn = options.setQrStatusFn ?? setQrStatus;
+  const revokeCreditClaimFn = options.revokeCreditClaimFn ?? revokeCreditClaim;
   const lookupRewardFn = options.lookupRewardFn ?? lookupReward;
   const confirmRedemptionFn = options.confirmRedemptionFn ?? confirmRedemption;
   const correctRedemptionFn = options.correctRedemptionFn ?? correctRedemption;
@@ -188,6 +227,180 @@ export async function luckyWheelAdminRoutes(
     reply.header("Cache-Control", "no-store");
     return payload;
   });
+
+  fastify.get(
+    "/events/:eventId/days/:date",
+    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    async (request, reply) => {
+      const params = request.params as { eventId?: unknown; date?: unknown };
+      const event = eventIdSchema.safeParse(params.eventId);
+      const date = wheelDayDateSchema.safeParse(params.date);
+      if (!event.success || !date.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const day = await readDayWindowFn(database, admin, event.data, date.data);
+        return reply.send({ eventId: event.data, day, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.put(
+    "/events/:eventId/days/:date",
+    { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 4 * 1024 },
+    async (request, reply) => {
+      const params = request.params as { eventId?: unknown; date?: unknown };
+      const event = eventIdSchema.safeParse(params.eventId);
+      const date = wheelDayDateSchema.safeParse(params.date);
+      const body = dayWindowBodySchema.safeParse(request.body);
+      if (!event.success || !date.success || !body.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const day = await editDayWindowFn(database, admin, event.data, { date: date.data, ...body.data });
+        return reply.send({ eventId: event.data, day, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.get(
+    "/events/:eventId/days/:date/changes",
+    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    async (request, reply) => {
+      const params = request.params as { eventId?: unknown; date?: unknown };
+      const event = eventIdSchema.safeParse(params.eventId);
+      const date = wheelDayDateSchema.safeParse(params.date);
+      const query = dayChangesQuerySchema.safeParse(request.query);
+      if (!event.success || !date.success || !query.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const changes = await readDayChangesFn(database, admin, event.data, date.data, query.data);
+        return reply.send({ eventId: event.data, ...changes, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.post(
+    "/events/:eventId/qr-codes",
+    { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 8 * 1024 },
+    async (request, reply) => {
+      const event = eventIdSchema.safeParse((request.params as { eventId?: unknown }).eventId);
+      const body = qrBatchBodySchema.safeParse(request.body);
+      if (!event.success || !body.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const result = await createQrBatchFn(database, admin, event.data, body.data);
+        return reply.status(result.replayed ? 200 : 201).send({ ...result, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.get(
+    "/events/:eventId/qr-codes",
+    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    async (request, reply) => {
+      const event = eventIdSchema.safeParse((request.params as { eventId?: unknown }).eventId);
+      const query = qrListQuerySchema.safeParse(request.query);
+      if (!event.success || !query.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const result = await readQrCodesFn(database, admin, event.data, query.data);
+        return reply.send({ ...result, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.get(
+    "/events/:eventId/qr-codes/:qrId",
+    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    async (request, reply) => {
+      const params = request.params as { eventId?: unknown; qrId?: unknown };
+      const event = eventIdSchema.safeParse(params.eventId);
+      const qrId = spinIdSchema.safeParse(params.qrId);
+      if (!event.success || !qrId.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const result = await readQrProjectionFn(database, admin, event.data, qrId.data);
+        return reply.send({ ...result, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.get(
+    "/events/:eventId/qr-codes/:qrId/claims",
+    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    async (request, reply) => {
+      const params = request.params as { eventId?: unknown; qrId?: unknown };
+      const event = eventIdSchema.safeParse(params.eventId);
+      const qrId = spinIdSchema.safeParse(params.qrId);
+      const query = dayChangesQuerySchema.safeParse(request.query);
+      if (!event.success || !qrId.success || !query.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const result = await readQrClaimsFn(database, admin, event.data, qrId.data, query.data);
+        return reply.send({ ...result, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.patch(
+    "/events/:eventId/qr-codes/:qrId",
+    { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 4 * 1024 },
+    async (request, reply) => {
+      const params = request.params as { eventId?: unknown; qrId?: unknown };
+      const event = eventIdSchema.safeParse(params.eventId);
+      const qrId = spinIdSchema.safeParse(params.qrId);
+      const body = qrStatusBodySchema.safeParse(request.body);
+      if (!event.success || !qrId.success || !body.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const result = await setQrStatusFn(database, admin, event.data, qrId.data, body.data);
+        return reply.send({ ...result, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.post(
+    "/events/:eventId/credit-claims/:claimId/revocations",
+    { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 4 * 1024 },
+    async (request, reply) => {
+      const params = request.params as { eventId?: unknown; claimId?: unknown };
+      const event = eventIdSchema.safeParse(params.eventId);
+      const claimId = spinIdSchema.safeParse(params.claimId);
+      const body = qrRevocationBodySchema.safeParse(request.body);
+      if (!event.success || !claimId.success || !body.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const result = await revokeCreditClaimFn(database, admin, event.data, claimId.data, body.data);
+        return reply.send({ ...result, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
 
   fastify.get(
     "/events/:eventId",
@@ -591,6 +804,8 @@ export async function luckyWheelAttendeeRoutes(
   const createSpinFn = options.createSpinFn ?? createSpin;
   const readOwnedSpinsFn = options.readOwnedSpinsFn ?? readOwnedSpins;
   const readOwnedSpinFn = options.readOwnedSpinFn ?? readOwnedSpin;
+  const claimQrCreditFn = options.claimQrCreditFn ?? claimQrCredit;
+  const previewQrCreditFn = options.previewQrCreditFn ?? previewQrCredit;
   const attendeeRateLimit = fastify.rateLimit({
     max: 30,
     timeWindow: "1 minute",
@@ -602,6 +817,68 @@ export async function luckyWheelAttendeeRoutes(
     reply.header("Cache-Control", "no-store");
     return payload;
   });
+
+  fastify.get(
+    "/events/:eventId/qr-codes/:qrId",
+    {
+      config: { rateLimit: false },
+      preHandler: attendeeRateLimit,
+      logLevel: "silent",
+    },
+    async (request, reply) => {
+      reply.header("Referrer-Policy", "no-referrer");
+      const params = request.params as { eventId?: unknown; qrId?: unknown };
+      const event = eventIdSchema.safeParse(params.eventId);
+      const qrId = spinIdSchema.safeParse(params.qrId);
+      const claimed = claimedActor(request);
+      if (!claimed) {
+        return reply.status(401).send({
+          success: false, code: "AUTH_REQUIRED", error: "Authentication required", requestId: request.id,
+        });
+      }
+      const actor = claimedAttendee(request);
+      if (!actor) {
+        return reply.status(403).send({
+          success: false, code: "ACCOUNT_UNAVAILABLE", error: "Attendee account required", requestId: request.id,
+        });
+      }
+      if (!event.success || !qrId.success) return invalid(reply, request.id);
+      try {
+        const result = await previewQrCreditFn(database, actor, event.data, qrId.data);
+        return reply.send({ ...result, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.post(
+    "/events/:eventId/credit-claims",
+    { config: { rateLimit: false }, preHandler: attendeeRateLimit, bodyLimit: 4 * 1024 },
+    async (request, reply) => {
+      const event = eventIdSchema.safeParse((request.params as { eventId?: unknown }).eventId);
+      const body = qrCreditClaimBodySchema.safeParse(request.body);
+      const claimed = claimedActor(request);
+      if (!claimed) {
+        return reply.status(401).send({
+          success: false, code: "AUTH_REQUIRED", error: "Authentication required", requestId: request.id,
+        });
+      }
+      const actor = claimedAttendee(request);
+      if (!actor) {
+        return reply.status(403).send({
+          success: false, code: "ACCOUNT_UNAVAILABLE", error: "Attendee account required", requestId: request.id,
+        });
+      }
+      if (!event.success || !body.success) return invalid(reply, request.id);
+      try {
+        const result = await claimQrCreditFn(database, actor, event.data, body.data.qrId);
+        return reply.status(result.created ? 201 : 200).send({ ...result, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
 
   fastify.get(
     "/events/:eventId/eligibility",

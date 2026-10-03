@@ -1,8 +1,15 @@
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { z } from "zod";
-import type { db } from "../../database/index.js";
-import { isWithinSession } from "../attendance/policy.js";
+import { isWithinDayWindow, readDayWindowForSpin, type DayWindow } from "./day-schedule.js";
+import {
+  activeAttendance,
+  clock,
+  confirmedEntitlements,
+  requireActiveUser,
+  WheelError,
+  type WheelDatabase,
+} from "./access.js";
 import { candidateSegments, chooseSegment } from "./policy.js";
 import {
   readRewardEncryptionKey,
@@ -14,7 +21,8 @@ import {
 } from "./schemas.js";
 import type { BlockCode, SpinInput, WheelSegment } from "./types.js";
 
-export type WheelDatabase = typeof db;
+export { WheelError } from "./access.js";
+export type { WheelDatabase } from "./access.js";
 export type WheelActor = { id: number; role?: string | null; email?: string | null };
 export type AdminWheelActor = { id: number; role: "admin"; email: string | null };
 export type WheelConfiguration = z.infer<typeof wheelConfigurationSchema>;
@@ -31,7 +39,11 @@ export type EligibilityResult = {
   paused: boolean;
   configuration: WheelConfiguration | null;
   availability: WheelSegment[];
-  existingSpin: SpinDto | null;
+  unspentCredits: number;
+  spendableCredits: number;
+  hasExpiredPriorDayCredit: boolean;
+  currentWindow: DayWindow | null;
+  latestSpin: SpinDto | null;
 };
 
 export type SpinDto = {
@@ -41,6 +53,7 @@ export type SpinDto = {
   playDate: string;
   attendanceId: string;
   attendanceCheckedInAt: string;
+  creditClaimId: string | null;
   segmentId: string;
   outcomeKind: "prize" | "no_prize";
   awardedName: { th: string; en: string };
@@ -82,8 +95,6 @@ type WheelRow = {
   published_configuration: WheelConfiguration | null;
   collection_instructions: { th: string; en: string } | null;
   collection_deadline: Date | string | null;
-  session_start: Date | string;
-  session_end: Date | string;
 };
 
 type SegmentRow = {
@@ -106,6 +117,7 @@ type SpinRow = {
   play_date: string | Date;
   attendance_id: string;
   attendance_checked_in_at: Date | string;
+  credit_claim_id: string | null;
   segment_id: string;
   outcome_kind: "prize" | "no_prize";
   awarded_name_th: string;
@@ -118,24 +130,6 @@ type SpinRow = {
   request_hash: string;
   created_at: Date | string;
 };
-
-export class WheelError extends Error {
-  constructor(
-    public readonly statusCode: number,
-    public readonly code:
-      | BlockCode
-      | "INVALID_WHEEL_REQUEST"
-      | "WHEEL_NOT_FOUND"
-      | "INSUFFICIENT_STOCK"
-      | "REWARD_CONFIG_ERROR"
-      | "REWARD_CREDENTIAL_COLLISION",
-    message: string,
-    public readonly details?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = "WheelError";
-  }
-}
 
 function asDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
@@ -180,6 +174,7 @@ function toSpinDto(row: SpinRow): SpinDto {
     playDate: asDay(row.play_date),
     attendanceId: row.attendance_id,
     attendanceCheckedInAt: asDate(row.attendance_checked_in_at).toISOString(),
+    creditClaimId: row.credit_claim_id,
     segmentId: row.segment_id,
     outcomeKind: row.outcome_kind,
     awardedName: { th: row.awarded_name_th, en: row.awarded_name_en },
@@ -192,16 +187,6 @@ function toSpinDto(row: SpinRow): SpinDto {
   };
 }
 
-async function clock(database: WheelDatabase): Promise<{ now: Date; day: string }> {
-  const rows = await database.execute(sql`
-    SELECT
-      clock_timestamp() AS db_now,
-      ((clock_timestamp() AT TIME ZONE 'Asia/Bangkok')::date)::text AS bangkok_day
-  `);
-  const row = (rows as unknown as Array<{ db_now: Date | string; bangkok_day: string }>)[0];
-  return { now: asDate(row.db_now), day: row.bangkok_day };
-}
-
 async function wheelRow(
   database: WheelDatabase,
   eventId: number,
@@ -212,9 +197,7 @@ async function wheelRow(
     SELECT
       w.id, w.event_id, w.main_session_id, w.enabled, w.paused,
       w.version, w.pool_revision, w.published_configuration,
-      w.collection_instructions, w.collection_deadline,
-      (s.start_time AT TIME ZONE 'UTC') AS session_start,
-      (s.end_time AT TIME ZONE 'UTC') AS session_end
+      w.collection_instructions, w.collection_deadline
     FROM lucky_wheels w
     JOIN sessions s ON s.id = w.main_session_id AND s.event_id = w.event_id
     WHERE w.event_id = ${eventId}
@@ -259,86 +242,6 @@ async function spinByRequest(
     LIMIT 1
   `);
   return (rows as unknown as SpinRow[])[0] ?? null;
-}
-
-async function spinByDay(
-  database: WheelDatabase,
-  eventId: number,
-  userId: number,
-  day: string,
-): Promise<SpinRow | null> {
-  const rows = await database.execute(sql`
-    SELECT *
-    FROM lucky_wheel_spins
-    WHERE event_id = ${eventId}
-      AND user_id = ${userId}
-      AND play_date = ${day}::date
-    LIMIT 1
-  `);
-  return (rows as unknown as SpinRow[])[0] ?? null;
-}
-
-async function requireActiveUser(database: WheelDatabase, userId: number): Promise<void> {
-  const rows = await database.execute(sql`
-    SELECT id
-    FROM users
-    WHERE id = ${userId}
-      AND status = 'active'
-    LIMIT 1
-  `);
-  if (!(rows as unknown as Array<{ id: number }>)[0]) {
-    throw new WheelError(401, "ACCOUNT_UNAVAILABLE", "Active attendee account is required");
-  }
-}
-
-async function confirmedEntitlements(
-  database: WheelDatabase,
-  eventId: number,
-  userId: number,
-  sessionId: number,
-  lock: boolean,
-): Promise<Array<{ registration_id: number; registration_session_id: number }>> {
-  const suffix = lock ? sql` FOR UPDATE OF r, rs` : sql``;
-  const rows = await database.execute(sql`
-    SELECT r.id AS registration_id, rs.id AS registration_session_id
-    FROM registrations r
-    JOIN registration_sessions rs
-      ON rs.registration_id = r.id
-      AND rs.session_id = ${sessionId}
-    WHERE r.event_id = ${eventId}
-      AND r.user_id = ${userId}
-      AND r.status = 'confirmed'
-    ORDER BY r.created_at DESC, r.id DESC, rs.id DESC
-    ${suffix}
-  `);
-  return rows as unknown as Array<{ registration_id: number; registration_session_id: number }>;
-}
-
-async function activeAttendance(
-  database: WheelDatabase,
-  eventId: number,
-  userId: number,
-  sessionId: number,
-  day: string,
-  lock: boolean,
-): Promise<{ id: string; checked_in_at: Date | string } | null> {
-  const suffix = lock ? sql` FOR UPDATE OF dc` : sql``;
-  const rows = await database.execute(sql`
-    SELECT dc.id, dc.checked_in_at
-    FROM session_daily_checkins dc
-    JOIN registration_sessions rs ON rs.id = dc.registration_session_id
-    JOIN registrations r ON r.id = rs.registration_id
-    WHERE r.event_id = ${eventId}
-      AND r.user_id = ${userId}
-      AND r.status = 'confirmed'
-      AND rs.session_id = ${sessionId}
-      AND dc.attendance_date = ${day}::date
-      AND dc.cancelled_at IS NULL
-    ORDER BY dc.checked_in_at DESC, dc.id
-    LIMIT 1
-    ${suffix}
-  `);
-  return (rows as unknown as Array<{ id: string; checked_in_at: Date | string }>)[0] ?? null;
 }
 
 export async function validateAdminActor(
@@ -897,157 +800,76 @@ export async function getEligibility(
     throw new WheelError(401, "ACCOUNT_UNAVAILABLE", "Authenticated attendee account is required");
   }
   const currentClock = await clock(database);
-  const wheel = await wheelRow(database, eventId, false);
   await requireActiveUser(database, actor.id);
-
-  const existingSpin = await spinByDay(database, eventId, actor.id, currentClock.day);
-  if (existingSpin) {
-    return {
-      eventId,
-      userId: actor.id,
-      eligible: false,
-      blockCode: "ALREADY_SPUN",
-      serverNow: currentClock.now.toISOString(),
-      playDate: currentClock.day,
-      configurationVersion: wheel?.version ?? null,
-      poolRevision: wheel?.pool_revision ?? null,
-      paused: wheel?.paused ?? false,
-      configuration: wheel?.published_configuration ?? null,
-      availability: wheel ? (await segmentRows(database, wheel.id, false)).map(toWheelSegment) : [],
-      existingSpin: toSpinDto(existingSpin),
-    };
-  }
-
+  const wheel = await wheelRow(database, eventId, false);
+  const availability = wheel
+    ? (await segmentRows(database, wheel.id, false)).map(toWheelSegment)
+    : [];
+  const currentWindow = wheel
+    ? await readDayWindowForSpin(database, wheel.id, currentClock.day, false)
+    : null;
+  const countRows = await database.execute(sql`
+    SELECT
+      count(*) FILTER (
+        WHERE play_date = ${currentClock.day}::date
+          AND spent_at IS NULL AND revoked_at IS NULL
+      )::int AS unspent,
+      (count(*) FILTER (
+        WHERE play_date < ${currentClock.day}::date
+          AND spent_at IS NULL AND revoked_at IS NULL
+      ) > 0) AS prior_day_unspent
+    FROM lucky_wheel_credit_claims
+    WHERE event_id = ${eventId} AND user_id = ${actor.id}
+  `);
+  const counts = (countRows as unknown as Array<{
+    unspent: number; prior_day_unspent: boolean;
+  }>)[0];
+  const latestRows = await database.execute(sql`
+    SELECT *
+    FROM lucky_wheel_spins
+    WHERE event_id = ${eventId} AND user_id = ${actor.id}
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `);
+  const latest = (latestRows as unknown as SpinRow[])[0];
+  let blockCode: BlockCode | null = null;
   if (!wheel || !wheel.enabled || !wheel.published_configuration) {
-    return {
-      eventId,
-      userId: actor.id,
-      eligible: false,
-      blockCode: "WHEEL_NOT_READY",
-      serverNow: currentClock.now.toISOString(),
-      playDate: currentClock.day,
-      configurationVersion: wheel?.version ?? null,
-      poolRevision: wheel?.pool_revision ?? null,
-      paused: wheel?.paused ?? false,
-      configuration: wheel?.published_configuration ?? null,
-      availability: [],
-      existingSpin: null,
-    };
+    blockCode = "WHEEL_NOT_READY";
+  } else {
+    const entitlements = await confirmedEntitlements(
+      database, eventId, actor.id, wheel.main_session_id, false,
+    );
+    if (entitlements.length === 0) {
+      blockCode = "REGISTRATION_REQUIRED";
+    } else {
+      const attendance = await activeAttendance(
+        database, eventId, actor.id, wheel.main_session_id, currentClock.day, false,
+      );
+      if (!attendance) blockCode = "CHECKIN_REQUIRED";
+      else if (!currentWindow || !isWithinDayWindow(currentClock.now, currentWindow)) {
+        blockCode = "DAY_WINDOW_CLOSED";
+      } else if (wheel.paused) blockCode = "WHEEL_PAUSED";
+      else if (candidateSegments(availability).length === 0) blockCode = "OUT_OF_STOCK";
+      else if (counts.unspent === 0) blockCode = "NO_CREDIT";
+    }
   }
-
-  const entitlements = await confirmedEntitlements(
-    database,
-    eventId,
-    actor.id,
-    wheel.main_session_id,
-    false,
-  );
-  if (entitlements.length === 0) {
-    return {
-      eventId,
-      userId: actor.id,
-      eligible: false,
-      blockCode: "REGISTRATION_REQUIRED",
-      serverNow: currentClock.now.toISOString(),
-      playDate: currentClock.day,
-      configurationVersion: wheel.version,
-      poolRevision: wheel.pool_revision,
-      paused: wheel.paused,
-      configuration: wheel.published_configuration,
-      availability: [],
-      existingSpin: null,
-    };
-  }
-
-  const attendance = await activeAttendance(
-    database,
-    eventId,
-    actor.id,
-    wheel.main_session_id,
-    currentClock.day,
-    false,
-  );
-  if (!attendance) {
-    return {
-      eventId,
-      userId: actor.id,
-      eligible: false,
-      blockCode: "CHECKIN_REQUIRED",
-      serverNow: currentClock.now.toISOString(),
-      playDate: currentClock.day,
-      configurationVersion: wheel.version,
-      poolRevision: wheel.pool_revision,
-      paused: wheel.paused,
-      configuration: wheel.published_configuration,
-      availability: [],
-      existingSpin: null,
-    };
-  }
-
-  if (!isWithinSession(currentClock.now, asDate(wheel.session_start), asDate(wheel.session_end))) {
-    return {
-      eventId,
-      userId: actor.id,
-      eligible: false,
-      blockCode: "SESSION_CLOSED",
-      serverNow: currentClock.now.toISOString(),
-      playDate: currentClock.day,
-      configurationVersion: wheel.version,
-      poolRevision: wheel.pool_revision,
-      paused: wheel.paused,
-      configuration: wheel.published_configuration,
-      availability: [],
-      existingSpin: null,
-    };
-  }
-
-  const availability = (await segmentRows(database, wheel.id, false)).map(toWheelSegment);
-  if (wheel.paused) {
-    return {
-      eventId,
-      userId: actor.id,
-      eligible: false,
-      blockCode: "WHEEL_PAUSED",
-      serverNow: currentClock.now.toISOString(),
-      playDate: currentClock.day,
-      configurationVersion: wheel.version,
-      poolRevision: wheel.pool_revision,
-      paused: true,
-      configuration: wheel.published_configuration,
-      availability,
-      existingSpin: null,
-    };
-  }
-  if (candidateSegments(availability).length === 0) {
-    return {
-      eventId,
-      userId: actor.id,
-      eligible: false,
-      blockCode: "OUT_OF_STOCK",
-      serverNow: currentClock.now.toISOString(),
-      playDate: currentClock.day,
-      configurationVersion: wheel.version,
-      poolRevision: wheel.pool_revision,
-      paused: wheel.paused,
-      configuration: wheel.published_configuration,
-      availability,
-      existingSpin: null,
-    };
-  }
-
   return {
     eventId,
     userId: actor.id,
-    eligible: true,
-    blockCode: null,
+    eligible: blockCode === null,
+    blockCode,
     serverNow: currentClock.now.toISOString(),
     playDate: currentClock.day,
-    configurationVersion: wheel.version,
-    poolRevision: wheel.pool_revision,
-    paused: false,
-    configuration: wheel.published_configuration,
+    configurationVersion: wheel?.version ?? null,
+    poolRevision: wheel?.pool_revision ?? null,
+    paused: wheel?.paused ?? false,
+    configuration: wheel?.published_configuration ?? null,
     availability,
-    existingSpin: null,
+    unspentCredits: counts.unspent,
+    spendableCredits: blockCode === null ? counts.unspent : 0,
+    hasExpiredPriorDayCredit: counts.prior_day_unspent,
+    currentWindow,
+    latestSpin: latest ? toSpinDto(latest) : null,
   };
 }
 
@@ -1055,6 +877,7 @@ export async function createSpin(
   database: WheelDatabase,
   actor: WheelActor,
   input: SpinInput,
+  draw: (max: number) => number = (max) => randomInt(max),
 ): Promise<{ created: boolean; spin: SpinDto }> {
   if (!Number.isInteger(actor.id) || actor.id <= 0) {
     throw new WheelError(401, "ACCOUNT_UNAVAILABLE", "Authenticated attendee account is required");
@@ -1063,6 +886,7 @@ export async function createSpin(
     eventId: input.eventId,
     configurationVersion: input.configurationVersion,
     poolRevision: input.poolRevision,
+    scheduleVersion: input.scheduleVersion,
   });
 
   return database.transaction(async (tx) => {
@@ -1083,11 +907,6 @@ export async function createSpin(
 
     await requireActiveUser(txDb, actor.id);
 
-    const existingDay = await spinByDay(txDb, input.eventId, actor.id, currentClock.day);
-    if (existingDay) {
-      return { created: false, spin: toSpinDto(existingDay) };
-    }
-
     if (!wheel.enabled || !wheel.published_configuration) {
       throw new WheelError(409, "WHEEL_NOT_READY", "Lucky wheel is not published");
     }
@@ -1097,8 +916,28 @@ export async function createSpin(
     if (wheel.paused) {
       throw new WheelError(409, "WHEEL_PAUSED", "Lucky wheel is paused");
     }
-    if (!isWithinSession(currentClock.now, asDate(wheel.session_start), asDate(wheel.session_end))) {
-      throw new WheelError(409, "SESSION_CLOSED", "Main Session is not open");
+    const day = await readDayWindowForSpin(txDb, wheel.id, currentClock.day, true);
+    if (!day || !isWithinDayWindow(currentClock.now, day)) {
+      throw new WheelError(409, "DAY_WINDOW_CLOSED", "Wheel is outside today's configured window");
+    }
+    if (day.version !== input.scheduleVersion) {
+      throw new WheelError(409, "WHEEL_UPDATED", "Day schedule changed; reload before spinning");
+    }
+    const creditRows = await tx.execute(sql`
+      SELECT c.id
+      FROM lucky_wheel_credit_claims c
+      WHERE c.event_id = ${input.eventId}
+        AND c.user_id = ${actor.id}
+        AND c.play_date = ${currentClock.day}::date
+        AND c.spent_at IS NULL
+        AND c.revoked_at IS NULL
+      ORDER BY c.claimed_at, c.id
+      LIMIT 1
+      FOR UPDATE OF c
+    `);
+    const credit = (creditRows as unknown as Array<{ id: string }>)[0];
+    if (!credit) {
+      throw new WheelError(409, "NO_CREDIT", "No unspent wheel credit is available today");
     }
 
     const entitlements = await confirmedEntitlements(
@@ -1128,7 +967,7 @@ export async function createSpin(
     if (candidates.length === 0) {
       throw new WheelError(409, "OUT_OF_STOCK", "Physical prizes are currently out of stock");
     }
-    const selected = chooseSegment(candidates, (max) => randomInt(max));
+    const selected = chooseSegment(candidates, draw);
     const source = rows.find((row) => row.id === selected.id);
     if (!source) {
       throw new WheelError(409, "WHEEL_UPDATED", "Selected wheel segment is no longer available");
@@ -1201,7 +1040,7 @@ export async function createSpin(
     ): Promise<SpinRow | null> => {
       const insertedRows = await tx.execute(sql`
         INSERT INTO lucky_wheel_spins (
-          id, wheel_id, event_id, user_id, play_date,
+          id, wheel_id, event_id, user_id, play_date, credit_claim_id,
           attendance_id, attendance_checked_in_at,
           segment_id, outcome_kind,
           awarded_name_th, awarded_name_en, awarded_image_key,
@@ -1212,6 +1051,7 @@ export async function createSpin(
         )
         VALUES (
           ${spinId}, ${wheel.id}, ${input.eventId}, ${actor.id}, ${currentClock.day}::date,
+          ${credit.id},
           ${attendance.id}, ${asDate(attendance.checked_in_at).toISOString()}::timestamptz,
           ${selected.id}, ${selected.kind},
           ${selected.name.th}, ${selected.name.en}, ${selected.imageKey},
@@ -1230,8 +1070,10 @@ export async function createSpin(
       if (row) return row;
 
       const byRequest = await spinByRequest(txDb, input.eventId, actor.id, input.idempotencyKey);
-      const byDay = await spinByDay(txDb, input.eventId, actor.id, currentClock.day);
-      if (byRequest || byDay) {
+      const creditSpins = await tx.execute(sql`
+        SELECT id FROM lucky_wheel_spins WHERE credit_claim_id = ${credit.id} LIMIT 1
+      `);
+      if (byRequest || (creditSpins as unknown as Array<{ id: string }>)[0]) {
         throw new WheelError(
           409,
           "WHEEL_UPDATED",
@@ -1277,6 +1119,21 @@ export async function createSpin(
         throw new WheelError(409, "WHEEL_UPDATED", "Spin state changed; reload before retrying");
       }
       inserted = noPrize;
+    }
+
+    const spentRows = await tx.execute(sql`
+      UPDATE lucky_wheel_credit_claims
+      SET spent_at = clock_timestamp()
+      WHERE id = ${credit.id}
+        AND event_id = ${input.eventId}
+        AND user_id = ${actor.id}
+        AND play_date = ${currentClock.day}::date
+        AND spent_at IS NULL
+        AND revoked_at IS NULL
+      RETURNING id
+    `);
+    if (!(spentRows as unknown as Array<{ id: string }>)[0]) {
+      throw new WheelError(409, "WHEEL_UPDATED", "Credit changed during allocation");
     }
 
     return { created: true, spin: toSpinDto(inserted) };

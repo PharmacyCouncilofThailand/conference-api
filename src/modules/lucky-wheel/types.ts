@@ -14,6 +14,7 @@ export type SpinInput = {
   eventId: number;
   configurationVersion: number;
   poolRevision: number;
+  scheduleVersion: number;
   idempotencyKey: string;
 };
 
@@ -41,6 +42,8 @@ export type BlockCode =
   | "REGISTRATION_REQUIRED"
   | "ACCOUNT_UNAVAILABLE"
   | "SESSION_CLOSED"
+  | "DAY_WINDOW_CLOSED"
+  | "NO_CREDIT"
   | "WHEEL_PAUSED"
   | "WHEEL_NOT_READY"
   | "OUT_OF_STOCK"

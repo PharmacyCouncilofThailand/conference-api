@@ -8,7 +8,7 @@ import {
   luckyWheelAttendeeRoutes,
   type LuckyWheelRouteOptions,
 } from "./routes.js";
-import type { WheelDatabase } from "./service.js";
+import { WheelError, type WheelDatabase } from "./service.js";
 
 const configuration = {
   segments: [{
@@ -28,6 +28,9 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   let stockCalls = 0;
   let pauseCalls = 0;
   let stateCalls = 0;
+  let dayReadCalls = 0;
+  let dayEditCalls = 0;
+  let dayChangesCalls = 0;
   let historyCalls = 0;
   let lastHistoryQuery: unknown = null;
   let eligibilityCalls = 0;
@@ -35,6 +38,8 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   let ownHistoryCalls = 0;
   let lastOwnHistory: { userId: number; eventId: number; page: number; pageSize: number } | null = null;
   let ownSpinCalls = 0;
+  let qrPreviewCalls = 0;
+  let qrClaimCalls = 0;
   let lookupCalls = 0;
   let confirmCalls = 0;
   let correctionCalls = 0;
@@ -83,6 +88,40 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
         audit: [],
       };
     },
+    readDayWindowFn: async (_db, actor, eventId, date) => {
+      dayReadCalls += 1;
+      assert.equal(actor.id, 7);
+      assert.equal(eventId, 3);
+      assert.equal(date, "2026-10-29");
+      return null;
+    },
+    editDayWindowFn: async (_db, actor, eventId, input) => {
+      dayEditCalls += 1;
+      assert.equal(actor.id, 7);
+      assert.equal(eventId, 3);
+      assert.equal(input.date, "2026-10-29");
+      if (input.expectedVersion === 99) {
+        throw new WheelError(409, "WHEEL_UPDATED", "Day window version changed");
+      }
+      return {
+        id: "00000000-0000-4000-8000-000000000190",
+        date: input.date,
+        startAt: input.startAt,
+        endAt: input.endAt,
+        version: 1,
+      };
+    },
+    readDayChangesFn: async (_db, actor, eventId, date, query) => {
+      dayChangesCalls += 1;
+      assert.equal(actor.id, 7);
+      assert.equal(eventId, 3);
+      assert.equal(date, "2026-10-29");
+      return {
+        date,
+        items: [],
+        pagination: { page: query.page, pageSize: query.pageSize, total: 0, totalPages: 0 },
+      };
+    },
     readAdminSpinsFn: async (_db, actor, eventId, query) => {
       historyCalls += 1;
       const parsedQuery = query ?? {};
@@ -114,7 +153,38 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
         paused: false,
         configuration,
         availability: [],
-        existingSpin: null,
+        unspentCredits: 1,
+        spendableCredits: 1,
+        hasExpiredPriorDayCredit: false,
+        currentWindow: {
+          id: "00000000-0000-4000-8000-000000000190",
+          date: "2026-10-29",
+          startAt: "2026-10-29T02:00:00.000Z",
+          endAt: "2026-10-29T12:00:00.000Z",
+          version: 1,
+        },
+        latestSpin: null,
+      };
+    },
+    previewQrCreditFn: async (_db, actor, eventId, qrId) => {
+      qrPreviewCalls += 1;
+      assert.equal(actor.id, 21);
+      assert.equal(eventId, 3);
+      return {
+        qrId, name: "Morning", status: "open" as const, date: "2026-10-29",
+        startAt: "2026-10-29T02:00:00.000Z",
+        currentDeadline: "2026-10-29T12:00:00.000Z", scheduleVersion: 1,
+      };
+    },
+    claimQrCreditFn: async (_db, actor, eventId, qrId) => {
+      qrClaimCalls += 1;
+      assert.equal(actor.id, 21);
+      assert.equal(eventId, 3);
+      return {
+        created: true, qrId, qrName: "Morning",
+        creditId: "00000000-0000-4000-8000-000000000193",
+        date: "2026-10-29", claimedAt: "2026-10-29T04:00:00.000Z",
+        currentDeadline: "2026-10-29T12:00:00.000Z", state: "spendable" as const,
       };
     },
     createSpinFn: async (_db, actor, input) => {
@@ -129,6 +199,7 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
           playDate: "2026-10-29",
           attendanceId: "00000000-0000-4000-8000-000000000103",
           attendanceCheckedInAt: "2026-10-29T03:00:00.000Z",
+          creditClaimId: "00000000-0000-4000-8000-000000000193",
           outcomeKind: "prize",
           segmentId: configuration.segments[0].id,
           awardedName: { th: "ปากกา", en: "Pen" },
@@ -305,6 +376,75 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   assert.equal(adminState.json().wheel.version, 2);
   assert.equal(stateCalls, 1);
 
+  const missingDayActor = await app.inject({
+    method: "GET",
+    url: "/backoffice/events/3/days/2026-10-29",
+  });
+  assert.equal(missingDayActor.statusCode, 401);
+  const attendeeDay = await app.inject({
+    method: "GET",
+    url: "/backoffice/events/3/days/2026-10-29",
+    headers: { "x-test-token": "attendee" },
+  });
+  assert.equal(attendeeDay.statusCode, 403);
+  const invalidDay = await app.inject({
+    method: "GET",
+    url: "/backoffice/events/3/days/2026-02-30",
+    headers: { "x-test-token": "admin" },
+  });
+  assert.equal(invalidDay.statusCode, 400);
+  const dayRead = await app.inject({
+    method: "GET",
+    url: "/backoffice/events/3/days/2026-10-29",
+    headers: { "x-test-token": "admin" },
+  });
+  assert.equal(dayRead.statusCode, 200);
+  assert.equal(dayReadCalls, 1);
+  assert.equal(dayEditCalls, 0);
+  const malformedDayEdit = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3/days/2026-10-29",
+    headers: { "x-test-token": "admin" },
+    payload: { startAt: "2026-10-29T02:00:00Z", endAt: "2026-10-29T12:00:00Z", expectedVersion: null, reason: null, userId: 21 },
+  });
+  assert.equal(malformedDayEdit.statusCode, 400);
+  const dayEdit = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3/days/2026-10-29",
+    headers: { "x-test-token": "admin" },
+    payload: { startAt: "2026-10-29T02:00:00Z", endAt: "2026-10-29T12:00:00Z", expectedVersion: null, reason: null },
+  });
+  assert.equal(dayEdit.statusCode, 200);
+  assert.equal(dayEditCalls, 1);
+  const attendeeDayEdit = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3/days/2026-10-29",
+    headers: { "x-test-token": "attendee" },
+    payload: { startAt: "2026-10-29T02:00:00Z", endAt: "2026-10-29T12:00:00Z", expectedVersion: 1, reason: "No" },
+  });
+  assert.equal(attendeeDayEdit.statusCode, 403);
+  assert.equal(dayEditCalls, 1);
+  const staleDayEdit = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3/days/2026-10-29",
+    headers: { "x-test-token": "admin" },
+    payload: { startAt: "2026-10-29T03:00:00Z", endAt: "2026-10-29T13:00:00Z", expectedVersion: 99, reason: "Delay" },
+  });
+  assert.equal(staleDayEdit.statusCode, 409);
+  const changes = await app.inject({
+    method: "GET",
+    url: "/backoffice/events/3/days/2026-10-29/changes?page=1&pageSize=10",
+    headers: { "x-test-token": "admin" },
+  });
+  assert.equal(changes.statusCode, 200);
+  assert.equal(dayChangesCalls, 1);
+
+  const unauthenticatedQrList = await app.inject({
+    method: "GET",
+    url: "/backoffice/events/3/qr-codes?date=2026-10-29",
+  });
+  assert.equal(unauthenticatedQrList.statusCode, 401);
+
   const filteredHistory = await app.inject({
     method: "GET",
     url: `/backoffice/events/3/spins?date=2026-10-29&segmentId=${configuration.segments[0].id}&claimStatus=open&page=2&pageSize=25`,
@@ -396,6 +536,31 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   assert.equal(eligibility.headers["cache-control"], "no-store");
   assert.equal(lastAttendeeId, 21);
 
+  const qrPreview = await app.inject({
+    method: "GET",
+    url: "/attendee/events/3/qr-codes/00000000-0000-4000-8000-000000000191",
+    headers: { "x-test-token": "attendee" },
+  });
+  assert.equal(qrPreview.statusCode, 200);
+  assert.equal(qrPreviewCalls, 1);
+  assert.equal(qrPreview.headers["referrer-policy"], "no-referrer");
+  const invalidQrClaim = await app.inject({
+    method: "POST",
+    url: "/attendee/events/3/credit-claims",
+    headers: { "x-test-token": "attendee" },
+    payload: { qrId: "00000000-0000-4000-8000-000000000191", userId: 999 },
+  });
+  assert.equal(invalidQrClaim.statusCode, 400);
+  assert.equal(qrClaimCalls, 0);
+  const qrClaim = await app.inject({
+    method: "POST",
+    url: "/attendee/events/3/credit-claims",
+    headers: { "x-test-token": "attendee" },
+    payload: { qrId: "00000000-0000-4000-8000-000000000191" },
+  });
+  assert.equal(qrClaim.statusCode, 201);
+  assert.equal(qrClaimCalls, 1);
+
   const unauthenticatedOwnHistory = await app.inject({
     method: "GET",
     url: "/attendee/events/3/spins?page=1&pageSize=10",
@@ -447,6 +612,7 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
       eventId: 3,
       configurationVersion: 2,
       poolRevision: 2,
+      scheduleVersion: 1,
       idempotencyKey: randomUUID(),
       userId: 999,
       winner: configuration.segments[0].id,
@@ -464,6 +630,7 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
       eventId: 3,
       configurationVersion: 2,
       poolRevision: 2,
+      scheduleVersion: 1,
       idempotencyKey: randomUUID(),
     },
   });
@@ -538,6 +705,7 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
 
 test("attendee wheel throttling is account-aware instead of venue-IP-wide", async (t) => {
   let calls = 0;
+  let claims = 0;
   const options: LuckyWheelRouteOptions = {
     database: {} as WheelDatabase,
     getEligibilityFn: async (_db, actor, eventId) => {
@@ -554,7 +722,26 @@ test("attendee wheel throttling is account-aware instead of venue-IP-wide", asyn
         paused: false,
         configuration,
         availability: [],
-        existingSpin: null,
+        unspentCredits: 1,
+        spendableCredits: 1,
+        hasExpiredPriorDayCredit: false,
+        currentWindow: {
+          id: "00000000-0000-4000-8000-000000000190",
+          date: "2026-10-29",
+          startAt: "2026-10-29T02:00:00.000Z",
+          endAt: "2026-10-29T12:00:00.000Z",
+          version: 1,
+        },
+        latestSpin: null,
+      };
+    },
+    claimQrCreditFn: async (_db, actor, _eventId, qrId) => {
+      claims += 1;
+      return {
+        created: true, qrId, qrName: "Morning",
+        creditId: "00000000-0000-4000-8000-000000000195",
+        date: "2026-10-29", claimedAt: "2026-10-29T04:00:00.000Z",
+        currentDeadline: "2026-10-29T12:00:00.000Z", state: "spendable" as const,
       };
     },
   };
@@ -600,4 +787,197 @@ test("attendee wheel throttling is account-aware instead of venue-IP-wide", asyn
   });
   assert.equal(sameVenueOtherAccount.statusCode, 200);
   assert.equal(calls, 31);
+  const limitedClaim = await app.inject({
+    method: "POST",
+    url: "/events/3/credit-claims",
+    headers: { "x-test-user": "21" },
+    payload: { qrId: "00000000-0000-4000-8000-000000000191" },
+    remoteAddress: "10.10.10.10",
+  });
+  assert.equal(limitedClaim.statusCode, 429);
+  const otherAccountClaim = await app.inject({
+    method: "POST",
+    url: "/events/3/credit-claims",
+    headers: { "x-test-user": "22" },
+    payload: { qrId: "00000000-0000-4000-8000-000000000191" },
+    remoteAddress: "10.10.10.10",
+  });
+  assert.equal(otherAccountClaim.statusCode, 201);
+  assert.equal(claims, 1);
+});
+
+test("admin QR routes enforce role, bounded input, official display and scoped claim inspection", async (t) => {
+  const qrId = "00000000-0000-4000-8000-000000000191";
+  const claimId = "00000000-0000-4000-8000-000000000192";
+  const qr = {
+    id: qrId, eventId: 3, date: "2026-10-29", name: "Morning",
+    status: "closed" as const, createdBy: 7, createdAt: "2026-10-29T02:00:00.000Z",
+    openedBy: null, openedAt: null, openedReason: null,
+    closedBy: null, closedAt: null, closedReason: null,
+  };
+  let creations = 0;
+  let reads = 0;
+  let changes = 0;
+  let revocations = 0;
+  const app = Fastify({ logger: false });
+  await app.register(rateLimit, { max: 600, timeWindow: "1 minute" });
+  app.addHook("preHandler", async (request) => {
+    const token = request.headers["x-test-token"];
+    if (token === "admin") {
+      (request as any).user = { id: 7, role: "admin", email: "admin@example.invalid" };
+    } else if (token === "attendee") {
+      (request as any).user = { id: 21, role: "general" };
+    }
+  });
+  const options: LuckyWheelRouteOptions = {
+    database: {} as WheelDatabase,
+    validateAdminActorFn: async (_db, actor) =>
+      actor.id === 7 && actor.role === "admin"
+        ? { id: 7, role: "admin", email: "admin@example.invalid" }
+        : null,
+    createQrBatchFn: async (_db, actor, eventId, input) => {
+      creations += 1;
+      assert.equal(actor.id, 7);
+      assert.equal(eventId, 3);
+      assert.equal(input.date, qr.date);
+      return { eventId, date: input.date, qrCodes: [qr], replayed: false };
+    },
+    readQrCodesFn: async (_db, actor, eventId, query) => {
+      reads += 1;
+      assert.equal(actor.id, 7);
+      assert.equal(query.date, qr.date);
+      return {
+        eventId, date: query.date,
+        items: [{ ...qr, currentDeadline: "2026-10-29T12:00:00.000Z", claimCount: 0, spentCount: 0, revokedCount: 0 }],
+        pagination: { page: query.page, pageSize: query.pageSize, total: 1, totalPages: 1 },
+      };
+    },
+    readQrProjectionFn: async (_db, actor, eventId, id) => {
+      assert.equal(actor.id, 7);
+      assert.equal(eventId, 3);
+      assert.equal(id, qrId);
+      return {
+        ...qr, currentDeadline: "2026-10-29T12:00:00.000Z",
+        claimUrl: `https://pris.example.com/th/lucky-wheel/claim#${qrId}`,
+        qrDataUrl: "data:image/png;base64,AA==",
+      };
+    },
+    readQrClaimsFn: async (_db, actor, eventId, id, query) => {
+      assert.equal(actor.id, 7);
+      assert.equal(id, qrId);
+      return {
+        eventId, qrId: id, items: [],
+        pagination: { page: query.page, pageSize: query.pageSize, total: 0, totalPages: 0 },
+      };
+    },
+    setQrStatusFn: async (_db, actor, eventId, id, input) => {
+      changes += 1;
+      assert.equal(actor.id, 7);
+      assert.equal(eventId, 3);
+      assert.equal(id, qrId);
+      return { ...qr, status: input.status, replayed: false };
+    },
+    revokeCreditClaimFn: async (_db, actor, eventId, id, input) => {
+      revocations += 1;
+      assert.equal(actor.id, 7);
+      assert.equal(eventId, 3);
+      assert.equal(id, claimId);
+      return {
+        claimId: id, revokedAt: "2026-10-29T04:00:00.000Z",
+        revokedBy: actor.id, reason: input.reason, replayed: false,
+      };
+    },
+  };
+  await app.register(luckyWheelAdminRoutes, options);
+  await app.ready();
+  t.after(async () => app.close());
+  const path = "/events/3/qr-codes";
+  assert.equal((await app.inject({ method: "POST", url: path, payload: {
+    date: qr.date, names: ["Morning"], idempotencyKey: randomUUID(),
+  } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url: path, headers: { "x-test-token": "attendee" }, payload: {
+    date: qr.date, names: ["Morning"], idempotencyKey: randomUUID(),
+  } })).statusCode, 403);
+  assert.equal(creations, 0);
+  assert.equal((await app.inject({ method: "POST", url: path, headers: { "x-test-token": "admin" }, payload: {
+    date: qr.date, names: Array.from({ length: 21 }, (_, index) => `QR ${index}`), idempotencyKey: randomUUID(),
+  } })).statusCode, 400);
+  assert.equal((await app.inject({ method: "POST", url: path, headers: { "x-test-token": "admin" }, payload: {
+    date: qr.date, names: ["Morning", "Morning"], idempotencyKey: randomUUID(),
+  } })).statusCode, 400);
+  const created = await app.inject({ method: "POST", url: path, headers: { "x-test-token": "admin" }, payload: {
+    date: qr.date, names: ["Morning"], idempotencyKey: randomUUID(),
+  } });
+  assert.equal(created.statusCode, 201);
+  assert.equal(creations, 1);
+  assert.equal((await app.inject({
+    method: "GET", url: `${path}?date=2026-10-29&page=2&pageSize=5`,
+    headers: { "x-test-token": "admin" },
+  })).statusCode, 200);
+  assert.equal(reads, 1);
+  assert.equal((await app.inject({
+    method: "GET", url: `${path}?date=2026-10-29&userId=999`,
+    headers: { "x-test-token": "admin" },
+  })).statusCode, 400);
+  assert.equal(reads, 1);
+  const projection = await app.inject({
+    method: "GET", url: `${path}/${qrId}`, headers: { "x-test-token": "admin" },
+  });
+  assert.equal(projection.statusCode, 200);
+  assert.match(projection.json().claimUrl, /^https:\/\/pris\.example\.com\/th\/lucky-wheel\/claim#/);
+  assert.equal((await app.inject({
+    method: "GET", url: `${path}/${qrId}/claims?page=2&pageSize=5`,
+    headers: { "x-test-token": "admin" },
+  })).statusCode, 200);
+  assert.equal((await app.inject({
+    method: "PATCH", url: `${path}/${qrId}`, headers: { "x-test-token": "admin" },
+    payload: { status: "open", reason: "Begin", idempotencyKey: randomUUID() },
+  })).statusCode, 200);
+  assert.equal(changes, 1);
+  assert.equal((await app.inject({
+    method: "PATCH", url: `${path}/${qrId}`, headers: { "x-test-token": "admin" },
+    payload: { status: "open", reason: "Begin" },
+  })).statusCode, 400);
+  const revokePath = `/events/3/credit-claims/${claimId}/revocations`;
+  assert.equal((await app.inject({
+    method: "POST", url: revokePath, headers: { "x-test-token": "attendee" },
+    payload: { reason: "Wrong claim", idempotencyKey: randomUUID() },
+  })).statusCode, 403);
+  assert.equal((await app.inject({
+    method: "POST", url: revokePath, headers: { "x-test-token": "admin" },
+    payload: { reason: "Wrong claim", idempotencyKey: randomUUID() },
+  })).statusCode, 200);
+  assert.equal(revocations, 1);
+});
+
+test("attendee QR preview does not log the raw QR identifier", async (t) => {
+  const qrId = "00000000-0000-4000-8000-000000000194";
+  const logs: string[] = [];
+  const app = Fastify({
+    logger: {
+      level: "info",
+      stream: { write(line: string) { logs.push(line); } },
+    } as any,
+  });
+  await app.register(rateLimit, { max: 600, timeWindow: "1 minute" });
+  app.addHook("preHandler", async (request) => {
+    (request as any).user = { id: 21, role: "general" };
+  });
+  const options: LuckyWheelRouteOptions = {
+    database: {} as WheelDatabase,
+    previewQrCreditFn: async (_db, _actor, _eventId, id) => ({
+      qrId: id, name: "Morning", status: "open" as const, date: "2026-10-29",
+      startAt: "2026-10-29T02:00:00.000Z",
+      currentDeadline: "2026-10-29T12:00:00.000Z", scheduleVersion: 1,
+    }),
+  };
+  await app.register(luckyWheelAttendeeRoutes, options);
+  await app.ready();
+  t.after(async () => app.close());
+  const response = await app.inject({
+    method: "GET",
+    url: `/events/3/qr-codes/${qrId}`,
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(logs.join("").includes(qrId), false);
 });

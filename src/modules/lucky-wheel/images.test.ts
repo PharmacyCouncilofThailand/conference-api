@@ -125,6 +125,10 @@ async function bootstrap(sqlClient: ReturnType<typeof postgres>) {
     await readFile(resolve(process.cwd(), "drizzle", "0034_lucky_wheel.sql"), "utf8")
   ).replaceAll("--> statement-breakpoint", "");
   await sqlClient.unsafe(migration);
+  const creditMigration = (
+    await readFile(resolve(process.cwd(), "drizzle", "0035_lucky_wheel_qr_credits.sql"), "utf8")
+  ).replaceAll("--> statement-breakpoint", "");
+  await sqlClient.unsafe(creditMigration);
 }
 
 function multipartBody(

@@ -19,6 +19,7 @@ import {
   uniqueIndex,
   index,
   check,
+  foreignKey,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
@@ -837,6 +838,7 @@ export const luckyWheels = pgTable(
   (table) => [
     uniqueIndex("lucky_wheels_event_unique").on(table.eventId),
     uniqueIndex("lucky_wheels_event_main_session_unique").on(table.eventId, table.mainSessionId),
+    uniqueIndex("lucky_wheels_id_event_unique").on(table.id, table.eventId),
     check("lucky_wheels_version_positive_check", sql`${table.version} > 0`),
     check("lucky_wheels_pool_revision_positive_check", sql`${table.poolRevision} > 0`),
     check(
@@ -906,6 +908,120 @@ export const luckyWheelSegments = pgTable(
   ],
 );
 
+export const luckyWheelDays = pgTable(
+  "lucky_wheel_days",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    wheelId: uuid("wheel_id").notNull().references(() => luckyWheels.id),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    playDate: date("play_date").notNull(),
+    startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+    endAt: timestamp("end_at", { withTimezone: true }).notNull(),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheel_days_wheel_date_unique").on(table.wheelId, table.playDate),
+    uniqueIndex("lucky_wheel_days_id_event_date_unique").on(table.id, table.eventId, table.playDate),
+    foreignKey({
+      name: "lucky_wheel_days_wheel_event_fk",
+      columns: [table.wheelId, table.eventId],
+      foreignColumns: [luckyWheels.id, luckyWheels.eventId],
+    }),
+    check("lucky_wheel_days_version_positive_check", sql`${table.version} > 0`),
+    check(
+      "lucky_wheel_days_window_check",
+      sql`${table.startAt} < ${table.endAt}
+        and (${table.startAt} at time zone 'Asia/Bangkok')::date = ${table.playDate}
+        and ${table.endAt} <= ((${table.playDate} + 1)::timestamp at time zone 'Asia/Bangkok')`,
+    ),
+  ],
+);
+
+export const luckyWheelQrCodes = pgTable(
+  "lucky_wheel_qr_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    dayId: uuid("day_id").notNull().references(() => luckyWheelDays.id),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    playDate: date("play_date").notNull(),
+    name: varchar("name", { length: 160 }).notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("closed"),
+    createdBy: integer("created_by").notNull().references(() => backofficeUsers.id),
+    openedBy: integer("opened_by").references(() => backofficeUsers.id),
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    openedReason: text("opened_reason"),
+    closedBy: integer("closed_by").references(() => backofficeUsers.id),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closedReason: text("closed_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("lucky_wheel_qr_codes_day_status_idx").on(table.dayId, table.status, table.createdAt),
+    uniqueIndex("lucky_wheel_qr_codes_id_event_date_unique").on(table.id, table.eventId, table.playDate),
+    foreignKey({
+      name: "lucky_wheel_qr_codes_day_event_date_fk",
+      columns: [table.dayId, table.eventId, table.playDate],
+      foreignColumns: [luckyWheelDays.id, luckyWheelDays.eventId, luckyWheelDays.playDate],
+    }),
+    check("lucky_wheel_qr_codes_name_nonblank_check", sql`btrim(${table.name}) <> ''`),
+    check("lucky_wheel_qr_codes_status_check", sql`${table.status} in ('closed', 'open')`),
+    check(
+      "lucky_wheel_qr_codes_open_consistency_check",
+      sql`(${table.openedBy} is null and ${table.openedAt} is null and ${table.openedReason} is null)
+        or (${table.openedBy} is not null and ${table.openedAt} is not null
+          and ${table.openedReason} is not null and btrim(${table.openedReason}) <> '')`,
+    ),
+    check(
+      "lucky_wheel_qr_codes_close_consistency_check",
+      sql`(${table.closedBy} is null and ${table.closedAt} is null and ${table.closedReason} is null)
+        or (${table.closedBy} is not null and ${table.closedAt} is not null
+          and ${table.closedReason} is not null and btrim(${table.closedReason}) <> '')`,
+    ),
+  ],
+);
+
+export const luckyWheelCreditClaims = pgTable(
+  "lucky_wheel_credit_claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    qrId: uuid("qr_id").notNull().references(() => luckyWheelQrCodes.id),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    playDate: date("play_date").notNull(),
+    userId: integer("user_id").notNull().references(() => users.id),
+    attendanceId: uuid("attendance_id").notNull().references(() => sessionDailyCheckins.id),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
+    displayedDeadlineAt: timestamp("displayed_deadline_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedBy: integer("revoked_by").references(() => backofficeUsers.id),
+    revocationReason: text("revocation_reason"),
+    spentAt: timestamp("spent_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheel_credit_claims_qr_user_unique").on(table.qrId, table.userId),
+    uniqueIndex("lucky_wheel_credit_claims_id_event_user_date_unique")
+      .on(table.id, table.eventId, table.userId, table.playDate),
+    foreignKey({
+      name: "lucky_wheel_credit_claims_qr_event_date_fk",
+      columns: [table.qrId, table.eventId, table.playDate],
+      foreignColumns: [luckyWheelQrCodes.id, luckyWheelQrCodes.eventId, luckyWheelQrCodes.playDate],
+    }),
+    index("lucky_wheel_credit_claims_user_spend_idx").on(table.userId, table.spentAt, table.claimedAt),
+    check(
+      "lucky_wheel_credit_claims_revocation_consistency_check",
+      sql`(${table.revokedAt} is null and ${table.revokedBy} is null and ${table.revocationReason} is null)
+        or (${table.revokedAt} is not null and ${table.revokedBy} is not null
+          and ${table.revocationReason} is not null and btrim(${table.revocationReason}) <> '')`,
+    ),
+    check(
+      "lucky_wheel_credit_claims_not_spent_and_revoked_check",
+      sql`${table.spentAt} is null or ${table.revokedAt} is null`,
+    ),
+  ],
+);
+
 export const luckyWheelSpins = pgTable(
   "lucky_wheel_spins",
   {
@@ -914,6 +1030,7 @@ export const luckyWheelSpins = pgTable(
     eventId: integer("event_id").notNull().references(() => events.id),
     userId: integer("user_id").notNull().references(() => users.id),
     playDate: date("play_date").notNull(),
+    creditClaimId: uuid("credit_claim_id").references(() => luckyWheelCreditClaims.id),
     attendanceId: uuid("attendance_id").notNull().references(() => sessionDailyCheckins.id),
     attendanceCheckedInAt: timestamp("attendance_checked_in_at", { withTimezone: true }).notNull(),
     segmentId: uuid("segment_id").notNull().references(() => luckyWheelSegments.id),
@@ -933,7 +1050,22 @@ export const luckyWheelSpins = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("lucky_wheel_spins_event_user_day_unique").on(table.eventId, table.userId, table.playDate),
+    uniqueIndex("lucky_wheel_spins_event_user_day_legacy_unique")
+      .on(table.eventId, table.userId, table.playDate)
+      .where(sql`${table.creditClaimId} is null`),
+    uniqueIndex("lucky_wheel_spins_credit_claim_unique")
+      .on(table.creditClaimId)
+      .where(sql`${table.creditClaimId} is not null`),
+    foreignKey({
+      name: "lucky_wheel_spins_credit_owner_day_fk",
+      columns: [table.creditClaimId, table.eventId, table.userId, table.playDate],
+      foreignColumns: [
+        luckyWheelCreditClaims.id,
+        luckyWheelCreditClaims.eventId,
+        luckyWheelCreditClaims.userId,
+        luckyWheelCreditClaims.playDate,
+      ],
+    }),
     uniqueIndex("lucky_wheel_spins_event_user_request_unique").on(table.eventId, table.userId, table.idempotencyKey),
     uniqueIndex("lucky_wheel_spins_reward_token_digest_unique")
       .on(table.rewardTokenDigest)
