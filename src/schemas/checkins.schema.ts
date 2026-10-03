@@ -7,6 +7,8 @@ export const checkinListSchema = z.object({
     sessionId: z.coerce.number().optional(),
     university: z.string().optional(),
     search: z.string().optional(), // Search by user name or reg code
+    date: z.string().optional(),
+    history: z.enum(["active", "cancelled", "all"]).default("active"),
 });
 
 export const createCheckinSchema = z.object({
@@ -19,8 +21,10 @@ export const createCheckinSchema = z.object({
 export const checkinStatsSchema = z.object({
     eventId: z.coerce.number().optional(),
     sessionId: z.coerce.number().optional(),
+    date: z.string().optional(),
 });
 
-export const undoCheckinSchema = z.object({
-    registrationSessionId: z.number(),
-});
+export const undoCheckinSchema = z.union([
+    z.object({ attendanceId: z.string().uuid(), reason: z.string().trim().min(1).max(500) }).strict(),
+    z.object({ registrationSessionId: z.number().int().positive() }).strict(),
+]);

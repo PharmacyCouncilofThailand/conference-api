@@ -11,6 +11,17 @@ import {
 } from "../../database/schema.js";
 import { checkinListSchema, createCheckinSchema, checkinStatsSchema, undoCheckinSchema } from "../../schemas/checkins.schema.js";
 import { eq, desc, ilike, and, or, count, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+    AttendanceError,
+    cancelDailyCheckin,
+    checkInSession,
+    readAttendanceState,
+} from "../../modules/attendance/service.js";
+import {
+    AttendanceReaderError,
+    readAttendanceRows,
+    readAttendanceSummary,
+} from "../../modules/attendance/readers.js";
 
 export default async function (fastify: FastifyInstance) {
     // List Check-ins (reads from registration_sessions WHERE checkedInAt IS NOT NULL)
@@ -20,10 +31,34 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { page, limit, search, eventId, sessionId, university } = queryResult.data;
+        const { page, limit, search, eventId, sessionId, university, date, history } = queryResult.data;
         const offset = (page - 1) * limit;
 
         try {
+            if (eventId && sessionId) {
+                const actor = {
+                    id: Number((request as any).user?.id),
+                    role: (request as any).user?.role as string | undefined,
+                };
+                const result = await readAttendanceRows(db, {
+                    eventId,
+                    sessionId,
+                    date,
+                    history,
+                    university,
+                    search,
+                    page,
+                    limit,
+                    actor,
+                });
+                return reply.send({
+                    checkins: result.rows,
+                    pagination: result.pagination,
+                    serverNow: result.serverNow,
+                    serverDate: result.serverDate,
+                    selectedDate: result.selectedDate,
+                });
+            }
             const conditions: any[] = [isNotNull(registrationSessions.checkedInAt)];
             if (eventId) conditions.push(eq(registrations.eventId, eventId));
             if (sessionId) conditions.push(eq(registrationSessions.sessionId, sessionId));
@@ -91,6 +126,9 @@ export default async function (fastify: FastifyInstance) {
                 },
             });
         } catch (error) {
+            if (error instanceof AttendanceReaderError) {
+                return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+            }
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to fetch check-ins" });
         }
@@ -134,9 +172,25 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { eventId, sessionId } = queryResult.data;
+        const { eventId, sessionId, date } = queryResult.data;
 
         try {
+            if (eventId && sessionId) {
+                const actor = {
+                    id: Number((request as any).user?.id),
+                    role: (request as any).user?.role as string | undefined,
+                };
+                const summary = await readAttendanceSummary(db, { eventId, sessionId, date, actor });
+                return reply.send({
+                    ...summary,
+                    total: summary.eligibleRegistrations,
+                    checkedIn: summary.checkedInPeopleOnDate,
+                    remaining: Math.max(0, summary.eligibleRegistrations - summary.checkedInPeopleOnDate),
+                    percentage: summary.eligibleRegistrations > 0
+                        ? Math.round((summary.checkedInPeopleOnDate / summary.eligibleRegistrations) * 100)
+                        : 0,
+                });
+            }
             const conditions: any[] = [];
             if (eventId) conditions.push(eq(registrations.eventId, eventId));
             if (sessionId) conditions.push(eq(registrationSessions.sessionId, sessionId));
@@ -207,17 +261,17 @@ export default async function (fastify: FastifyInstance) {
                 ...(sessionBreakdown.length > 0 && { sessionBreakdown }),
             });
         } catch (error) {
+            if (error instanceof AttendanceReaderError) {
+                return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+            }
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to fetch stats" });
         }
     });
 
     // Create Check-in (Scan)
-    // Supports 4 modes:
-    //   1. { regCode } → return session list for staff to choose
-    //   2. { regCode, sessionId } → check-in specific session
-    //   3. { regCode, checkInAll: true } → check-in all sessions at once
-    //   4. { regCode, assignedSessionId } → staff-assigned fast scan (auto check-in)
+    // Supports picker, specific session, all entitled sessions, and staff-assigned fast scan.
+    // Every actual write routes through the shared attendance service.
     fastify.post("", async (request, reply) => {
         const bodyResult = createCheckinSchema.safeParse(request.body);
         if (!bodyResult.success) {
@@ -225,10 +279,12 @@ export default async function (fastify: FastifyInstance) {
         }
 
         const { regCode, sessionId, checkInAll, assignedSessionId } = bodyResult.data;
-        const staffUserId = (request as any).user?.id;
+        const actor = {
+            id: Number((request as any).user?.id),
+            role: (request as any).user?.role as string | undefined,
+        };
 
         try {
-            // Find registration with all linked sessions
             const registration = await db.query.registrations.findFirst({
                 where: ilike(registrations.regCode, regCode),
                 columns: {
@@ -240,12 +296,8 @@ export default async function (fastify: FastifyInstance) {
                     email: true,
                 },
                 with: {
-                    event: {
-                        columns: { eventName: true },
-                    },
-                    ticketType: {
-                        columns: { name: true },
-                    },
+                    event: { columns: { eventName: true } },
+                    ticketType: { columns: { name: true } },
                     registrationSessions: {
                         columns: {
                             id: true,
@@ -262,303 +314,239 @@ export default async function (fastify: FastifyInstance) {
                                     endTime: true,
                                 },
                             },
-                            ticketType: {
-                                columns: { name: true },
-                            },
+                            ticketType: { columns: { name: true } },
                         },
                     },
-                }
+                },
             });
 
             if (!registration) {
                 return reply.status(404).send({ error: "Registration not found", code: "NOT_FOUND" });
             }
-
-            if (registration.status !== 'confirmed') {
+            if (registration.status !== "confirmed") {
                 return reply.status(400).send({
                     error: `Registration status is ${registration.status}`,
                     code: "INVALID_STATUS",
-                    registration
+                    registration,
                 });
             }
 
             const regSessions = registration.registrationSessions || [];
+            const registrationResponse = {
+                id: registration.id,
+                regCode: registration.regCode,
+                firstName: registration.firstName,
+                lastName: registration.lastName,
+                ticketName: (registration as any).ticketType?.name,
+                eventName: (registration as any).event?.eventName,
+            };
 
-            // ─── Case 4: Staff-assigned fast scan ───
+            const checkOne = async (regSession: any) => {
+                const result = await checkInSession(db, {
+                    registrationSessionId: regSession.id,
+                    actor,
+                });
+                if (!result.created) {
+                    return reply.status(409).send({
+                        error: result.state.mode === "daily" ? "เช็คอินวันนี้แล้ว" : "เช็คอินแล้ว",
+                        code: "ALREADY_CHECKED_IN",
+                        attendanceMode: result.state.mode,
+                        attendanceId: result.state.attendanceId,
+                        attendanceDate: result.state.attendanceDate,
+                        checkedInAt: result.state.checkedInAt,
+                        details: {
+                            attendanceMode: result.state.mode,
+                            attendanceId: result.state.attendanceId,
+                            attendanceDate: result.state.attendanceDate,
+                            checkedInAt: result.state.checkedInAt,
+                        },
+                        sessionName: regSession.session?.sessionName,
+                        registration: registrationResponse,
+                    });
+                }
+                return reply.send({
+                    success: true,
+                    checkedInSession: {
+                        sessionId: regSession.sessionId,
+                        sessionName: regSession.session?.sessionName,
+                        ticketName: regSession.ticketType?.name ?? null,
+                        source: regSession.source,
+                        attendanceMode: result.state.mode,
+                        attendanceId: result.state.attendanceId,
+                        attendanceDate: result.state.attendanceDate,
+                        checkedInAt: result.state.checkedInAt,
+                    },
+                    registration: registrationResponse,
+                });
+            };
+
             if (assignedSessionId) {
                 const regSession = regSessions.find((rs: any) => rs.sessionId === assignedSessionId);
-
                 if (!regSession) {
                     return reply.status(400).send({
                         error: "ผู้ลงทะเบียนไม่มีสิทธิ์เข้า session นี้",
                         code: "NO_ACCESS",
-                        registration: {
-                            regCode: registration.regCode,
-                            firstName: registration.firstName,
-                            lastName: registration.lastName,
-                        },
+                        registration: registrationResponse,
                     });
                 }
-
-                if (regSession.checkedInAt) {
-                    return reply.status(409).send({
-                        error: "เช็คอินแล้ว",
-                        code: "ALREADY_CHECKED_IN",
-                        checkedInAt: regSession.checkedInAt,
-                        sessionName: (regSession as any).session?.sessionName,
-                        registration: {
-                            regCode: registration.regCode,
-                            firstName: registration.firstName,
-                            lastName: registration.lastName,
-                        },
-                    });
-                }
-
-                // ─── Session time window validation ───
-                const session = (regSession as any).session;
-                if (session) {
-                    const now = new Date();
-                    
-                    if (session.startTime && now < new Date(session.startTime)) {
-                        return reply.status(400).send({
-                            error: "Session has not started yet",
-                            code: "SESSION_NOT_STARTED",
-                            sessionName: session.sessionName,
-                            startTime: session.startTime,
-                            registration: {
-                                regCode: registration.regCode,
-                                firstName: registration.firstName,
-                                lastName: registration.lastName,
-                            },
-                        });
-                    }
-
-                    if (session.endTime && now > new Date(session.endTime)) {
-                        return reply.status(400).send({
-                            error: "Session has already ended",
-                            code: "SESSION_ENDED",
-                            sessionName: session.sessionName,
-                            endTime: session.endTime,
-                            registration: {
-                                regCode: registration.regCode,
-                                firstName: registration.firstName,
-                                lastName: registration.lastName,
-                            },
-                        });
-                    }
-                }
-
-                await db
-                    .update(registrationSessions)
-                    .set({ checkedInAt: new Date(), checkedInBy: staffUserId })
-                    .where(eq(registrationSessions.id, regSession.id));
-
-                return reply.send({
-                    success: true,
-                    checkedInSession: {
-                        sessionId: regSession.sessionId,
-                        sessionName: (regSession as any).session?.sessionName,
-                        ticketName: (regSession as any).ticketType?.name ?? null,
-                        source: regSession.source,
-                    },
-                    registration: {
-                        id: registration.id,
-                        regCode: registration.regCode,
-                        firstName: registration.firstName,
-                        lastName: registration.lastName,
-                        ticketName: (registration as any).ticketType?.name,
-                        eventName: (registration as any).event?.eventName,
-                    },
-                });
+                return checkOne(regSession);
             }
 
-            // ─── Case 1: Check-in ALL sessions at once ───
             if (checkInAll) {
-                const unchecked = regSessions.filter((rs: any) => !rs.checkedInAt);
-                if (unchecked.length === 0) {
+                const checked: any[] = [];
+                const skipped: any[] = [];
+                for (const regSession of regSessions as any[]) {
+                    try {
+                        const result = await checkInSession(db, {
+                            registrationSessionId: regSession.id,
+                            actor,
+                        });
+                        if (result.created) {
+                            checked.push({
+                                sessionId: regSession.sessionId,
+                                sessionName: regSession.session?.sessionName,
+                                attendanceMode: result.state.mode,
+                                attendanceId: result.state.attendanceId,
+                                attendanceDate: result.state.attendanceDate,
+                                checkedInAt: result.state.checkedInAt,
+                            });
+                        } else {
+                            skipped.push({
+                                sessionId: regSession.sessionId,
+                                sessionName: regSession.session?.sessionName,
+                                code: "ALREADY_CHECKED_IN",
+                                checkedInAt: result.state.checkedInAt,
+                                attendanceId: result.state.attendanceId,
+                                attendanceDate: result.state.attendanceDate,
+                            });
+                        }
+                    } catch (error) {
+                        if (error instanceof AttendanceError) {
+                            skipped.push({
+                                sessionId: regSession.sessionId,
+                                sessionName: regSession.session?.sessionName,
+                                code: error.code,
+                                reason: error.message,
+                            });
+                            continue;
+                        }
+                        throw error;
+                    }
+                }
+
+                if (checked.length === 0 && skipped.length > 0 && skipped.every((item) => item.code === "ALREADY_CHECKED_IN")) {
                     return reply.status(409).send({
                         error: "All sessions already checked in",
                         code: "ALREADY_CHECKED_IN",
+                        skippedSessions: skipped,
                     });
                 }
-
-                // ─── Session time window validation for all sessions ───
-                const now = new Date();
-                const validSessions = [];
-                const invalidSessions = [];
-
-                for (const rs of unchecked) {
-                    const session = (rs as any).session;
-                    if (session) {
-                        if (session.startTime && now < new Date(session.startTime)) {
-                            invalidSessions.push({
-                                sessionName: session.sessionName,
-                                reason: "Session has not started yet",
-                                startTime: session.startTime,
-                            });
-                        } else if (session.endTime && now > new Date(session.endTime)) {
-                            invalidSessions.push({
-                                sessionName: session.sessionName,
-                                reason: "Session has already ended",
-                                endTime: session.endTime,
-                            });
-                        } else {
-                            validSessions.push(rs);
-                        }
-                    } else {
-                        validSessions.push(rs);
-                    }
-                }
-
-                if (invalidSessions.length > 0 && validSessions.length === 0) {
+                if (checked.length === 0) {
                     return reply.status(400).send({
                         error: "No sessions are currently available for check-in",
                         code: "NO_ACTIVE_SESSIONS",
-                        invalidSessions,
+                        skippedSessions: skipped,
                     });
-                }
-
-                // Check-in only valid sessions
-                for (const rs of validSessions) {
-                    await db
-                        .update(registrationSessions)
-                        .set({ checkedInAt: new Date(), checkedInBy: staffUserId })
-                        .where(eq(registrationSessions.id, rs.id));
                 }
 
                 const response = {
                     success: true,
-                    checkedInCount: validSessions.length,
-                    registration: {
-                        id: registration.id,
-                        regCode: registration.regCode,
-                        firstName: registration.firstName,
-                        lastName: registration.lastName,
-                        ticketName: (registration as any).ticketType?.name,
-                        eventName: (registration as any).event?.eventName,
-                    },
+                    checkedInCount: checked.length,
+                    checkedInSessions: checked,
+                    registration: registrationResponse,
                 };
-
-                if (invalidSessions.length > 0) {
-                    return reply.status(207).send({
-                        ...response,
-                        skippedSessions: invalidSessions,
-                        message: `Checked in ${validSessions.length} sessions. ${invalidSessions.length} sessions were skipped due to time restrictions.`,
-                    });
-                }
-
-                return reply.send(response);
+                return skipped.length > 0
+                    ? reply.status(207).send({ ...response, skippedSessions: skipped })
+                    : reply.send(response);
             }
 
-            // ─── Case 2: Check-in a specific session ───
             if (sessionId) {
                 const regSession = regSessions.find((rs: any) => rs.sessionId === sessionId);
-
                 if (!regSession) {
-                    return reply.status(400).send({
-                        error: "No access to this session",
-                        code: "NO_ACCESS",
-                    });
+                    return reply.status(400).send({ error: "No access to this session", code: "NO_ACCESS" });
                 }
-
-                if (regSession.checkedInAt) {
-                    return reply.status(409).send({
-                        error: "Already checked in for this session",
-                        code: "ALREADY_CHECKED_IN",
-                        checkedInAt: regSession.checkedInAt,
-                        sessionName: (regSession as any).session?.sessionName,
-                    });
-                }
-
-                // ─── Session time window validation ───
-                const session = (regSession as any).session;
-                if (session) {
-                    const now = new Date();
-                    
-                    if (session.startTime && now < new Date(session.startTime)) {
-                        return reply.status(400).send({
-                            error: "Session has not started yet",
-                            code: "SESSION_NOT_STARTED",
-                            sessionName: session.sessionName,
-                            startTime: session.startTime,
-                        });
-                    }
-
-                    if (session.endTime && now > new Date(session.endTime)) {
-                        return reply.status(400).send({
-                            error: "Session has already ended",
-                            code: "SESSION_ENDED",
-                            sessionName: session.sessionName,
-                            endTime: session.endTime,
-                        });
-                    }
-                }
-
-                await db
-                    .update(registrationSessions)
-                    .set({ checkedInAt: new Date(), checkedInBy: staffUserId })
-                    .where(eq(registrationSessions.id, regSession.id));
-
-                return reply.send({
-                    success: true,
-                    checkedInSession: {
-                        sessionId: regSession.sessionId,
-                        sessionName: (regSession as any).session?.sessionName,
-                        ticketName: (regSession as any).ticketType?.name ?? null,
-                        source: regSession.source,
-                    },
-                    registration: {
-                        id: registration.id,
-                        regCode: registration.regCode,
-                        firstName: registration.firstName,
-                        lastName: registration.lastName,
-                        ticketName: (registration as any).ticketType?.name,
-                        eventName: (registration as any).event?.eventName,
-                    },
-                });
+                return checkOne(regSession);
             }
 
-            // ─── Case 3: No sessionId → return session list for staff to choose ───
+            const now = new Date();
+            const stateById = new Map<number, Awaited<ReturnType<typeof readAttendanceState>>>();
+            await Promise.all(
+                (regSessions as any[]).map(async (rs) => {
+                    stateById.set(rs.id, await readAttendanceState(db, rs.id, now));
+                }),
+            );
+
             return reply.send({
                 registration: {
-                    id: registration.id,
-                    regCode: registration.regCode,
-                    firstName: registration.firstName,
-                    lastName: registration.lastName,
+                    ...registrationResponse,
                     email: registration.email,
                     status: registration.status,
-                    ticketName: (registration as any).ticketType?.name,
-                    eventName: (registration as any).event?.eventName,
                 },
-                sessions: regSessions.map((rs: any) => ({
-                    id: rs.id,
-                    sessionId: rs.sessionId,
-                    sessionName: rs.session?.sessionName,
-                    sessionType: rs.session?.sessionType,
-                    ticketName: rs.ticketType?.name ?? null,
-                    source: rs.source,
-                    checkedInAt: rs.checkedInAt,
-                })),
+                sessions: (regSessions as any[]).map((rs) => {
+                    const state = stateById.get(rs.id)!;
+                    return {
+                        id: rs.id,
+                        sessionId: rs.sessionId,
+                        sessionName: rs.session?.sessionName,
+                        sessionType: rs.session?.sessionType,
+                        ticketName: rs.ticketType?.name ?? null,
+                        source: rs.source,
+                        attendanceMode: state.mode,
+                        attendanceId: state.attendanceId,
+                        attendanceDate: state.attendanceDate,
+                        checkedInAt: state.checkedInAt,
+                    };
+                }),
             });
-
         } catch (error) {
+            if (error instanceof AttendanceError) {
+                return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+            }
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to process check-in" });
         }
     });
 
-    // Undo Check-in (clear checked_in_at and checked_in_by)
+    // Daily undo targets immutable attendance evidence; legacy undo remains registrationSessionId-based.
     fastify.post("/undo", async (request, reply) => {
         const bodyResult = undoCheckinSchema.safeParse(request.body);
         if (!bodyResult.success) {
             return reply.status(400).send({ error: "Invalid body", details: bodyResult.error.flatten() });
         }
 
-        const { registrationSessionId } = bodyResult.data;
-        const staffRole = (request as any).user?.role;
+        const actor = {
+            id: Number((request as any).user?.id),
+            role: (request as any).user?.role as string | undefined,
+        };
 
         try {
-            // Find the registration_session
+            if ("attendanceId" in bodyResult.data) {
+                const state = await cancelDailyCheckin(db, {
+                    attendanceId: bodyResult.data.attendanceId,
+                    actor,
+                    reason: bodyResult.data.reason,
+                });
+                return reply.send({
+                    success: true,
+                    undone: {
+                        attendanceId: bodyResult.data.attendanceId,
+                        registrationSessionId: state.registrationSessionId,
+                        attendanceDate: state.attendanceDate,
+                        cancelledAt: state.cancelledAt,
+                        cancellationReason: state.cancellationReason,
+                    },
+                });
+            }
+
+            const { registrationSessionId } = bodyResult.data;
+            const attendanceState = await readAttendanceState(db, registrationSessionId, new Date());
+            if (attendanceState.mode === "daily") {
+                return reply.status(400).send({
+                    error: "Daily attendance must be cancelled by attendanceId with a reason",
+                    code: "DAILY_ATTENDANCE_ID_REQUIRED",
+                });
+            }
+
             const [rs] = await db
                 .select({
                     id: registrationSessions.id,
@@ -577,13 +565,10 @@ export default async function (fastify: FastifyInstance) {
             if (!rs) {
                 return reply.status(404).send({ error: "Registration session not found" });
             }
-
             if (!rs.checkedInAt) {
                 return reply.status(400).send({ error: "Not checked in yet" });
             }
-
-            // Non-admin: only allow undo within 5 minutes
-            if (staffRole !== "admin") {
+            if (actor.role !== "admin") {
                 const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
                 if (rs.checkedInAt < fiveMinAgo) {
                     return reply.status(403).send({
@@ -593,7 +578,6 @@ export default async function (fastify: FastifyInstance) {
                 }
             }
 
-            // Clear check-in
             await db
                 .update(registrationSessions)
                 .set({ checkedInAt: null, checkedInBy: null })
@@ -609,8 +593,12 @@ export default async function (fastify: FastifyInstance) {
                 },
             });
         } catch (error) {
+            if (error instanceof AttendanceError) {
+                return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+            }
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to undo check-in" });
         }
     });
+
 }

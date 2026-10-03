@@ -4,6 +4,7 @@ import {
   varchar,
   text,
   timestamp,
+  date,
   integer,
   decimal,
   boolean,
@@ -750,6 +751,333 @@ export const registrationSessions = pgTable(
       table.registrationId,
       table.sessionId,
     ),
+  ],
+);
+
+export const sessionAttendancePolicies = pgTable(
+  "session_attendance_policies",
+  {
+    id: serial("id").primaryKey(),
+    eventId: integer("event_id")
+      .notNull()
+      .references(() => events.id),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => sessions.id),
+    mode: varchar("mode", { length: 16 }).notNull().default("daily"),
+    enabled: boolean("enabled").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("session_attendance_policies_event_session_unique").on(
+      table.eventId,
+      table.sessionId,
+    ),
+    check("session_attendance_policies_mode_check", sql`${table.mode} = 'daily'`),
+  ],
+);
+
+export const sessionDailyCheckins = pgTable(
+  "session_daily_checkins",
+  {
+    id: uuid("id").primaryKey(),
+    registrationSessionId: integer("registration_session_id")
+      .notNull()
+      .references(() => registrationSessions.id),
+    attendanceDate: date("attendance_date").notNull(),
+    checkedInAt: timestamp("checked_in_at", { withTimezone: true }).notNull().defaultNow(),
+    checkedInBy: integer("checked_in_by").references(() => backofficeUsers.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledBy: integer("cancelled_by").references(() => backofficeUsers.id),
+    cancellationReason: text("cancellation_reason"),
+    legacySourceKey: text("legacy_source_key"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("session_daily_checkins_active_day_unique")
+      .on(table.registrationSessionId, table.attendanceDate)
+      .where(sql`${table.cancelledAt} is null`),
+    uniqueIndex("session_daily_checkins_legacy_source_unique")
+      .on(table.legacySourceKey)
+      .where(sql`${table.legacySourceKey} is not null`),
+    index("session_daily_checkins_registration_history_idx").on(
+      table.registrationSessionId,
+      table.attendanceDate,
+      table.checkedInAt,
+    ),
+    index("session_daily_checkins_date_report_idx").on(
+      table.attendanceDate,
+      table.registrationSessionId,
+    ),
+    check(
+      "session_daily_checkins_cancellation_consistency_check",
+      sql`(${table.cancelledAt} is null and ${table.cancelledBy} is null and ${table.cancellationReason} is null)
+        or (${table.cancelledAt} is not null and ${table.cancelledBy} is not null and ${table.cancellationReason} is not null and btrim(${table.cancellationReason}) <> '')`,
+    ),
+  ],
+);
+
+export const luckyWheels = pgTable(
+  "lucky_wheels",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    mainSessionId: integer("main_session_id").notNull().references(() => sessions.id),
+    enabled: boolean("enabled").notNull().default(false),
+    paused: boolean("paused").notNull().default(false),
+    version: integer("version").notNull().default(1),
+    poolRevision: integer("pool_revision").notNull().default(1),
+    publishedConfiguration: jsonb("published_configuration").$type<Record<string, unknown>>(),
+    collectionInstructions: jsonb("collection_instructions").$type<{ th: string; en: string }>(),
+    collectionDeadline: timestamp("collection_deadline", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheels_event_unique").on(table.eventId),
+    uniqueIndex("lucky_wheels_event_main_session_unique").on(table.eventId, table.mainSessionId),
+    check("lucky_wheels_version_positive_check", sql`${table.version} > 0`),
+    check("lucky_wheels_pool_revision_positive_check", sql`${table.poolRevision} > 0`),
+    check(
+      "lucky_wheels_configuration_object_check",
+      sql`${table.publishedConfiguration} is null or jsonb_typeof(${table.publishedConfiguration}) = 'object'`,
+    ),
+    check(
+      "lucky_wheels_collection_instructions_object_check",
+      sql`${table.collectionInstructions} is null or jsonb_typeof(${table.collectionInstructions}) = 'object'`,
+    ),
+  ],
+);
+
+export const luckyWheelImages = pgTable(
+  "lucky_wheel_images",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    objectKey: text("object_key").notNull(),
+    publicUrl: text("public_url").notNull(),
+    mimeType: varchar("mime_type", { length: 32 }).notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    createdBy: integer("created_by").references(() => backofficeUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheel_images_object_key_unique").on(table.objectKey),
+    index("lucky_wheel_images_event_created_idx").on(table.eventId, table.createdAt),
+    check("lucky_wheel_images_dimensions_check", sql`${table.width} > 0 and ${table.height} > 0`),
+    check("lucky_wheel_images_size_check", sql`${table.sizeBytes} > 0`),
+    check("lucky_wheel_images_object_key_nonblank_check", sql`btrim(${table.objectKey}) <> ''`),
+    check("lucky_wheel_images_public_url_nonblank_check", sql`btrim(${table.publicUrl}) <> ''`),
+  ],
+);
+
+export const luckyWheelSegments = pgTable(
+  "lucky_wheel_segments",
+  {
+    id: uuid("id").primaryKey(),
+    wheelId: uuid("wheel_id").notNull().references(() => luckyWheels.id),
+    kind: varchar("kind", { length: 16 }).notNull(),
+    nameTh: varchar("name_th", { length: 160 }).notNull(),
+    nameEn: varchar("name_en", { length: 160 }).notNull(),
+    imageId: uuid("image_id").references(() => luckyWheelImages.id),
+    enabled: boolean("enabled").notNull().default(true),
+    position: integer("position").notNull(),
+    remaining: integer("remaining"),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheel_segments_wheel_position_unique").on(table.wheelId, table.position),
+    index("lucky_wheel_segments_wheel_live_idx").on(table.wheelId, table.enabled, table.position),
+    check("lucky_wheel_segments_kind_check", sql`${table.kind} in ('prize', 'no_prize')`),
+    check("lucky_wheel_segments_name_th_nonblank_check", sql`btrim(${table.nameTh}) <> ''`),
+    check("lucky_wheel_segments_name_en_nonblank_check", sql`btrim(${table.nameEn}) <> ''`),
+    check("lucky_wheel_segments_position_check", sql`${table.position} >= 0 and ${table.position} <= 255`),
+    check(
+      "lucky_wheel_segments_quantity_consistency_check",
+      sql`(${table.kind} = 'prize' and ${table.remaining} is not null and ${table.remaining} >= 0)
+        or (${table.kind} = 'no_prize' and ${table.remaining} is null)`,
+    ),
+  ],
+);
+
+export const luckyWheelSpins = pgTable(
+  "lucky_wheel_spins",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    wheelId: uuid("wheel_id").notNull().references(() => luckyWheels.id),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    userId: integer("user_id").notNull().references(() => users.id),
+    playDate: date("play_date").notNull(),
+    attendanceId: uuid("attendance_id").notNull().references(() => sessionDailyCheckins.id),
+    attendanceCheckedInAt: timestamp("attendance_checked_in_at", { withTimezone: true }).notNull(),
+    segmentId: uuid("segment_id").notNull().references(() => luckyWheelSegments.id),
+    outcomeKind: varchar("outcome_kind", { length: 16 }).notNull(),
+    awardedNameTh: varchar("awarded_name_th", { length: 160 }).notNull(),
+    awardedNameEn: varchar("awarded_name_en", { length: 160 }).notNull(),
+    awardedImageKey: text("awarded_image_key"),
+    configurationVersion: integer("configuration_version").notNull(),
+    poolRevision: integer("pool_revision").notNull(),
+    configurationSnapshot: jsonb("configuration_snapshot").$type<Record<string, unknown>>().notNull(),
+    outcomeSnapshot: jsonb("outcome_snapshot").$type<Record<string, unknown>>().notNull(),
+    idempotencyKey: uuid("idempotency_key").notNull(),
+    requestHash: char("request_hash", { length: 64 }).notNull(),
+    rewardTokenDigest: char("reward_token_digest", { length: 64 }),
+    rewardTokenEnvelope: text("reward_token_envelope"),
+    rewardCodeDigest: char("reward_code_digest", { length: 64 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheel_spins_event_user_day_unique").on(table.eventId, table.userId, table.playDate),
+    uniqueIndex("lucky_wheel_spins_event_user_request_unique").on(table.eventId, table.userId, table.idempotencyKey),
+    uniqueIndex("lucky_wheel_spins_reward_token_digest_unique")
+      .on(table.rewardTokenDigest)
+      .where(sql`${table.rewardTokenDigest} is not null`),
+    uniqueIndex("lucky_wheel_spins_reward_code_digest_unique")
+      .on(table.rewardCodeDigest)
+      .where(sql`${table.rewardCodeDigest} is not null`),
+    index("lucky_wheel_spins_event_created_idx").on(table.eventId, table.createdAt),
+    check("lucky_wheel_spins_outcome_kind_check", sql`${table.outcomeKind} in ('prize', 'no_prize')`),
+    check("lucky_wheel_spins_configuration_version_check", sql`${table.configurationVersion} > 0`),
+    check("lucky_wheel_spins_pool_revision_check", sql`${table.poolRevision} > 0`),
+    check("lucky_wheel_spins_request_hash_check", sql`${table.requestHash} ~ '^[0-9a-fA-F]{64}$'`),
+    check(
+      "lucky_wheel_spins_reward_no_prize_check",
+      sql`${table.outcomeKind} = 'prize'
+        or (${table.rewardTokenDigest} is null and ${table.rewardTokenEnvelope} is null and ${table.rewardCodeDigest} is null)`,
+    ),
+  ],
+);
+
+export const luckyWheelAuditEvents = pgTable(
+  "lucky_wheel_audit_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    wheelId: uuid("wheel_id").notNull().references(() => luckyWheels.id),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    actorBackofficeUserId: integer("actor_backoffice_user_id").notNull().references(() => backofficeUsers.id),
+    operation: varchar("operation", { length: 64 }).notNull(),
+    idempotencyKey: uuid("idempotency_key"),
+    reason: text("reason"),
+    beforeSnapshot: jsonb("before_snapshot").$type<Record<string, unknown>>(),
+    afterSnapshot: jsonb("after_snapshot").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheel_audit_events_request_unique")
+      .on(table.eventId, table.actorBackofficeUserId, table.operation, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
+    index("lucky_wheel_audit_events_wheel_created_idx").on(table.wheelId, table.createdAt),
+    check("lucky_wheel_audit_events_operation_nonblank_check", sql`btrim(${table.operation}) <> ''`),
+    check("lucky_wheel_audit_events_reason_nonblank_check", sql`${table.reason} is null or btrim(${table.reason}) <> ''`),
+  ],
+);
+
+export const luckyWheelRedemptions = pgTable(
+  "lucky_wheel_redemptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    spinId: uuid("spin_id").notNull().references(() => luckyWheelSpins.id),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    claimGeneration: integer("claim_generation").notNull().default(1),
+    status: varchar("status", { length: 16 }).notNull().default("open"),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+    redeemedBy: integer("redeemed_by").references(() => backofficeUsers.id),
+    collectionPoint: varchar("collection_point", { length: 255 }),
+    deliveredDetails: text("delivered_details"),
+    confirmationIdempotencyKey: uuid("confirmation_idempotency_key"),
+    confirmationRequestHash: char("confirmation_request_hash", { length: 64 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheel_redemptions_spin_unique").on(table.spinId),
+    uniqueIndex("lucky_wheel_redemptions_confirmation_request_unique")
+      .on(table.eventId, table.redeemedBy, table.confirmationIdempotencyKey)
+      .where(sql`${table.confirmationIdempotencyKey} is not null`),
+    index("lucky_wheel_redemptions_event_status_idx").on(table.eventId, table.status, table.createdAt),
+    check("lucky_wheel_redemptions_claim_generation_check", sql`${table.claimGeneration} > 0`),
+    check("lucky_wheel_redemptions_status_check", sql`${table.status} in ('open', 'redeemed')`),
+    check(
+      "lucky_wheel_redemptions_state_check",
+      sql`(${table.status} = 'open' and ${table.redeemedAt} is null and ${table.redeemedBy} is null)
+        or (${table.status} = 'redeemed' and ${table.redeemedAt} is not null and ${table.redeemedBy} is not null
+          and ${table.collectionPoint} is not null and btrim(${table.collectionPoint}) <> '')`,
+    ),
+    check(
+      "lucky_wheel_redemptions_request_hash_check",
+      sql`${table.confirmationRequestHash} is null or ${table.confirmationRequestHash} ~ '^[0-9a-fA-F]{64}$'`,
+    ),
+  ],
+);
+
+export const luckyWheelRedemptionConfirmations = pgTable(
+  "lucky_wheel_redemption_confirmations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    redemptionId: uuid("redemption_id").notNull().references(() => luckyWheelRedemptions.id),
+    spinId: uuid("spin_id").notNull().references(() => luckyWheelSpins.id),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    claimGeneration: integer("claim_generation").notNull(),
+    actorBackofficeUserId: integer("actor_backoffice_user_id").notNull().references(() => backofficeUsers.id),
+    idempotencyKey: uuid("idempotency_key").notNull(),
+    requestHash: char("request_hash", { length: 64 }).notNull(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }).notNull().defaultNow(),
+    collectionPoint: varchar("collection_point", { length: 255 }).notNull(),
+    deliveredDetails: text("delivered_details"),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheel_redemption_confirmations_generation_unique").on(
+      table.redemptionId,
+      table.claimGeneration,
+    ),
+    uniqueIndex("lucky_wheel_redemption_confirmations_request_unique").on(
+      table.eventId,
+      table.actorBackofficeUserId,
+      table.idempotencyKey,
+    ),
+    index("lucky_wheel_redemption_confirmations_spin_idx").on(
+      table.spinId,
+      table.claimGeneration,
+      table.confirmedAt,
+    ),
+    check("lucky_wheel_redemption_confirmations_generation_check", sql`${table.claimGeneration} > 0`),
+    check("lucky_wheel_redemption_confirmations_request_hash_check", sql`${table.requestHash} ~ '^[0-9a-fA-F]{64}$'`),
+    check("lucky_wheel_redemption_confirmations_collection_point_check", sql`btrim(${table.collectionPoint}) <> ''`),
+  ],
+);
+
+export const luckyWheelRedemptionCorrections = pgTable(
+  "lucky_wheel_redemption_corrections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    redemptionId: uuid("redemption_id").notNull().references(() => luckyWheelRedemptions.id),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    actorBackofficeUserId: integer("actor_backoffice_user_id").notNull().references(() => backofficeUsers.id),
+    fromGeneration: integer("from_generation").notNull(),
+    toGeneration: integer("to_generation").notNull(),
+    reopen: boolean("reopen").notNull(),
+    reason: text("reason").notNull(),
+    idempotencyKey: uuid("idempotency_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("lucky_wheel_redemption_corrections_request_unique").on(
+      table.eventId,
+      table.actorBackofficeUserId,
+      table.idempotencyKey,
+    ),
+    index("lucky_wheel_redemption_corrections_redemption_idx").on(table.redemptionId, table.createdAt),
+    check(
+      "lucky_wheel_redemption_corrections_generation_check",
+      sql`${table.fromGeneration} > 0 and ${table.toGeneration} > 0 and ${table.toGeneration} >= ${table.fromGeneration}`,
+    ),
+    check("lucky_wheel_redemption_corrections_reason_nonblank_check", sql`btrim(${table.reason}) <> ''`),
   ],
 );
 

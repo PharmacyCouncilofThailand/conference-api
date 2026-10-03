@@ -15,6 +15,10 @@ import { alias } from "drizzle-orm/pg-core";
 import { registrationBlock, sessionBlock } from "../../modules/session-grants/policy.js";
 import { effectiveDeadline, effectiveInvitationStatus } from "../../modules/session-grants/invitation-policy.js";
 import type { InvitationStatus } from "../../modules/session-grants/types.js";
+import {
+    AttendanceReaderError,
+    readRegistrationAttendanceHistory,
+} from "../../modules/attendance/readers.js";
 
 const registrationSessionGrantActors = alias(backofficeUsers, "registration_session_grant_actors");
 
@@ -313,6 +317,7 @@ export default async function (fastify: FastifyInstance) {
     // Get Registration Detail
     fastify.get("/:id", async (request, reply) => {
         const { id } = request.params as { id: string };
+        const { date } = request.query as { date?: string };
         const user = (request as any).user;
 
         try {
@@ -479,14 +484,40 @@ export default async function (fastify: FastifyInstance) {
                 };
             });
 
+            const attendance = await readRegistrationAttendanceHistory(db, {
+                registrationId: reg.id,
+                date,
+                actor: { id: Number(user.id), role: user.role },
+            });
+            const attendanceByRegistrationSessionId = new Map(
+                attendance.sessions.map((item) => [item.registrationSessionId, item]),
+            );
+            const sessionsWithAttendance = regSessions.map((session) => {
+                const state = attendanceByRegistrationSessionId.get(session.id);
+                return {
+                    ...session,
+                    attendanceMode: state?.mode ?? "single",
+                    selectedDayAttendance: state?.selectedDay ?? null,
+                    attendanceHistory: state?.history ?? [],
+                };
+            });
+
             return reply.send({
                 registration: {
                     ...reg,
-                    sessions: regSessions,
+                    sessions: sessionsWithAttendance,
                     invitations,
+                },
+                attendance: {
+                    serverNow: attendance.serverNow,
+                    serverDate: attendance.serverDate,
+                    selectedDate: attendance.selectedDate,
                 },
             });
         } catch (error) {
+            if (error instanceof AttendanceReaderError) {
+                return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+            }
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to fetch registration" });
         }

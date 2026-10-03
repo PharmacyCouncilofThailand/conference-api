@@ -194,6 +194,10 @@ import backofficeEventsRoutes from "./routes/backoffice/events.js";
 import backofficeSpeakersRoutes from "./routes/backoffice/speakers.js";
 import backofficeRegistrationsRoutes from "./routes/backoffice/registrations.js";
 import sessionGrantRoutes from "./modules/session-grants/routes.js";
+import {
+  luckyWheelAdminRoutes,
+  luckyWheelAttendeeRoutes,
+} from "./modules/lucky-wheel/routes.js";
 import invitationRoutes, {
   redactInvitationRequestUrl,
 } from "./modules/session-grants/invitation-routes.js";
@@ -292,6 +296,11 @@ fastify.register(quickRegistrationRoutes, { prefix: "/api/registrations" });
 fastify.register(teamRegistrationPublicRoutes, { prefix: "/api/v1/team-registrations" });
 fastify.register(teamRegistrationProviderRoutes, { prefix: "/api/v1/team-registrations" });
 
+fastify.register(async (protectedLuckyWheelRoutes) => {
+  protectedLuckyWheelRoutes.addHook("preHandler", fastify.authenticate);
+  protectedLuckyWheelRoutes.register(luckyWheelAttendeeRoutes);
+}, { prefix: "/api/lucky-wheel" });
+
 // ============================================================================
 // Protected Backoffice Routes (Auth Required)
 // ============================================================================
@@ -306,6 +315,7 @@ fastify.register(async (protectedRoutes) => {
   protectedRoutes.register(backofficeSpeakersRoutes, { prefix: "/speakers" });
   protectedRoutes.register(backofficeRegistrationsRoutes, { prefix: "/registrations" });
   protectedRoutes.register(sessionGrantRoutes, { prefix: "/session-grants" });
+  protectedRoutes.register(luckyWheelAdminRoutes, { prefix: "/lucky-wheel" });
   protectedRoutes.register(backofficeAbstractsRoutes, { prefix: "/abstracts" });
   protectedRoutes.register(backofficeAbstractIdentifiersRoutes, { prefix: "/abstract-identifiers" });
   protectedRoutes.register(backofficeCheckinsRoutes, { prefix: "/checkins" });
