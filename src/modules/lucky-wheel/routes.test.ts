@@ -28,6 +28,7 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   let stockCalls = 0;
   let pauseCalls = 0;
   let stateCalls = 0;
+  let initializeCalls = 0;
   let dayReadCalls = 0;
   let dayEditCalls = 0;
   let dayChangesCalls = 0;
@@ -86,6 +87,18 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
         },
         segments: [],
         audit: [],
+      };
+    },
+    initializeWheelFn: async (_db, actor, eventId, mainSessionId) => {
+      initializeCalls += 1;
+      assert.equal(actor.id, 7);
+      assert.equal(eventId, 3);
+      assert.equal(mainSessionId, 9);
+      return {
+        eventId,
+        wheelId: "00000000-0000-4000-8000-000000000150",
+        mainSessionId,
+        created: initializeCalls === 1,
       };
     },
     readDayWindowFn: async (_db, actor, eventId, date) => {
@@ -334,6 +347,42 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   await app.register(luckyWheelAttendeeRoutes, { prefix: "/attendee", ...options });
   await app.ready();
   t.after(async () => app.close());
+
+  for (const token of [undefined, "attendee", "disabled-admin"]) {
+    const response = await app.inject({
+      method: "PUT",
+      url: "/backoffice/events/3",
+      ...(token ? { headers: { "x-test-token": token } } : {}),
+      payload: { mainSessionId: 9 },
+    });
+    assert.equal(response.statusCode, token ? 403 : 401);
+  }
+  const invalidInitialize = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3",
+    headers: { "x-test-token": "admin" },
+    payload: { mainSessionId: 9, enabled: true },
+  });
+  assert.equal(invalidInitialize.statusCode, 400);
+  assert.equal(initializeCalls, 0);
+  const firstInitialize = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3",
+    headers: { "x-test-token": "admin" },
+    payload: { mainSessionId: 9 },
+  });
+  assert.equal(firstInitialize.statusCode, 201);
+  assert.equal(firstInitialize.json().created, true);
+  assert.equal(firstInitialize.headers["cache-control"], "no-store");
+  const repeatInitialize = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3",
+    headers: { "x-test-token": "admin" },
+    payload: { mainSessionId: 9 },
+  });
+  assert.equal(repeatInitialize.statusCode, 200);
+  assert.equal(repeatInitialize.json().created, false);
+  assert.equal(initializeCalls, 2);
 
   const attendeePublish = await app.inject({
     method: "PUT",

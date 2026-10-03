@@ -407,6 +407,67 @@ export async function readAdminWheelState(
   };
 }
 
+export async function initializeWheel(
+  database: WheelDatabase,
+  actor: WheelActor,
+  eventId: number,
+  mainSessionId: number,
+) {
+  return database.transaction(async (tx) => {
+    const txDb = tx as unknown as WheelDatabase;
+    const admin = await requireAdmin(txDb, actor, eventId);
+    const validSessions = await tx.execute(sql`
+      SELECT s.id
+      FROM events e
+      JOIN sessions s ON s.event_id = e.id
+      WHERE e.id = ${eventId}
+        AND e.event_code = 'PRIS-2026'
+        AND s.id = ${mainSessionId}
+        AND s.is_main_session = true
+        AND s.is_active = true
+        AND s.start_time < s.end_time
+      FOR SHARE OF e, s
+    `);
+    if (!(validSessions as unknown as Array<{ id: number }>)[0]) {
+      throw new WheelError(400, "INVALID_WHEEL_REQUEST", "Select the active PRIS Main Session");
+    }
+    const createdRows = await tx.execute(sql`
+      INSERT INTO lucky_wheels (event_id, main_session_id, enabled, paused)
+      VALUES (${eventId}, ${mainSessionId}, false, true)
+      ON CONFLICT (event_id) DO NOTHING
+      RETURNING id, main_session_id
+    `);
+    const created = (createdRows as unknown as Array<{ id: string; main_session_id: number }>)[0];
+    if (created) {
+      await tx.execute(sql`
+        INSERT INTO lucky_wheel_audit_events (
+          wheel_id, event_id, actor_backoffice_user_id, operation,
+          reason, before_snapshot, after_snapshot
+        ) VALUES (
+          ${created.id}, ${eventId}, ${admin.id}, 'initialize',
+          'initialize PRIS wheel', NULL,
+          ${JSON.stringify({ mainSessionId, enabled: false, paused: true, version: 1 })}::jsonb
+        )
+      `);
+      return { eventId, wheelId: created.id, mainSessionId, created: true };
+    }
+
+    const existingRows = await tx.execute(sql`
+      SELECT id, main_session_id
+      FROM lucky_wheels
+      WHERE event_id = ${eventId}
+    `);
+    const existing = (existingRows as unknown as Array<{ id: string; main_session_id: number }>)[0];
+    if (existing) {
+      if (existing.main_session_id !== mainSessionId) {
+        throw new WheelError(409, "WHEEL_UPDATED", "Wheel already uses another Main Session");
+      }
+      return { eventId, wheelId: existing.id, mainSessionId, created: false };
+    }
+    throw new WheelError(400, "INVALID_WHEEL_REQUEST", "Select the active PRIS Main Session");
+  });
+}
+
 export async function publishWheel(
   database: WheelDatabase,
   actor: WheelActor,
@@ -725,6 +786,10 @@ export async function setWheelPaused(
       throw new WheelError(409, "WHEEL_NOT_READY", "Lucky wheel has not been configured for this event");
     }
     const admin = await requireAdmin(txDb, actor, eventId);
+
+    if (!paused && (!wheel.enabled || !wheel.published_configuration)) {
+      throw new WheelError(409, "WHEEL_NOT_READY", "Publish the wheel before opening it");
+    }
 
     if (idempotencyKey) {
       const replayRows = await tx.execute(sql`

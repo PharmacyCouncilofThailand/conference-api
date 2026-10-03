@@ -5,6 +5,7 @@ import {
   attendeeSpinHistoryQuerySchema,
   dayChangesQuerySchema,
   dayWindowBodySchema,
+  initializeWheelBodySchema,
   publishWheelBodySchema,
   qrBatchBodySchema,
   qrCreditClaimBodySchema,
@@ -34,6 +35,7 @@ import {
   adjustStock,
   createSpin,
   getEligibility,
+  initializeWheel,
   publishWheel,
   readAdminSpins,
   readAdminWheelState,
@@ -68,6 +70,7 @@ export interface LuckyWheelRouteOptions {
   adjustStockFn?: typeof adjustStock;
   setWheelPausedFn?: typeof setWheelPaused;
   readAdminWheelStateFn?: typeof readAdminWheelState;
+  initializeWheelFn?: typeof initializeWheel;
   readAdminSpinsFn?: typeof readAdminSpins;
   readDayWindowFn?: typeof readDayWindow;
   editDayWindowFn?: typeof editDayWindow;
@@ -202,6 +205,7 @@ export async function luckyWheelAdminRoutes(
   const adjustStockFn = options.adjustStockFn ?? adjustStock;
   const setWheelPausedFn = options.setWheelPausedFn ?? setWheelPaused;
   const readAdminWheelStateFn = options.readAdminWheelStateFn ?? readAdminWheelState;
+  const initializeWheelFn = options.initializeWheelFn ?? initializeWheel;
   const readAdminSpinsFn = options.readAdminSpinsFn ?? readAdminSpins;
   const readDayWindowFn = options.readDayWindowFn ?? readDayWindow;
   const editDayWindowFn = options.editDayWindowFn ?? editDayWindow;
@@ -227,6 +231,29 @@ export async function luckyWheelAdminRoutes(
     reply.header("Cache-Control", "no-store");
     return payload;
   });
+
+  fastify.put(
+    "/events/:eventId",
+    { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 1024 },
+    async (request, reply) => {
+      const eventResult = eventIdSchema.safeParse((request.params as { eventId?: unknown }).eventId);
+      const bodyResult = initializeWheelBodySchema.safeParse(request.body);
+      if (!eventResult.success || !bodyResult.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(
+          database, request, reply, eventResult.data, validateAdminActorFn,
+        );
+        if (!admin) return;
+        const result = await initializeWheelFn(
+          database, admin, eventResult.data, bodyResult.data.mainSessionId,
+        );
+        return reply.status(result.created ? 201 : 200).send({ ...result, requestId: request.id });
+      } catch (error) {
+        request.log.error({ code: error instanceof WheelError ? error.code : "LUCKY_WHEEL_INITIALIZE_FAILED" });
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
 
   fastify.get(
     "/events/:eventId/days/:date",

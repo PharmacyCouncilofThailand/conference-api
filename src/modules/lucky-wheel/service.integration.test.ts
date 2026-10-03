@@ -13,6 +13,7 @@ import {
 } from "../session-grants/test-database.js";
 import {
   adjustStock,
+  initializeWheel,
   createSpin,
   getEligibility,
   publishWheel,
@@ -37,6 +38,7 @@ async function bootstrap(sql: ReturnType<typeof postgres>) {
       id serial PRIMARY KEY,
       event_id integer NOT NULL REFERENCES events(id),
       is_main_session boolean NOT NULL DEFAULT false,
+      is_active boolean NOT NULL DEFAULT true,
       start_time timestamp NOT NULL,
       end_time timestamp NOT NULL
     );
@@ -82,6 +84,100 @@ async function bootstrap(sql: ReturnType<typeof postgres>) {
     .replaceAll("--> statement-breakpoint", "");
   await sql.unsafe(creditMigration);
 }
+
+test("PRIS wheel initialization is admin-only, event-scoped and idempotent under concurrency", { timeout: 90_000 }, async (t) => {
+  const setupSql = openSessionGrantTestDatabase();
+  await bootstrap(setupSql);
+  const testUrl = validateSessionGrantTestDatabaseUrl();
+  const pool = postgres(testUrl, { max: 8, connect_timeout: 10 });
+  const database = drizzle(pool, { schema }) as WheelDatabase;
+  t.after(async () => {
+    await pool.end({ timeout: 2 });
+    await setupSql.end({ timeout: 2 });
+  });
+
+  const [admin] = await setupSql<Array<{ id: number; email: string }>>`
+    INSERT INTO backoffice_users (email, role, is_active)
+    VALUES ('wheel-init-admin@example.invalid', 'admin', true)
+    RETURNING id, email
+  `;
+  const [otherEvent] = await setupSql<Array<{ id: number }>>`
+    INSERT INTO events (event_code) VALUES ('HEALTH-HACK') RETURNING id
+  `;
+  const [event] = await setupSql<Array<{ id: number }>>`
+    INSERT INTO events (event_code) VALUES ('PRIS-2026') RETURNING id
+  `;
+  const [main] = await setupSql<Array<{ id: number }>>`
+    INSERT INTO sessions (event_id, is_main_session, start_time, end_time)
+    VALUES (${event.id}, true, '2026-10-29 02:00:00', '2026-10-30 10:00:00') RETURNING id
+  `;
+  const [otherMain] = await setupSql<Array<{ id: number }>>`
+    INSERT INTO sessions (event_id, is_main_session, start_time, end_time)
+    VALUES (${otherEvent.id}, true, '2026-10-29 02:00:00', '2026-10-30 10:00:00') RETURNING id
+  `;
+  const [workshop] = await setupSql<Array<{ id: number }>>`
+    INSERT INTO sessions (event_id, is_main_session, start_time, end_time)
+    VALUES (${event.id}, false, '2026-10-29 02:00:00', '2026-10-29 10:00:00') RETURNING id
+  `;
+  const [secondMain] = await setupSql<Array<{ id: number }>>`
+    INSERT INTO sessions (event_id, is_main_session, start_time, end_time)
+    VALUES (${event.id}, true, '2026-10-29 02:00:00', '2026-10-30 10:00:00') RETURNING id
+  `;
+  const [inactive] = await setupSql<Array<{ id: number }>>`
+    INSERT INTO sessions (event_id, is_main_session, is_active, start_time, end_time)
+    VALUES (${event.id}, true, false, '2026-10-29 02:00:00', '2026-10-29 10:00:00') RETURNING id
+  `;
+  const actor = { id: admin.id, role: "admin", email: admin.email };
+  await setupSql`
+    INSERT INTO lucky_wheels (event_id, main_session_id, enabled, paused)
+    VALUES (${otherEvent.id}, ${otherMain.id}, false, true)
+  `;
+  for (const sessionId of [otherMain.id, workshop.id, inactive.id]) {
+    await assert.rejects(
+      initializeWheel(database, actor, event.id, sessionId),
+      (error: unknown) => error instanceof WheelError && error.code === "INVALID_WHEEL_REQUEST",
+    );
+  }
+  await assert.rejects(
+    initializeWheel(database, actor, otherEvent.id, otherMain.id),
+    (error: unknown) => error instanceof WheelError && error.code === "INVALID_WHEEL_REQUEST",
+  );
+  await assert.rejects(
+    initializeWheel(database, { ...actor, role: "general" }, event.id, main.id),
+    (error: unknown) => error instanceof WheelError && error.code === "ADMIN_REQUIRED",
+  );
+
+  const results = await Promise.all([
+    initializeWheel(database, actor, event.id, main.id),
+    initializeWheel(database, actor, event.id, main.id),
+  ]);
+  assert.deepEqual(results.map((result) => result.created).sort(), [false, true]);
+  assert.equal(results[0].wheelId, results[1].wheelId);
+  const replay = await initializeWheel(database, actor, event.id, main.id);
+  assert.equal(replay.created, false);
+  await assert.rejects(
+    initializeWheel(database, actor, event.id, secondMain.id),
+    (error: unknown) => error instanceof WheelError && error.code === "WHEEL_UPDATED",
+  );
+  const [state] = await setupSql<Array<{ count: number; enabled: boolean; paused: boolean; config: unknown }>>`
+    SELECT count(*)::int AS count, bool_or(enabled) AS enabled,
+      bool_and(paused) AS paused, max(published_configuration::text) AS config
+    FROM lucky_wheels WHERE event_id = ${event.id}
+  `;
+  assert.equal(state.count, 1);
+  assert.equal(state.enabled, false);
+  assert.equal(state.paused, true);
+  assert.equal(state.config, null);
+  await assert.rejects(
+    setWheelPaused(database, actor, event.id, false, "open early"),
+    (error: unknown) => error instanceof WheelError && error.code === "WHEEL_NOT_READY",
+  );
+  const [audit] = await setupSql<Array<{ count: number }>>`
+    SELECT count(*)::int AS count FROM lucky_wheel_audit_events
+    WHERE event_id = ${event.id} AND operation = 'initialize'
+  `;
+  assert.equal(audit.count, 1);
+});
 
 test(
   "lucky wheel service serializes publication, stock, pause and credit spending races",

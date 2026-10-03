@@ -50,6 +50,10 @@ export const publishWheelBodySchema = z.object({
   reason: boundedText(500).optional(),
 }).strict();
 
+export const initializeWheelBodySchema = z.object({
+  mainSessionId: z.number().int().positive(),
+}).strict();
+
 export const stockAdjustmentBodySchema = z.object({
   segmentId: uuidKey,
   delta: z.number().int().min(-1_000_000).max(1_000_000).refine((value) => value !== 0, {
