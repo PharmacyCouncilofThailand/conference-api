@@ -52,6 +52,25 @@ export type SpinDto = {
   outcomeSnapshot: unknown;
 };
 
+export type AdminSpinQuery = {
+  date?: string;
+  segmentId?: string;
+  claimStatus?: "none" | "open" | "redeemed";
+  page?: number;
+  pageSize?: number;
+};
+
+export type AdminSpinDto = SpinDto & {
+  claim: null | {
+    generation: number;
+    status: "open" | "redeemed";
+    redeemedAt: string | null;
+    redeemedBy: number | null;
+    collectionPoint: string | null;
+    deliveredDetails: string | null;
+  };
+};
+
 type WheelRow = {
   id: string;
   event_id: number;
@@ -366,6 +385,125 @@ async function requireAdmin(
   return admin;
 }
 
+export async function readAdminWheelState(
+  database: WheelDatabase,
+  actor: WheelActor,
+  eventId: number,
+) {
+  const admin = await requireAdmin(database, actor, eventId);
+  const wheel = await wheelRow(database, eventId, false);
+  if (!wheel) {
+    throw new WheelError(404, "WHEEL_NOT_FOUND", "Lucky wheel was not found for this event");
+  }
+
+  const segmentResult = await database.execute(sql`
+    SELECT
+      seg.id, seg.kind, seg.name_th, seg.name_en, seg.image_id,
+      img.object_key AS image_key, img.public_url AS image_url,
+      seg.enabled, seg.position, seg.remaining, seg.retired_at,
+      (
+        SELECT count(*)::int
+        FROM lucky_wheel_spins spin
+        WHERE spin.segment_id = seg.id
+          AND spin.event_id = ${eventId}
+          AND spin.outcome_kind = 'prize'
+      ) AS allocated_count,
+      (
+        SELECT count(*)::int
+        FROM lucky_wheel_redemptions redemption
+        JOIN lucky_wheel_spins spin
+          ON spin.id = redemption.spin_id
+          AND spin.event_id = redemption.event_id
+        WHERE spin.segment_id = seg.id
+          AND spin.event_id = ${eventId}
+          AND redemption.status = 'redeemed'
+      ) AS collected_count
+    FROM lucky_wheel_segments seg
+    LEFT JOIN lucky_wheel_images img
+      ON img.id = seg.image_id
+      AND img.deleted_at IS NULL
+    WHERE seg.wheel_id = ${wheel.id}
+      AND seg.retired_at IS NULL
+    ORDER BY seg.position, seg.id
+  `);
+  const segments = segmentResult as unknown as Array<
+    SegmentRow & {
+      image_url: string | null;
+      allocated_count: number;
+      collected_count: number;
+    }
+  >;
+
+  const auditResult = await database.execute(sql`
+    SELECT
+      a.id::text AS id,
+      a.operation,
+      a.reason,
+      a.actor_backoffice_user_id,
+      bo.email AS actor_email,
+      a.before_snapshot,
+      a.after_snapshot,
+      a.created_at
+    FROM lucky_wheel_audit_events a
+    LEFT JOIN backoffice_users bo ON bo.id = a.actor_backoffice_user_id
+    WHERE a.event_id = ${eventId}
+      AND a.wheel_id = ${wheel.id}
+    ORDER BY a.created_at DESC, a.id DESC
+    LIMIT 100
+  `);
+  const audit = auditResult as unknown as Array<{
+    id: string;
+    operation: string;
+    reason: string | null;
+    actor_backoffice_user_id: number;
+    actor_email: string | null;
+    before_snapshot: unknown;
+    after_snapshot: unknown;
+    created_at: Date | string;
+  }>;
+
+  return {
+    eventId,
+    actorId: admin.id,
+    wheel: {
+      id: wheel.id,
+      mainSessionId: wheel.main_session_id,
+      enabled: wheel.enabled,
+      paused: wheel.paused,
+      version: wheel.version,
+      poolRevision: wheel.pool_revision,
+      configuration: wheel.published_configuration,
+      collectionInstructions: wheel.collection_instructions,
+      collectionDeadline: wheel.collection_deadline
+        ? asDate(wheel.collection_deadline).toISOString()
+        : null,
+    },
+    segments: segments.map((segment) => ({
+      id: segment.id,
+      kind: segment.kind,
+      name: { th: segment.name_th, en: segment.name_en },
+      imageId: segment.image_id,
+      imageKey: segment.image_key,
+      imageUrl: segment.image_url,
+      enabled: segment.enabled,
+      position: segment.position,
+      remaining: segment.remaining,
+      allocated: segment.allocated_count,
+      collected: segment.collected_count,
+    })),
+    audit: audit.map((entry) => ({
+      id: entry.id,
+      operation: entry.operation,
+      reason: entry.reason,
+      actorId: entry.actor_backoffice_user_id,
+      actorEmail: entry.actor_email,
+      before: entry.before_snapshot,
+      after: entry.after_snapshot,
+      createdAt: asDate(entry.created_at).toISOString(),
+    })),
+  };
+}
+
 export async function publishWheel(
   database: WheelDatabase,
   actor: WheelActor,
@@ -439,7 +577,7 @@ export async function publishWheel(
           WHERE id = ${imageId}
             AND event_id = ${eventId}
             AND deleted_at IS NULL
-          LIMIT 1
+          FOR SHARE
         `);
         if (!(rows as unknown as Array<{ id: string }>)[0]) {
           throw new WheelError(400, "INVALID_WHEEL_REQUEST", "Wheel image does not belong to this event");
@@ -1149,18 +1287,98 @@ export async function readAdminSpins(
   database: WheelDatabase,
   actor: WheelActor,
   eventId: number,
+  query: AdminSpinQuery = {},
 ) {
   const admin = await requireAdmin(database, actor, eventId);
-  const rows = await database.execute(sql`
-    SELECT *
-    FROM lucky_wheel_spins
-    WHERE event_id = ${eventId}
-    ORDER BY created_at DESC, id DESC
-    LIMIT 100
+  const date = query.date ?? null;
+  const segmentId = query.segmentId ?? null;
+  const claimStatus = query.claimStatus ?? null;
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 20;
+  const offset = (page - 1) * pageSize;
+
+  const countRows = await database.execute(sql`
+    SELECT count(*)::int AS total
+    FROM lucky_wheel_spins s
+    LEFT JOIN lucky_wheel_redemptions r
+      ON r.spin_id = s.id
+      AND r.event_id = s.event_id
+    WHERE s.event_id = ${eventId}
+      AND (${date}::date IS NULL OR s.play_date = ${date}::date)
+      AND (${segmentId}::uuid IS NULL OR s.segment_id = ${segmentId}::uuid)
+      AND (
+        ${claimStatus}::text IS NULL
+        OR CASE
+          WHEN s.outcome_kind = 'no_prize' THEN 'none'
+          WHEN r.id IS NULL THEN 'none'
+          ELSE r.status
+        END = ${claimStatus}
+      )
   `);
+  const total = Number(
+    (countRows as unknown as Array<{ total: number }>)[0]?.total ?? 0,
+  );
+
+  const rows = await database.execute(sql`
+    SELECT
+      s.*,
+      r.id AS redemption_id,
+      r.claim_generation,
+      r.status AS redemption_status,
+      r.redeemed_at,
+      r.redeemed_by,
+      r.collection_point,
+      r.delivered_details
+    FROM lucky_wheel_spins s
+    LEFT JOIN lucky_wheel_redemptions r
+      ON r.spin_id = s.id
+      AND r.event_id = s.event_id
+    WHERE s.event_id = ${eventId}
+      AND (${date}::date IS NULL OR s.play_date = ${date}::date)
+      AND (${segmentId}::uuid IS NULL OR s.segment_id = ${segmentId}::uuid)
+      AND (
+        ${claimStatus}::text IS NULL
+        OR CASE
+          WHEN s.outcome_kind = 'no_prize' THEN 'none'
+          WHEN r.id IS NULL THEN 'none'
+          ELSE r.status
+        END = ${claimStatus}
+      )
+    ORDER BY s.created_at DESC, s.id DESC
+    LIMIT ${pageSize}
+    OFFSET ${offset}
+  `);
+  const mapped = rows as unknown as Array<SpinRow & {
+    redemption_id: string | null;
+    claim_generation: number | null;
+    redemption_status: "open" | "redeemed" | null;
+    redeemed_at: Date | string | null;
+    redeemed_by: number | null;
+    collection_point: string | null;
+    delivered_details: string | null;
+  }>;
+
   return {
     eventId,
     actorId: admin.id,
-    spins: (rows as unknown as SpinRow[]).map(toSpinDto),
+    spins: mapped.map((row): AdminSpinDto => ({
+      ...toSpinDto(row),
+      claim: row.redemption_id && row.claim_generation && row.redemption_status
+        ? {
+            generation: row.claim_generation,
+            status: row.redemption_status,
+            redeemedAt: row.redeemed_at ? asDate(row.redeemed_at).toISOString() : null,
+            redeemedBy: row.redeemed_by,
+            collectionPoint: row.collection_point,
+            deliveredDetails: row.delivered_details,
+          }
+        : null,
+    })),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: total === 0 ? 0 : Math.ceil(total / pageSize),
+    },
   };
 }

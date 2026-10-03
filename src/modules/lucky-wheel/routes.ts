@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
+  adminSpinQuerySchema,
+  attendeeSpinHistoryQuerySchema,
   publishWheelBodySchema,
   redemptionCorrectionBodySchema,
   redemptionInputSchema,
@@ -15,6 +17,7 @@ import {
   getEligibility,
   publishWheel,
   readAdminSpins,
+  readAdminWheelState,
   setWheelPaused,
   validateAdminActor,
   WheelError,
@@ -26,8 +29,15 @@ import {
   correctRedemption,
   lookupReward,
   readOwnedSpin,
+  readOwnedSpins,
   RewardError,
 } from "./rewards.js";
+import {
+  MAX_WHEEL_IMAGE_BYTES,
+  uploadWheelImage,
+  WheelImageError,
+  type WheelImageContext,
+} from "./images.js";
 
 const eventIdSchema = z.coerce.number().int().positive();
 const spinIdSchema = z.string().uuid();
@@ -38,13 +48,17 @@ export interface LuckyWheelRouteOptions {
   publishWheelFn?: typeof publishWheel;
   adjustStockFn?: typeof adjustStock;
   setWheelPausedFn?: typeof setWheelPaused;
+  readAdminWheelStateFn?: typeof readAdminWheelState;
   readAdminSpinsFn?: typeof readAdminSpins;
   getEligibilityFn?: typeof getEligibility;
   createSpinFn?: typeof createSpin;
+  readOwnedSpinsFn?: typeof readOwnedSpins;
   readOwnedSpinFn?: typeof readOwnedSpin;
   lookupRewardFn?: typeof lookupReward;
   confirmRedemptionFn?: typeof confirmRedemption;
   correctRedemptionFn?: typeof correctRedemption;
+  uploadWheelImageFn?: typeof uploadWheelImage;
+  imageContext?: WheelImageContext;
 }
 
 function claimedActor(request: FastifyRequest): WheelActor | null {
@@ -78,7 +92,11 @@ function accountRateKey(request: FastifyRequest): string {
 }
 
 function sendWheelError(reply: FastifyReply, error: unknown, requestId: string) {
-  if (error instanceof WheelError || error instanceof RewardError) {
+  if (
+    error instanceof WheelError ||
+    error instanceof RewardError ||
+    error instanceof WheelImageError
+  ) {
     return reply.status(error.statusCode).send({
       success: false,
       code: error.code,
@@ -153,10 +171,12 @@ export async function luckyWheelAdminRoutes(
   const publishWheelFn = options.publishWheelFn ?? publishWheel;
   const adjustStockFn = options.adjustStockFn ?? adjustStock;
   const setWheelPausedFn = options.setWheelPausedFn ?? setWheelPaused;
+  const readAdminWheelStateFn = options.readAdminWheelStateFn ?? readAdminWheelState;
   const readAdminSpinsFn = options.readAdminSpinsFn ?? readAdminSpins;
   const lookupRewardFn = options.lookupRewardFn ?? lookupReward;
   const confirmRedemptionFn = options.confirmRedemptionFn ?? confirmRedemption;
   const correctRedemptionFn = options.correctRedemptionFn ?? correctRedemption;
+  const uploadWheelImageFn = options.uploadWheelImageFn ?? uploadWheelImage;
   const adminRateLimit = fastify.rateLimit({
     max: 120,
     timeWindow: "1 minute",
@@ -168,6 +188,41 @@ export async function luckyWheelAdminRoutes(
     reply.header("Cache-Control", "no-store");
     return payload;
   });
+
+  fastify.get(
+    "/events/:eventId",
+    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    async (request, reply) => {
+      const eventResult = eventIdSchema.safeParse(
+        (request.params as { eventId?: unknown }).eventId,
+      );
+      if (!eventResult.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(
+          database,
+          request,
+          reply,
+          eventResult.data,
+          validateAdminActorFn,
+        );
+        if (!admin) return;
+        const result = await readAdminWheelStateFn(
+          database,
+          admin,
+          eventResult.data,
+        );
+        return reply.send({ ...result, requestId: request.id });
+      } catch (error) {
+        request.log.error({
+          code:
+            error instanceof WheelError
+              ? error.code
+              : "LUCKY_WHEEL_ADMIN_STATE_FAILED",
+        });
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
 
   fastify.put(
     "/events/:eventId/publication",
@@ -279,8 +334,16 @@ export async function luckyWheelAdminRoutes(
     "/events/:eventId/spins",
     { config: { rateLimit: false }, preHandler: adminRateLimit },
     async (request, reply) => {
-      const eventResult = eventIdSchema.safeParse((request.params as { eventId?: unknown }).eventId);
-      if (!eventResult.success) return invalid(reply, request.id);
+      const eventResult = eventIdSchema.safeParse(
+        (request.params as { eventId?: unknown }).eventId,
+      );
+      const queryResult = adminSpinQuerySchema.safeParse(request.query);
+      if (!eventResult.success || !queryResult.success) {
+        return invalid(reply, request.id, {
+          eventId: eventResult.success ? undefined : eventResult.error.flatten(),
+          query: queryResult.success ? undefined : queryResult.error.flatten(),
+        });
+      }
       try {
         const admin = await requireAdminFromRequest(
           database,
@@ -290,10 +353,123 @@ export async function luckyWheelAdminRoutes(
           validateAdminActorFn,
         );
         if (!admin) return;
-        const result = await readAdminSpinsFn(database, admin, eventResult.data);
+        const result = await readAdminSpinsFn(
+          database,
+          admin,
+          eventResult.data,
+          queryResult.data,
+        );
         return reply.send({ ...result, requestId: request.id });
       } catch (error) {
-        request.log.error({ code: error instanceof WheelError ? error.code : "LUCKY_WHEEL_HISTORY_FAILED" });
+        request.log.error({
+          code:
+            error instanceof WheelError
+              ? error.code
+              : "LUCKY_WHEEL_HISTORY_FAILED",
+        });
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.post(
+    "/events/:eventId/images",
+    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    async (request, reply) => {
+      const eventResult = eventIdSchema.safeParse(
+        (request.params as { eventId?: unknown }).eventId,
+      );
+      if (!eventResult.success) return invalid(reply, request.id);
+
+      try {
+        const admin = await requireAdminFromRequest(
+          database,
+          request,
+          reply,
+          eventResult.data,
+          validateAdminActorFn,
+        );
+        if (!admin) return;
+
+        const data = await request.file({
+          limits: {
+            fileSize: MAX_WHEEL_IMAGE_BYTES,
+            files: 1,
+            fields: 0,
+            parts: 1,
+          },
+        });
+        if (!data) {
+          throw new WheelImageError(400, "IMAGE_INVALID", "Image file is required");
+        }
+
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of data.file) {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          size += buffer.length;
+          if (size > MAX_WHEEL_IMAGE_BYTES) {
+            throw new WheelImageError(
+              400,
+              "IMAGE_TOO_LARGE",
+              "Lucky Wheel image must be 5 MiB or smaller",
+            );
+          }
+          chunks.push(buffer);
+        }
+        if (data.file.truncated) {
+          throw new WheelImageError(
+            400,
+            "IMAGE_TOO_LARGE",
+            "Lucky Wheel image must be 5 MiB or smaller",
+          );
+        }
+
+        const context: WheelImageContext = {
+          ...options.imageContext,
+          database,
+          logger:
+            options.imageContext?.logger ??
+            {
+              warn(details, message) {
+                request.log.warn(details, message);
+              },
+            },
+        };
+        const result = await uploadWheelImageFn(
+          admin,
+          eventResult.data,
+          {
+            buffer: Buffer.concat(chunks),
+            filename: data.filename,
+            mimetype: data.mimetype,
+          },
+          context,
+        );
+        return reply.status(201).send({ ...result, requestId: request.id });
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          (error as { code?: unknown }).code === "FST_REQ_FILE_TOO_LARGE"
+        ) {
+          return sendWheelError(
+            reply,
+            new WheelImageError(
+              400,
+              "IMAGE_TOO_LARGE",
+              "Lucky Wheel image must be 5 MiB or smaller",
+            ),
+            request.id,
+          );
+        }
+        request.log.error({
+          code:
+            error instanceof WheelImageError
+              ? error.code
+              : "LUCKY_WHEEL_IMAGE_UPLOAD_FAILED",
+        });
         return sendWheelError(reply, error, request.id);
       }
     },
@@ -413,6 +589,7 @@ export async function luckyWheelAttendeeRoutes(
   const database = options.database ?? (await import("../../database/index.js")).db;
   const getEligibilityFn = options.getEligibilityFn ?? getEligibility;
   const createSpinFn = options.createSpinFn ?? createSpin;
+  const readOwnedSpinsFn = options.readOwnedSpinsFn ?? readOwnedSpins;
   const readOwnedSpinFn = options.readOwnedSpinFn ?? readOwnedSpin;
   const attendeeRateLimit = fastify.rateLimit({
     max: 30,
@@ -455,6 +632,58 @@ export async function luckyWheelAttendeeRoutes(
         return reply.send({ ...result, requestId: request.id });
       } catch (error) {
         request.log.error({ code: error instanceof WheelError ? error.code : "LUCKY_WHEEL_ELIGIBILITY_FAILED" });
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.get(
+    "/events/:eventId/spins",
+    { config: { rateLimit: false }, preHandler: attendeeRateLimit },
+    async (request, reply) => {
+      const eventResult = eventIdSchema.safeParse(
+        (request.params as { eventId?: unknown }).eventId,
+      );
+      const queryResult = attendeeSpinHistoryQuerySchema.safeParse(request.query);
+      const claimed = claimedActor(request);
+      if (!claimed) {
+        return reply.status(401).send({
+          success: false,
+          code: "AUTH_REQUIRED",
+          error: "Authentication required",
+          requestId: request.id,
+        });
+      }
+      const actor = claimedAttendee(request);
+      if (!actor) {
+        return reply.status(403).send({
+          success: false,
+          code: "ACCOUNT_UNAVAILABLE",
+          error: "Attendee account required",
+          requestId: request.id,
+        });
+      }
+      if (!eventResult.success || !queryResult.success) {
+        return invalid(reply, request.id, {
+          eventId: eventResult.success ? undefined : eventResult.error.flatten(),
+          query: queryResult.success ? undefined : queryResult.error.flatten(),
+        });
+      }
+      try {
+        const result = await readOwnedSpinsFn(
+          database,
+          actor.id,
+          eventResult.data,
+          queryResult.data,
+        );
+        return reply.send({ ...result, requestId: request.id });
+      } catch (error) {
+        request.log.error({
+          code:
+            error instanceof RewardError
+              ? error.code
+              : "LUCKY_WHEEL_OWN_HISTORY_FAILED",
+        });
         return sendWheelError(reply, error, request.id);
       }
     },

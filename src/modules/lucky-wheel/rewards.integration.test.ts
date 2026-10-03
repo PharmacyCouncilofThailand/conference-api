@@ -22,6 +22,7 @@ import {
   correctRedemption,
   lookupReward,
   readOwnedSpin,
+  readOwnedSpins,
   RewardError,
 } from "./rewards.js";
 
@@ -447,6 +448,99 @@ test(
     const noPrizeOwned = await readOwnedSpin(database, noPrizeOwner.userId, event.id, noPrizeSpinId);
     assert.equal(noPrizeOwned.rewardProof, null);
     assert.equal(noPrizeOwned.claimGeneration, null);
+
+    for (const [offsetDays, offsetHours] of [[1, 2], [2, 1]] as const) {
+      await setupSql`
+        INSERT INTO lucky_wheel_spins (
+          id, wheel_id, event_id, user_id, play_date,
+          attendance_id, attendance_checked_in_at,
+          segment_id, outcome_kind,
+          awarded_name_th, awarded_name_en,
+          configuration_version, pool_revision,
+          configuration_snapshot, outcome_snapshot,
+          idempotency_key, request_hash,
+          reward_token_digest, reward_token_envelope, reward_code_digest,
+          created_at
+        )
+        SELECT
+          ${randomUUID()}, w.id, ${event.id}, ${owner.userId},
+          (${day}::date - ${offsetDays}::int),
+          ${owner.attendanceId}, clock_timestamp() - (${offsetHours}::text || ' hours')::interval,
+          ${noPrizeId}, 'no_prize',
+          'ไม่ได้รับรางวัล', 'No prize',
+          w.version, w.pool_revision,
+          '{}'::jsonb, '{}'::jsonb,
+          ${randomUUID()}, ${"d".repeat(64)},
+          NULL, NULL, NULL,
+          clock_timestamp() - (${offsetHours}::text || ' hours')::interval
+        FROM lucky_wheels w
+        WHERE w.event_id = ${event.id}
+      `;
+    }
+
+    const ownerHistoryPageOne = await readOwnedSpins(
+      database,
+      owner.userId,
+      event.id,
+      { page: 1, pageSize: 2 },
+    );
+    assert.deepEqual(ownerHistoryPageOne.pagination, {
+      page: 1,
+      pageSize: 2,
+      total: 3,
+      totalPages: 2,
+    });
+    assert.equal(ownerHistoryPageOne.items.length, 2);
+    const ownerHistoryPageTwo = await readOwnedSpins(
+      database,
+      owner.userId,
+      event.id,
+      { page: 2, pageSize: 2 },
+    );
+    assert.equal(ownerHistoryPageTwo.items.length, 1);
+    const ownerHistory = [
+      ...ownerHistoryPageOne.items,
+      ...ownerHistoryPageTwo.items,
+    ];
+    assert.deepEqual(
+      ownerHistory.map((item) => item.outcomeKind).sort(),
+      ["no_prize", "no_prize", "prize"],
+    );
+    const historyPrize = ownerHistory.find((item) => item.outcomeKind === "prize");
+    assert.ok(historyPrize);
+    assert.equal(historyPrize.status, "redeemed");
+    assert.equal(historyPrize.claimGeneration, 2);
+    assert.equal(historyPrize.collectionPoint, "Activity desk");
+    for (const historyNoPrize of ownerHistory.filter((item) => item.outcomeKind === "no_prize")) {
+      assert.equal(historyNoPrize.status, null);
+      assert.equal(historyNoPrize.claimGeneration, null);
+    }
+    for (const item of ownerHistory as Array<Record<string, unknown>>) {
+      assert.equal("rewardProof" in item, false);
+      assert.equal("qrPayload" in item, false);
+      assert.equal("displayCode" in item, false);
+      assert.equal("reward_token_digest" in item, false);
+      assert.equal("reward_code_digest" in item, false);
+    }
+
+    const otherOwnerHistory = await readOwnedSpins(
+      database,
+      noPrizeOwner.userId,
+      event.id,
+      { page: 1, pageSize: 20 },
+    );
+    assert.equal(otherOwnerHistory.pagination.total, 1);
+    assert.equal(otherOwnerHistory.items[0].spinId, noPrizeSpinId);
+    assert.equal(otherOwnerHistory.items[0].outcomeKind, "no_prize");
+
+    const crossEventHistory = await readOwnedSpins(
+      database,
+      owner.userId,
+      otherEvent.id,
+      { page: 1, pageSize: 20 },
+    );
+    assert.equal(crossEventHistory.pagination.total, 0);
+    assert.deepEqual(crossEventHistory.items, []);
 
     const invalidOwner = await createAttendee(setupSql, event.id, mainSession.id, day, "c");
     await assert.rejects(

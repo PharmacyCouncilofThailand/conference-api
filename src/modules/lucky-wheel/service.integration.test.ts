@@ -17,6 +17,7 @@ import {
   getEligibility,
   publishWheel,
   readAdminSpins,
+  readAdminWheelState,
   setWheelPaused,
   validateAdminActor,
   WheelError,
@@ -542,8 +543,88 @@ test(
       (error: unknown) => error instanceof WheelError && error.code === "CHECKIN_REQUIRED",
     );
 
-    const history = await readAdminSpins(database, claimedAdmin, event.id);
-    assert.equal(history.spins.length, 100, "admin history endpoint is intentionally bounded to 100 rows");
+    const state = await readAdminWheelState(database, claimedAdmin, event.id);
+    assert.equal(state.wheel.version, 3);
+    assert.equal(state.wheel.poolRevision, 4);
+    assert.equal(state.wheel.paused, false);
+    assert.equal(state.segments.length, 1);
+    assert.equal(state.segments[0].id, prizeId);
+    assert.equal(state.segments[0].remaining, 25);
+    assert.equal(state.segments[0].allocated, 101);
+    assert.equal(state.segments[0].collected, 0);
+    assert.ok(state.audit.length >= 8);
+    assert.ok(state.audit.some((entry) => entry.operation === "stock_adjust"));
+
+    const [redeemedSpin] = await setupSql<Array<{ spin_id: string }>>`
+      SELECT r.spin_id
+      FROM lucky_wheel_redemptions r
+      WHERE r.event_id = ${event.id}
+      ORDER BY r.created_at, r.id
+      LIMIT 1
+    `;
+    await setupSql`
+      UPDATE lucky_wheel_redemptions
+      SET status = 'redeemed',
+          redeemed_at = clock_timestamp(),
+          redeemed_by = ${admin.id},
+          collection_point = 'Activity desk',
+          delivered_details = 'Size L',
+          updated_at = clock_timestamp()
+      WHERE spin_id = ${redeemedSpin.spin_id}
+    `;
+
+    const firstHistoryPage = await readAdminSpins(database, claimedAdmin, event.id);
+    assert.equal(firstHistoryPage.spins.length, 20);
+    assert.deepEqual(firstHistoryPage.pagination, {
+      page: 1,
+      pageSize: 20,
+      total: 101,
+      totalPages: 6,
+    });
+
+    const lastHistoryPage = await readAdminSpins(database, claimedAdmin, event.id, {
+      page: 6,
+      pageSize: 20,
+    });
+    assert.equal(lastHistoryPage.spins.length, 1);
+
+    const dayHistory = await readAdminSpins(database, claimedAdmin, event.id, {
+      date: day,
+      page: 1,
+      pageSize: 100,
+    });
+    assert.equal(dayHistory.pagination.total, 101);
+
+    const prizeHistory = await readAdminSpins(database, claimedAdmin, event.id, {
+      segmentId: prizeId,
+      page: 1,
+      pageSize: 100,
+    });
+    assert.equal(prizeHistory.pagination.total, 101);
+
+    const redeemedHistory = await readAdminSpins(database, claimedAdmin, event.id, {
+      claimStatus: "redeemed",
+      page: 1,
+      pageSize: 20,
+    });
+    assert.equal(redeemedHistory.pagination.total, 1);
+    assert.equal(redeemedHistory.spins[0].id, redeemedSpin.spin_id);
+    assert.equal(redeemedHistory.spins[0].claim?.status, "redeemed");
+    assert.equal(redeemedHistory.spins[0].claim?.collectionPoint, "Activity desk");
+
+    const openHistory = await readAdminSpins(database, claimedAdmin, event.id, {
+      claimStatus: "open",
+      page: 1,
+      pageSize: 100,
+    });
+    assert.equal(openHistory.pagination.total, 100);
+
+    const noClaimHistory = await readAdminSpins(database, claimedAdmin, event.id, {
+      claimStatus: "none",
+      page: 1,
+      pageSize: 20,
+    });
+    assert.equal(noClaimHistory.pagination.total, 0);
 
     await setupSql`
       UPDATE sessions

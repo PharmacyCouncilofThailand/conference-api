@@ -72,6 +72,27 @@ export const spinInputSchema = z.object({
   idempotencyKey: uuidKey,
 }).strict();
 
+export const wheelImageUploadResponseSchema = z.object({
+  imageId: uuidKey,
+  imageKey: boundedText(512),
+  url: z.string().url(),
+  width: z.number().int().positive().max(1600),
+  height: z.number().int().positive().max(1600),
+}).strict();
+
+export const adminSpinQuerySchema = z.object({
+  date: z.string().date().optional(),
+  segmentId: uuidKey.optional(),
+  claimStatus: z.enum(["none", "open", "redeemed"]).optional(),
+  page: z.coerce.number().int().positive().max(100_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+}).strict();
+
+export const attendeeSpinHistoryQuerySchema = z.object({
+  page: z.coerce.number().int().positive().max(100_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+}).strict();
+
 export const rewardLookupBodySchema = z.object({
   credential: boundedText(256),
 }).strict();

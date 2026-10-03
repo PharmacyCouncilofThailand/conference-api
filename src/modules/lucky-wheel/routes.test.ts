@@ -27,9 +27,13 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   let publishCalls = 0;
   let stockCalls = 0;
   let pauseCalls = 0;
+  let stateCalls = 0;
   let historyCalls = 0;
+  let lastHistoryQuery: unknown = null;
   let eligibilityCalls = 0;
   let spinCalls = 0;
+  let ownHistoryCalls = 0;
+  let lastOwnHistory: { userId: number; eventId: number; page: number; pageSize: number } | null = null;
   let ownSpinCalls = 0;
   let lookupCalls = 0;
   let confirmCalls = 0;
@@ -59,9 +63,41 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
       pauseCalls += 1;
       return { eventId, paused, reason, idempotencyKey: idempotencyKey ?? null, actorId: actor.id, replayed: false };
     },
-    readAdminSpinsFn: async (_db, actor, eventId) => {
+    readAdminWheelStateFn: async (_db, actor, eventId) => {
+      stateCalls += 1;
+      return {
+        eventId,
+        actorId: actor.id,
+        wheel: {
+          id: "00000000-0000-4000-8000-000000000150",
+          mainSessionId: 9,
+          enabled: true,
+          paused: false,
+          version: 2,
+          poolRevision: 3,
+          configuration,
+          collectionInstructions: configuration.collectionInstructions,
+          collectionDeadline: configuration.collectionDeadline,
+        },
+        segments: [],
+        audit: [],
+      };
+    },
+    readAdminSpinsFn: async (_db, actor, eventId, query) => {
       historyCalls += 1;
-      return { eventId, actorId: actor.id, spins: [] };
+      const parsedQuery = query ?? {};
+      lastHistoryQuery = parsedQuery;
+      return {
+        eventId,
+        actorId: actor.id,
+        spins: [],
+        pagination: {
+          page: parsedQuery.page ?? 1,
+          pageSize: parsedQuery.pageSize ?? 20,
+          total: 0,
+          totalPages: 0,
+        },
+      };
     },
     getEligibilityFn: async (_db, actor, eventId) => {
       eligibilityCalls += 1;
@@ -102,6 +138,43 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
           createdAt: "2026-10-29T04:00:00.000Z",
           configurationSnapshot: configuration,
           outcomeSnapshot: { segmentId: configuration.segments[0].id },
+        },
+      };
+    },
+    readOwnedSpinsFn: async (_db, userId, eventId, query) => {
+      ownHistoryCalls += 1;
+      const parsedQuery = query ?? {};
+      lastOwnHistory = {
+        userId,
+        eventId,
+        page: parsedQuery.page ?? 1,
+        pageSize: parsedQuery.pageSize ?? 20,
+      };
+      return {
+        eventId,
+        items: [{
+          spinId: "00000000-0000-4000-8000-000000000102",
+          eventId,
+          outcomeKind: "prize" as const,
+          prize: {
+            name: { th: "ปากกา", en: "Pen" },
+            imageKey: null,
+            awardedAt: "2026-10-29T04:00:00.000Z",
+          },
+          claimGeneration: 1,
+          status: "open" as const,
+          redeemedAt: null,
+          redeemedBy: null,
+          collectionPoint: null,
+          deliveredDetails: null,
+          collectionInstructions: configuration.collectionInstructions,
+          collectionDeadline: configuration.collectionDeadline,
+        }],
+        pagination: {
+          page: parsedQuery.page ?? 1,
+          pageSize: parsedQuery.pageSize ?? 20,
+          total: 1,
+          totalPages: 1,
         },
       };
     },
@@ -222,6 +295,39 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   assert.equal(attendeeHistory.statusCode, 403);
   assert.equal(historyCalls, 0);
 
+  const adminState = await app.inject({
+    method: "GET",
+    url: "/backoffice/events/3",
+    headers: { "x-test-token": "admin" },
+  });
+  assert.equal(adminState.statusCode, 200);
+  assert.equal(adminState.headers["cache-control"], "no-store");
+  assert.equal(adminState.json().wheel.version, 2);
+  assert.equal(stateCalls, 1);
+
+  const filteredHistory = await app.inject({
+    method: "GET",
+    url: `/backoffice/events/3/spins?date=2026-10-29&segmentId=${configuration.segments[0].id}&claimStatus=open&page=2&pageSize=25`,
+    headers: { "x-test-token": "admin" },
+  });
+  assert.equal(filteredHistory.statusCode, 200);
+  assert.equal(historyCalls, 1);
+  assert.deepEqual(lastHistoryQuery, {
+    date: "2026-10-29",
+    segmentId: configuration.segments[0].id,
+    claimStatus: "open",
+    page: 2,
+    pageSize: 25,
+  });
+
+  const invalidHistoryQuery = await app.inject({
+    method: "GET",
+    url: "/backoffice/events/3/spins?claimStatus=unknown&pageSize=1000",
+    headers: { "x-test-token": "admin" },
+  });
+  assert.equal(invalidHistoryQuery.statusCode, 400);
+  assert.equal(historyCalls, 1);
+
   const spoofPublish = await app.inject({
     method: "PUT",
     url: "/backoffice/events/3/publication",
@@ -289,6 +395,49 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   assert.equal(eligibility.statusCode, 200);
   assert.equal(eligibility.headers["cache-control"], "no-store");
   assert.equal(lastAttendeeId, 21);
+
+  const unauthenticatedOwnHistory = await app.inject({
+    method: "GET",
+    url: "/attendee/events/3/spins?page=1&pageSize=10",
+  });
+  assert.equal(unauthenticatedOwnHistory.statusCode, 401);
+  assert.equal(ownHistoryCalls, 0);
+
+  const adminOwnHistory = await app.inject({
+    method: "GET",
+    url: "/attendee/events/3/spins?page=1&pageSize=10",
+    headers: { "x-test-token": "admin" },
+  });
+  assert.equal(adminOwnHistory.statusCode, 403);
+  assert.equal(ownHistoryCalls, 0);
+
+  const spoofOwnHistory = await app.inject({
+    method: "GET",
+    url: "/attendee/events/3/spins?page=1&pageSize=10&userId=999",
+    headers: { "x-test-token": "attendee" },
+  });
+  assert.equal(spoofOwnHistory.statusCode, 400);
+  assert.equal(ownHistoryCalls, 0);
+
+  const ownHistory = await app.inject({
+    method: "GET",
+    url: "/attendee/events/3/spins?page=2&pageSize=5",
+    headers: { "x-test-token": "attendee" },
+  });
+  assert.equal(ownHistory.statusCode, 200);
+  assert.equal(ownHistory.headers["cache-control"], "no-store");
+  assert.equal(ownHistoryCalls, 1);
+  assert.deepEqual(lastOwnHistory, {
+    userId: 21,
+    eventId: 3,
+    page: 2,
+    pageSize: 5,
+  });
+  const ownHistoryBody = ownHistory.json();
+  assert.equal(ownHistoryBody.items[0].outcomeKind, "prize");
+  assert.equal("rewardProof" in ownHistoryBody.items[0], false);
+  assert.equal("qrPayload" in ownHistoryBody.items[0], false);
+  assert.equal("displayCode" in ownHistoryBody.items[0], false);
 
   const spoofSpin = await app.inject({
     method: "POST",

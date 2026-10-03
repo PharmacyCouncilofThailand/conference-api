@@ -38,6 +38,7 @@ export class RewardError extends Error {
       | "REWARD_NOT_FOUND"
       | "REWARD_NOT_OWNED"
       | "REWARD_DEADLINE_PASSED"
+      | "INVALID_REWARD_HISTORY_QUERY"
       | "REDEMPTION_CLOSED"
       | "IDEMPOTENCY_CONFLICT"
       | "INVALID_REDEMPTION_REQUEST",
@@ -364,6 +365,109 @@ function publicRewardState(row: RewardRow) {
     deliveredDetails: row.delivered_details,
     collectionInstructions: row.collection_instructions,
     collectionDeadline: row.collection_deadline ? asDate(row.collection_deadline).toISOString() : null,
+  };
+}
+
+export async function readOwnedSpins(
+  database: RewardDatabase,
+  userId: number,
+  eventId: number,
+  query: { page?: number; pageSize?: number } = {},
+) {
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new RewardError(401, "REWARD_NOT_OWNED", "Authenticated reward owner is required");
+  }
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 20;
+  if (
+    !Number.isInteger(page) ||
+    page < 1 ||
+    page > 100_000 ||
+    !Number.isInteger(pageSize) ||
+    pageSize < 1 ||
+    pageSize > 100
+  ) {
+    throw new RewardError(400, "INVALID_REWARD_HISTORY_QUERY", "Invalid reward history pagination");
+  }
+  const offset = (page - 1) * pageSize;
+
+  const countRows = await database.execute(sql`
+    SELECT count(*)::int AS total
+    FROM lucky_wheel_spins s
+    WHERE s.event_id = ${eventId}
+      AND s.user_id = ${userId}
+  `);
+  const total = Number((countRows as unknown as Array<{ total: number }>)[0]?.total ?? 0);
+
+  const rows = await database.execute(sql`
+    SELECT
+      s.id AS spin_id,
+      s.event_id,
+      s.user_id,
+      s.outcome_kind,
+      s.awarded_name_th,
+      s.awarded_name_en,
+      s.awarded_image_key,
+      s.created_at,
+      NULL::char(64) AS reward_token_digest,
+      NULL::text AS reward_token_envelope,
+      NULL::char(64) AS reward_code_digest,
+      w.id AS wheel_id,
+      w.collection_instructions,
+      w.collection_deadline,
+      r.id AS redemption_id,
+      r.claim_generation,
+      r.status AS redemption_status,
+      r.redeemed_at,
+      r.redeemed_by,
+      r.collection_point,
+      r.delivered_details,
+      NULL::text AS first_name,
+      NULL::text AS last_name,
+      NULL::text AS email
+    FROM lucky_wheel_spins s
+    JOIN lucky_wheels w
+      ON w.id = s.wheel_id
+      AND w.event_id = s.event_id
+    LEFT JOIN lucky_wheel_redemptions r
+      ON r.spin_id = s.id
+      AND r.event_id = s.event_id
+    WHERE s.event_id = ${eventId}
+      AND s.user_id = ${userId}
+    ORDER BY s.created_at DESC, s.id DESC
+    LIMIT ${pageSize}
+    OFFSET ${offset}
+  `);
+  const historyRows = rows as unknown as RewardRow[];
+
+  return {
+    eventId,
+    items: historyRows.map((row) => ({
+      spinId: row.spin_id,
+      eventId: row.event_id,
+      outcomeKind: row.outcome_kind,
+      prize: {
+        name: { th: row.awarded_name_th, en: row.awarded_name_en },
+        imageKey: row.awarded_image_key,
+        awardedAt: asDate(row.created_at).toISOString(),
+      },
+      claimGeneration: row.claim_generation,
+      status: row.redemption_status,
+      redeemedAt: row.redeemed_at ? asDate(row.redeemed_at).toISOString() : null,
+      redeemedBy: row.redeemed_by,
+      collectionPoint: row.collection_point,
+      deliveredDetails: row.delivered_details,
+      collectionInstructions: row.collection_instructions,
+      collectionDeadline: row.collection_deadline
+        ? asDate(row.collection_deadline).toISOString()
+        : null,
+    })),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: total === 0 ? 0 : Math.ceil(total / pageSize),
+    },
   };
 }
 
