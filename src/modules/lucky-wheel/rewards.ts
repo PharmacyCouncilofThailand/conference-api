@@ -280,8 +280,6 @@ type RewardRow = {
   reward_token_envelope: string | null;
   reward_code_digest: string | null;
   wheel_id: string;
-  collection_instructions: { th: string; en: string } | null;
-  collection_deadline: Date | string | null;
   redemption_id: string | null;
   claim_generation: number | null;
   redemption_status: "open" | "redeemed" | null;
@@ -326,7 +324,7 @@ async function rewardRowBySpin(
       s.id AS spin_id, s.event_id, s.user_id, s.outcome_kind,
       s.awarded_name_th, s.awarded_name_en, s.awarded_image_key, s.created_at,
       s.reward_token_digest, s.reward_token_envelope, s.reward_code_digest,
-      w.id AS wheel_id, w.collection_instructions, w.collection_deadline,
+      w.id AS wheel_id,
       r.id AS redemption_id, r.claim_generation, r.status AS redemption_status,
       r.redeemed_at, r.redeemed_by, r.collection_point, r.delivered_details,
       u.first_name, u.last_name, u.email
@@ -363,8 +361,6 @@ function publicRewardState(row: RewardRow) {
     redeemedBy: row.redeemed_by,
     collectionPoint: row.collection_point,
     deliveredDetails: row.delivered_details,
-    collectionInstructions: row.collection_instructions,
-    collectionDeadline: row.collection_deadline ? asDate(row.collection_deadline).toISOString() : null,
   };
 }
 
@@ -413,8 +409,6 @@ export async function readOwnedSpins(
       NULL::text AS reward_token_envelope,
       NULL::char(64) AS reward_code_digest,
       w.id AS wheel_id,
-      w.collection_instructions,
-      w.collection_deadline,
       r.id AS redemption_id,
       r.claim_generation,
       r.status AS redemption_status,
@@ -457,10 +451,6 @@ export async function readOwnedSpins(
       redeemedBy: row.redeemed_by,
       collectionPoint: row.collection_point,
       deliveredDetails: row.delivered_details,
-      collectionInstructions: row.collection_instructions,
-      collectionDeadline: row.collection_deadline
-        ? asDate(row.collection_deadline).toISOString()
-        : null,
     })),
     pagination: {
       page,
@@ -543,7 +533,7 @@ export async function lookupReward(
       s.id AS spin_id, s.event_id, s.user_id, s.outcome_kind,
       s.awarded_name_th, s.awarded_name_en, s.awarded_image_key, s.created_at,
       s.reward_token_digest, s.reward_token_envelope, s.reward_code_digest,
-      w.id AS wheel_id, w.collection_instructions, w.collection_deadline,
+      w.id AS wheel_id,
       r.id AS redemption_id, r.claim_generation, r.status AS redemption_status,
       r.redeemed_at, r.redeemed_by, r.collection_point, r.delivered_details,
       u.first_name, u.last_name, u.email
@@ -634,7 +624,7 @@ export async function confirmRedemption(
       SELECT
         r.id AS redemption_id, r.claim_generation, r.status,
         s.id AS spin_id, s.outcome_kind,
-        w.id AS wheel_id, w.collection_instructions, w.collection_deadline
+        w.id AS wheel_id
       FROM lucky_wheel_redemptions r
       JOIN lucky_wheel_spins s ON s.id = r.spin_id AND s.event_id = r.event_id
       JOIN lucky_wheels w ON w.id = s.wheel_id AND w.event_id = s.event_id
@@ -650,8 +640,6 @@ export async function confirmRedemption(
       spin_id: string;
       outcome_kind: "prize" | "no_prize";
       wheel_id: string;
-      collection_instructions: { th: string; en: string } | null;
-      collection_deadline: Date | string | null;
     }>)[0];
     if (!state || state.outcome_kind !== "prize") {
       throw new RewardError(404, "REWARD_NOT_FOUND", "Reward was not found");
@@ -692,16 +680,8 @@ export async function confirmRedemption(
       return { kind: "success" as const, value: confirmationResult(existing, true) };
     }
 
-    if (!input.identityChecked || !normalizedPoint || !state.collection_instructions || !state.collection_deadline) {
-      throw new RewardError(409, "INVALID_REDEMPTION_REQUEST", "Identity, collection point and configured collection settings are required");
-    }
-    const clockRows = await tx.execute(sql`SELECT clock_timestamp() AS now`);
-    const now = asDate((clockRows as unknown as Array<{ now: Date | string }>)[0].now);
-    if (now >= asDate(state.collection_deadline)) {
-      return {
-        kind: "deadline" as const,
-        deadline: asDate(state.collection_deadline).toISOString(),
-      };
+    if (!input.identityChecked || !normalizedPoint) {
+      throw new RewardError(409, "INVALID_REDEMPTION_REQUEST", "Identity and collection point are required");
     }
 
     const insertedRows = await tx.execute(sql`
@@ -768,11 +748,6 @@ export async function confirmRedemption(
   if (outcome.kind === "generation_mismatch") {
     throw new RewardError(409, "REDEMPTION_CLOSED", "Reward claim generation changed", {
       currentGeneration: outcome.currentGeneration,
-    });
-  }
-  if (outcome.kind === "deadline") {
-    throw new RewardError(409, "REWARD_DEADLINE_PASSED", "Reward collection deadline has passed", {
-      collectionDeadline: outcome.deadline,
     });
   }
   return outcome.value;

@@ -86,6 +86,9 @@ async function bootstrap(sqlClient: ReturnType<typeof postgres>) {
   const creditMigration = (await readFile(resolve(process.cwd(), "drizzle", "0035_lucky_wheel_qr_credits.sql"), "utf8"))
     .replaceAll("--> statement-breakpoint", "");
   await sqlClient.unsafe(creditMigration);
+  const setupMigration = (await readFile(resolve(process.cwd(), "drizzle", "0036_lucky_wheel_setup_simplification.sql"), "utf8"))
+    .replaceAll("--> statement-breakpoint", "");
+  await sqlClient.unsafe(setupMigration);
 }
 
 async function createAttendee(
@@ -371,18 +374,9 @@ test(
       collectionPoint: "Activity desk",
       deliveredDetails: null,
     };
-    await assert.rejects(
-      () => confirmRedemption(database, actorA, generationTwoPayload),
-      (error: unknown) => error instanceof RewardError && error.code === "REWARD_DEADLINE_PASSED",
-    );
-
-    await assert.rejects(
-      () => publishWheel(database, actorA, event.id, 3, configuration),
-      (error: unknown) =>
-        error instanceof Error &&
-        "code" in error &&
-        (error as { code?: string }).code === "INVALID_WHEEL_REQUEST",
-    );
+    const confirmedGenerationTwo = await confirmRedemption(database, actorA, generationTwoPayload);
+    assert.equal(confirmedGenerationTwo.claimGeneration, 2);
+    assert.equal(confirmedGenerationTwo.status, "redeemed");
     const extended = await publishWheel(
       database,
       actorA,
@@ -392,9 +386,8 @@ test(
       "Extend collection deadline after verified attendee follow-up",
     );
     assert.equal(extended.version, 4);
-    const confirmedGenerationTwo = await confirmRedemption(database, actorA, generationTwoPayload);
-    assert.equal(confirmedGenerationTwo.claimGeneration, 2);
-    assert.equal(confirmedGenerationTwo.status, "redeemed");
+    const generationTwoReplay = await confirmRedemption(database, actorA, generationTwoPayload);
+    assert.equal(generationTwoReplay.replayed, true);
 
     const correctionNote = await correctRedemption(database, actorA, {
       eventId: event.id,

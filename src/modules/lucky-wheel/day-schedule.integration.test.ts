@@ -10,7 +10,7 @@ import {
   resetSessionGrantIntegrationSchema,
   validateSessionGrantTestDatabaseUrl,
 } from "../session-grants/test-database.js";
-import { editDayWindow, readDayChanges, readDayWindow, readDayWindowForSpin } from "./day-schedule.js";
+import { editDayWindow, listDayWindows, readDayChanges, readDayWindow, readDayWindowForSpin } from "./day-schedule.js";
 import { WheelError, type WheelDatabase } from "./service.js";
 
 test("admin day window edits both boundaries after QR opening with versioned audit", { timeout: 120_000 }, async (t) => {
@@ -107,4 +107,15 @@ test("admin day window edits both boundaries after QR opening with versioned aud
   assert.ok(rejected?.status === "rejected" && rejected.reason instanceof WheelError);
   assert.equal(rejected.reason.statusCode, 409);
   assert.equal((await readDayChanges(database, actor, event.id, date, { page: 1, pageSize: 10 })).pagination.total, 3);
+  const secondDay = await editDayWindow(database, actor, event.id, {
+    date: "2026-10-30", startAt: "2026-10-30T02:00:00.000Z", endAt: "2026-10-30T12:00:00.000Z",
+    expectedVersion: null, reason: null,
+  });
+  const listed = await listDayWindows(database, actor, event.id);
+  assert.deepEqual(listed.map((item) => item.date), ["2026-10-29", "2026-10-30"]);
+  assert.equal(listed[1].id, secondDay.id);
+  const [otherEvent] = await setup<Array<{ id: number }>>`
+    INSERT INTO events (event_code) VALUES ('LW-DAY-OTHER') RETURNING id
+  `;
+  assert.deepEqual(await listDayWindows(database, actor, otherEvent.id), []);
 });

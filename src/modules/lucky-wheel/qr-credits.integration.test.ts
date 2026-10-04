@@ -6,7 +6,7 @@ import test from "node:test";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "../../database/schema.js";
-import { readPrisWheelClaimOrigin } from "../../config/env.js";
+import { validatePrisWheelClaimOrigin } from "../../config/env.js";
 import {
   openSessionGrantTestDatabase,
   resetSessionGrantIntegrationSchema,
@@ -31,7 +31,7 @@ test("admin QR batches are idempotent, independent, event-scoped and individuall
   t.after(async () => setup.end({ timeout: 2 }));
   await resetSessionGrantIntegrationSchema(setup);
   await setup.unsafe(`
-    CREATE TABLE events (id serial PRIMARY KEY, event_code varchar(50) NOT NULL UNIQUE);
+    CREATE TABLE events (id serial PRIMARY KEY, event_code varchar(50) NOT NULL UNIQUE, website_url varchar(500));
     CREATE TABLE sessions (
       id serial PRIMARY KEY, event_id integer NOT NULL REFERENCES events(id),
       is_main_session boolean NOT NULL DEFAULT false,
@@ -49,12 +49,12 @@ test("admin QR batches are idempotent, independent, event-scoped and individuall
     );
     CREATE TABLE session_daily_checkins (id uuid PRIMARY KEY);
   `);
-  for (const name of ["0034_lucky_wheel.sql", "0035_lucky_wheel_qr_credits.sql"]) {
+  for (const name of ["0034_lucky_wheel.sql", "0035_lucky_wheel_qr_credits.sql", "0036_lucky_wheel_setup_simplification.sql"]) {
     await setup.unsafe((await readFile(resolve(process.cwd(), "drizzle", name), "utf8"))
       .replaceAll("--> statement-breakpoint", ""));
   }
   const [event] = await setup<Array<{ id: number }>>`
-    INSERT INTO events (event_code) VALUES ('LW-QR') RETURNING id
+    INSERT INTO events (event_code, website_url) VALUES ('LW-QR', 'https://pris.example.com') RETURNING id
   `;
   const [otherEvent] = await setup<Array<{ id: number }>>`
     INSERT INTO events (event_code) VALUES ('LW-OTHER') RETURNING id
@@ -103,10 +103,10 @@ test("admin QR batches are idempotent, independent, event-scoped and individuall
   })).status, "open");
   const qrBOpenKey = randomUUID();
   assert.equal((await setQrStatus(database, actor, event.id, qrB.id, {
-    status: "open", reason: "Afternoon finished", idempotencyKey: qrBOpenKey,
+    status: "open", idempotencyKey: qrBOpenKey,
   })).status, "open");
   assert.equal((await setQrStatus(database, actor, event.id, qrB.id, {
-    status: "open", reason: "Afternoon finished", idempotencyKey: qrBOpenKey,
+    status: "open", reason: "", idempotencyKey: qrBOpenKey,
   })).replayed, true);
   const bothOpen = await readQrCodes(database, actor, event.id, { date, page: 1, pageSize: 10 });
   assert.equal(bothOpen.items.filter((qr) => qr.status === "open").length, 2);
@@ -123,22 +123,25 @@ test("admin QR batches are idempotent, independent, event-scoped and individuall
     ORDER BY id
   `;
   assert.deepEqual(audit.map((entry) => entry.operation), ["qr_open", "qr_open", "qr_close"]);
+  assert.equal(audit[1].reason, null);
   assert.equal(audit[2].reason, "Wrong display");
   await assert.rejects(
     () => readQrProjection(database, actor, otherEvent.id, qrA.id),
     (error: unknown) => error instanceof WheelError && error.statusCode === 404,
   );
-  const oldOrigin = process.env.PRIS_WHEEL_CLAIM_ORIGIN;
-  process.env.PRIS_WHEEL_CLAIM_ORIGIN = "https://pris.example.com";
-  try {
-    const projection = await readQrProjection(database, actor, event.id, qrB.id);
-    assert.equal(projection.claimUrl, `https://pris.example.com/th/lucky-wheel/claim#${qrB.id}`);
-    assert.match(projection.qrDataUrl, /^data:image\/png;base64,/);
-    assert.equal(projection.currentDeadline, "2026-10-29T12:00:00.000Z");
-  } finally {
-    if (oldOrigin === undefined) delete process.env.PRIS_WHEEL_CLAIM_ORIGIN;
-    else process.env.PRIS_WHEEL_CLAIM_ORIGIN = oldOrigin;
-  }
+  const projection = await readQrProjection(database, actor, event.id, qrB.id, "https://backoffice.example.com");
+  assert.equal(projection.claimUrl, `https://pris.example.com/th/lucky-wheel/claim#${qrB.id}`);
+  assert.match(projection.qrDataUrl, /^data:image\/png;base64,/);
+  assert.equal(projection.currentDeadline, "2026-10-29T12:00:00.000Z");
+  await assert.rejects(
+    () => readQrProjection(database, actor, event.id, qrB.id, "https://pris.example.com"),
+    (error: unknown) => error instanceof WheelError && error.statusCode === 503,
+  );
+  await setup`UPDATE events SET website_url = NULL WHERE id = ${event.id}`;
+  await assert.rejects(
+    () => readQrProjection(database, actor, event.id, qrB.id),
+    (error: unknown) => error instanceof WheelError && error.statusCode === 503,
+  );
 
   const [user] = await setup<Array<{ id: number }>>`INSERT INTO users DEFAULT VALUES RETURNING id`;
   const attendanceId = randomUUID();
@@ -190,23 +193,24 @@ test("admin QR batches are idempotent, independent, event-scoped and individuall
   );
 });
 
-test("QR claim origin rejects arbitrary URLs and permits only local HTTP in development", () => {
-  assert.equal(readPrisWheelClaimOrigin({
-    PRIS_WHEEL_CLAIM_ORIGIN: "https://pris.example.com",
+test("event PRIS website URL rejects arbitrary URLs and permits only local HTTP in development", () => {
+  assert.equal(validatePrisWheelClaimOrigin("https://pris.example.com", null, {
     NODE_ENV: "production",
   } as NodeJS.ProcessEnv), "https://pris.example.com");
   for (const value of [
     "http://pris.example.com", "https://pris.example.com/path",
-    "https://user:pass@pris.example.com", "https://pris.example.com/?next=evil",
+    "https://user:pass@pris.example.com", "https://pris.example.com/?next=evil", "https://pris.example.com/#target",
   ]) {
-    assert.throws(() => readPrisWheelClaimOrigin({
-      PRIS_WHEEL_CLAIM_ORIGIN: value, NODE_ENV: "production",
+    assert.throws(() => validatePrisWheelClaimOrigin(value, null, {
+      NODE_ENV: "production",
     } as NodeJS.ProcessEnv));
   }
-  assert.equal(readPrisWheelClaimOrigin({
-    PRIS_WHEEL_CLAIM_ORIGIN: "http://localhost:3000",
+  assert.equal(validatePrisWheelClaimOrigin("http://localhost:3003", "http://localhost:3001", {
     NODE_ENV: "development",
-  } as NodeJS.ProcessEnv), "http://localhost:3000");
+  } as NodeJS.ProcessEnv), "http://localhost:3003");
+  assert.throws(() => validatePrisWheelClaimOrigin("http://localhost:3001", "http://localhost:3001", {
+    NODE_ENV: "development",
+  } as NodeJS.ProcessEnv));
 });
 
 test("shared QR grants one durable credit per eligible account and QR under concurrent claims", { timeout: 180_000 }, async (t) => {
@@ -215,7 +219,7 @@ test("shared QR grants one durable credit per eligible account and QR under conc
   t.after(async () => setup.end({ timeout: 2 }));
   await resetSessionGrantIntegrationSchema(setup);
   await setup.unsafe(`
-    CREATE TABLE events (id serial PRIMARY KEY, event_code varchar(50) NOT NULL UNIQUE);
+    CREATE TABLE events (id serial PRIMARY KEY, event_code varchar(50) NOT NULL UNIQUE, website_url varchar(500));
     CREATE TABLE sessions (
       id serial PRIMARY KEY, event_id integer NOT NULL REFERENCES events(id),
       is_main_session boolean NOT NULL DEFAULT false,
@@ -243,7 +247,7 @@ test("shared QR grants one durable credit per eligible account and QR under conc
     CREATE UNIQUE INDEX session_daily_checkins_active_day_unique
       ON session_daily_checkins (registration_session_id, attendance_date) WHERE cancelled_at IS NULL;
   `);
-  for (const name of ["0034_lucky_wheel.sql", "0035_lucky_wheel_qr_credits.sql"]) {
+  for (const name of ["0034_lucky_wheel.sql", "0035_lucky_wheel_qr_credits.sql", "0036_lucky_wheel_setup_simplification.sql"]) {
     await setup.unsafe((await readFile(resolve(process.cwd(), "drizzle", name), "utf8"))
       .replaceAll("--> statement-breakpoint", ""));
   }

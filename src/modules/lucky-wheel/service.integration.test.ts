@@ -83,6 +83,9 @@ async function bootstrap(sql: ReturnType<typeof postgres>) {
   const creditMigration = (await readFile(resolve(process.cwd(), "drizzle", "0035_lucky_wheel_qr_credits.sql"), "utf8"))
     .replaceAll("--> statement-breakpoint", "");
   await sql.unsafe(creditMigration);
+  const setupMigration = (await readFile(resolve(process.cwd(), "drizzle", "0036_lucky_wheel_setup_simplification.sql"), "utf8"))
+    .replaceAll("--> statement-breakpoint", "");
+  await sql.unsafe(setupMigration);
 }
 
 test("PRIS wheel initialization is admin-only, event-scoped and idempotent under concurrency", { timeout: 90_000 }, async (t) => {
@@ -177,6 +180,76 @@ test("PRIS wheel initialization is admin-only, event-scoped and idempotent under
     WHERE event_id = ${event.id} AND operation = 'initialize'
   `;
   assert.equal(audit.count, 1);
+});
+
+test("first publish credits initial prize quantity exactly once under concurrent retries", { timeout: 90_000 }, async (t) => {
+  const setupSql = openSessionGrantTestDatabase();
+  await bootstrap(setupSql);
+  const pool = postgres(validateSessionGrantTestDatabaseUrl(), { max: 20, connect_timeout: 10 });
+  const database = drizzle(pool, { schema }) as WheelDatabase;
+  t.after(async () => {
+    await pool.end({ timeout: 2 });
+    await setupSql.end({ timeout: 2 });
+  });
+  const [admin] = await setupSql<Array<{ id: number; email: string }>>`
+    INSERT INTO backoffice_users (email, role, is_active)
+    VALUES ('initial-stock-admin@example.invalid', 'admin', true)
+    RETURNING id, email
+  `;
+  const [event] = await setupSql<Array<{ id: number }>>`
+    INSERT INTO events (event_code) VALUES ('PRIS-2026') RETURNING id
+  `;
+  const [session] = await setupSql<Array<{ id: number }>>`
+    INSERT INTO sessions (event_id, is_main_session, start_time, end_time)
+    VALUES (${event.id}, true, '2026-10-29 02:00:00', '2026-10-30 10:00:00') RETURNING id
+  `;
+  const actor = { id: admin.id, role: "admin" as const, email: admin.email };
+  await initializeWheel(database, actor, event.id, session.id);
+  const prizeId = randomUUID();
+  const configuration = {
+    segments: [{
+      id: prizeId, kind: "prize" as const, name: { th: "ปากกา", en: "Pen" },
+      imageId: null, enabled: true, position: 0, initialQuantity: 100,
+    }],
+  };
+  const published = await Promise.all(Array.from({ length: 100 }, () =>
+    publishWheel(database, actor, event.id, 1, configuration),
+  ));
+  assert.equal(published.filter((result) => !result.replayed).length, 1);
+  assert.equal(published.filter((result) => result.replayed).length, 99);
+  const [stock] = await setupSql<Array<{ remaining: number; revision: number }>>`
+    SELECT s.remaining, w.pool_revision AS revision
+    FROM lucky_wheel_segments s JOIN lucky_wheels w ON w.id = s.wheel_id
+    WHERE s.id = ${prizeId}
+  `;
+  assert.equal(stock.remaining, 100);
+  assert.equal(stock.revision, 2);
+  const [audit] = await setupSql<Array<{ credits: Array<{ segmentId: string; before: number; after: number }> }>>`
+    SELECT after_snapshot->'initialStockCredits' AS credits
+    FROM lucky_wheel_audit_events
+    WHERE event_id = ${event.id} AND operation = 'publish'
+  `;
+  assert.deepEqual(audit.credits, [{ segmentId: prizeId, before: 0, after: 100 }]);
+  await assert.rejects(
+    publishWheel(database, actor, event.id, 2, {
+      ...configuration,
+      segments: [{ ...configuration.segments[0], initialQuantity: 101 }],
+    }),
+    (error: unknown) => error instanceof WheelError && error.code === "WHEEL_UPDATED",
+  );
+  const republished = await publishWheel(database, actor, event.id, 2, {
+    ...configuration,
+    segments: [{ ...configuration.segments[0], name: { th: "ปากกาใหม่", en: "New pen" } }],
+  });
+  assert.equal(republished.version, 3);
+  const [after] = await setupSql<Array<{ remaining: number }>>`
+    SELECT remaining FROM lucky_wheel_segments WHERE id = ${prizeId}
+  `;
+  assert.equal(after.remaining, 100);
+  await assert.rejects(
+    adjustStock(database, actor, event.id, prizeId, -1, "ลด", randomUUID()),
+    (error: unknown) => error instanceof WheelError && error.code === "INVALID_WHEEL_REQUEST",
+  );
 });
 
 test(
@@ -732,7 +805,7 @@ test(
     };
     const raceResults = await Promise.allSettled([
       adjustStock(database, claimedAdmin, event.id, prizeId, 10, "race add", randomUUID()),
-      adjustStock(database, claimedAdmin, event.id, prizeId, -5, "race reduce", randomUUID()),
+      adjustStock(database, claimedAdmin, event.id, prizeId, 5, "race second top-up", randomUUID()),
       publishWheel(database, claimedAdmin, event.id, 2, configA),
       publishWheel(database, claimedAdmin, event.id, 2, configB),
       setWheelPaused(database, claimedAdmin, event.id, true, "race pause", randomUUID()),
@@ -759,7 +832,7 @@ test(
       WHERE w.event_id = ${event.id}
     `;
     assert.deepEqual(afterAdminRace, {
-      remaining: 25,
+      remaining: 35,
       version: 3,
       pool_revision: 4,
       paused: true,
@@ -776,14 +849,14 @@ test(
           "must roll back",
           randomUUID(),
         ),
-      (error: unknown) => error instanceof WheelError && error.code === "INSUFFICIENT_STOCK",
+      (error: unknown) => error instanceof WheelError && error.code === "INVALID_WHEEL_REQUEST",
     );
     const [afterRejectedReduce] = await setupSql<Array<{ remaining: number }>>`
       SELECT remaining
       FROM lucky_wheel_segments
       WHERE id = ${prizeId}
     `;
-    assert.equal(afterRejectedReduce.remaining, 25);
+    assert.equal(afterRejectedReduce.remaining, 35);
 
     await setWheelPaused(
       database,
@@ -847,7 +920,7 @@ test(
     assert.equal(state.wheel.paused, false);
     assert.equal(state.segments.length, 1);
     assert.equal(state.segments[0].id, prizeId);
-    assert.equal(state.segments[0].remaining, 25);
+    assert.equal(state.segments[0].remaining, 35);
     assert.equal(state.segments[0].allocated, 105);
     assert.equal(state.segments[0].collected, 0);
     assert.ok(state.audit.length >= 8);

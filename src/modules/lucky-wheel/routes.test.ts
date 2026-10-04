@@ -108,6 +108,15 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
       assert.equal(date, "2026-10-29");
       return null;
     },
+    listDayWindowsFn: async (_db, actor, eventId) => {
+      assert.equal(actor.id, 7);
+      assert.equal(eventId, 3);
+      return [{
+        id: "00000000-0000-4000-8000-000000000190",
+        date: "2026-10-29", startAt: "2026-10-29T02:00:00.000Z",
+        endAt: "2026-10-29T12:00:00.000Z", version: 1,
+      }];
+    },
     editDayWindowFn: async (_db, actor, eventId, input) => {
       dayEditCalls += 1;
       assert.equal(actor.id, 7);
@@ -424,6 +433,13 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   assert.equal(adminState.headers["cache-control"], "no-store");
   assert.equal(adminState.json().wheel.version, 2);
   assert.equal(stateCalls, 1);
+
+  const daysList = await app.inject({
+    method: "GET", url: "/backoffice/events/3/days", headers: { "x-test-token": "admin" },
+  });
+  assert.equal(daysList.statusCode, 200);
+  assert.deepEqual(daysList.json().days.map((day: { date: string }) => day.date), ["2026-10-29"]);
+  assert.equal((await app.inject({ method: "GET", url: "/backoffice/events/3/days" })).statusCode, 401);
 
   const missingDayActor = await app.inject({
     method: "GET",
@@ -1050,11 +1066,14 @@ test("admin QR detail, recipient list and status change do not log the raw QR id
   await app.register(luckyWheelAdminRoutes, {
     database: {} as WheelDatabase,
     validateAdminActorFn: async () => ({ id: 7, role: "admin", email: "admin@example.invalid" }),
-    readQrProjectionFn: async () => ({
+    readQrProjectionFn: async (_database: unknown, _actor: unknown, _eventId: number, _id: string, backofficeOrigin: string | null) => {
+      assert.equal(backofficeOrigin, "https://backoffice.example.com");
+      return ({
       ...qr, currentDeadline: "2026-10-29T12:00:00.000Z",
       claimUrl: `https://pris.example.com/th/lucky-wheel/claim#${qrId}`,
       qrDataUrl: "data:image/png;base64,AA==",
-    }),
+      });
+    },
     readQrClaimsFn: async () => ({
       eventId: 3, qrId, items: [],
       pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 },
@@ -1064,10 +1083,10 @@ test("admin QR detail, recipient list and status change do not log the raw QR id
   await app.ready();
   t.after(async () => app.close());
   const path = `/events/3/qr-codes/${qrId}`;
-  assert.equal((await app.inject({ method: "GET", url: path })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: path, headers: { origin: "https://backoffice.example.com" } })).statusCode, 200);
   assert.equal((await app.inject({ method: "GET", url: `${path}/claims` })).statusCode, 200);
   assert.equal((await app.inject({ method: "PATCH", url: path, payload: {
-    status: "closed", reason: "End", idempotencyKey: randomUUID(),
+    status: "closed", idempotencyKey: randomUUID(),
   } })).statusCode, 200);
   assert.equal(logs.join("").includes(qrId), false);
 });

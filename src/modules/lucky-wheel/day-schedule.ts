@@ -113,6 +113,21 @@ export async function readDayWindow(
   return row ? toWindow(row) : null;
 }
 
+export async function listDayWindows(
+  database: WheelDatabase,
+  _actor: AdminWheelActor,
+  eventId: number,
+): Promise<DayWindow[]> {
+  const rows = await database.execute(sql`
+    SELECT d.id, d.play_date, d.start_at, d.end_at, d.version
+    FROM lucky_wheel_days d
+    JOIN lucky_wheels w ON w.id = d.wheel_id
+    WHERE w.event_id = ${eventId}
+    ORDER BY d.play_date ASC
+  `);
+  return (rows as unknown as DayRow[]).map(toWindow);
+}
+
 export async function editDayWindow(
   database: WheelDatabase,
   actor: AdminWheelActor,

@@ -15,12 +15,17 @@ export const wheelSegmentConfigurationSchema = z.object({
   imageId: uuidKey.nullable(),
   enabled: z.boolean(),
   position: z.number().int().nonnegative().max(255),
-}).strict();
+  initialQuantity: z.number().int().nonnegative().max(1_000_000).optional(),
+}).strict().superRefine((value, context) => {
+  if (value.kind === "no_prize" && value.initialQuantity !== undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["initialQuantity"], message: "no-prize segments are unlimited" });
+  }
+});
 
 export const wheelConfigurationSchema = z.object({
   segments: z.array(wheelSegmentConfigurationSchema).min(1).max(64),
-  collectionInstructions: bilingualTextSchema,
-  collectionDeadline: z.string().datetime({ offset: true }),
+  collectionInstructions: bilingualTextSchema.optional(),
+  collectionDeadline: z.string().datetime({ offset: true }).optional(),
 }).strict().superRefine((value, context) => {
   const ids = new Set<string>();
   const positions = new Set<number>();
@@ -56,9 +61,7 @@ export const initializeWheelBodySchema = z.object({
 
 export const stockAdjustmentBodySchema = z.object({
   segmentId: uuidKey,
-  delta: z.number().int().min(-1_000_000).max(1_000_000).refine((value) => value !== 0, {
-    message: "delta must not be zero",
-  }),
+  delta: z.number().int().min(1).max(1_000_000),
   reason: boundedText(500),
   idempotencyKey: uuidKey,
 }).strict();
@@ -103,7 +106,7 @@ export const qrListQuerySchema = z.object({
 
 export const qrStatusBodySchema = z.object({
   status: z.enum(["open", "closed"]),
-  reason: boundedText(500),
+  reason: z.string().trim().max(500).optional(),
   idempotencyKey: uuidKey,
 }).strict();
 

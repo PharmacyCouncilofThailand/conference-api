@@ -88,6 +88,10 @@ async function bootstrap(sqlClient: SqlClient) {
     await readFile(resolve(process.cwd(), "drizzle", "0035_lucky_wheel_qr_credits.sql"), "utf8")
   ).replaceAll("--> statement-breakpoint", "");
   await sqlClient.unsafe(creditMigration);
+  const simplificationMigration = (
+    await readFile(resolve(process.cwd(), "drizzle", "0036_lucky_wheel_setup_simplification.sql"), "utf8")
+  ).replaceAll("--> statement-breakpoint", "");
+  await sqlClient.unsafe(simplificationMigration);
 }
 
 async function createAttendees(

@@ -20,7 +20,7 @@ import {
   stockAdjustmentBodySchema,
   wheelDayDateSchema,
 } from "./schemas.js";
-import { editDayWindow, readDayChanges, readDayWindow } from "./day-schedule.js";
+import { editDayWindow, listDayWindows, readDayChanges, readDayWindow } from "./day-schedule.js";
 import {
   createQrBatch,
   readQrClaims,
@@ -73,6 +73,7 @@ export interface LuckyWheelRouteOptions {
   initializeWheelFn?: typeof initializeWheel;
   readAdminSpinsFn?: typeof readAdminSpins;
   readDayWindowFn?: typeof readDayWindow;
+  listDayWindowsFn?: typeof listDayWindows;
   editDayWindowFn?: typeof editDayWindow;
   readDayChangesFn?: typeof readDayChanges;
   createQrBatchFn?: typeof createQrBatch;
@@ -208,6 +209,7 @@ export async function luckyWheelAdminRoutes(
   const initializeWheelFn = options.initializeWheelFn ?? initializeWheel;
   const readAdminSpinsFn = options.readAdminSpinsFn ?? readAdminSpins;
   const readDayWindowFn = options.readDayWindowFn ?? readDayWindow;
+  const listDayWindowsFn = options.listDayWindowsFn ?? listDayWindows;
   const editDayWindowFn = options.editDayWindowFn ?? editDayWindow;
   const readDayChangesFn = options.readDayChangesFn ?? readDayChanges;
   const createQrBatchFn = options.createQrBatchFn ?? createQrBatch;
@@ -250,6 +252,23 @@ export async function luckyWheelAdminRoutes(
         return reply.status(result.created ? 201 : 200).send({ ...result, requestId: request.id });
       } catch (error) {
         request.log.error({ code: error instanceof WheelError ? error.code : "LUCKY_WHEEL_INITIALIZE_FAILED" });
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.get(
+    "/events/:eventId/days",
+    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    async (request, reply) => {
+      const event = eventIdSchema.safeParse((request.params as { eventId?: unknown }).eventId);
+      if (!event.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const days = await listDayWindowsFn(database, admin, event.data);
+        return reply.send({ eventId: event.data, days, requestId: request.id });
+      } catch (error) {
         return sendWheelError(reply, error, request.id);
       }
     },
@@ -361,7 +380,7 @@ export async function luckyWheelAdminRoutes(
       try {
         const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
         if (!admin) return;
-        const result = await readQrProjectionFn(database, admin, event.data, qrId.data);
+        const result = await readQrProjectionFn(database, admin, event.data, qrId.data, request.headers.origin ?? null);
         return reply.send({ ...result, requestId: request.id });
       } catch (error) {
         return sendWheelError(reply, error, request.id);

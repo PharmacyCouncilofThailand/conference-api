@@ -492,19 +492,7 @@ export async function publishWheel(
       throw new WheelError(409, "WHEEL_NOT_READY", "Lucky wheel has not been configured for this event");
     }
     const admin = await requireAdmin(txDb, actor, eventId);
-    const previousDeadline = wheel.collection_deadline
-      ? asDate(wheel.collection_deadline).toISOString()
-      : null;
-    const nextDeadline = new Date(configuration.collectionDeadline).toISOString();
-    const deadlineChanged = previousDeadline !== null && previousDeadline !== nextDeadline;
     const normalizedReason = reason?.trim() || null;
-    if (deadlineChanged && !normalizedReason) {
-      throw new WheelError(
-        400,
-        "INVALID_WHEEL_REQUEST",
-        "Changing an existing collection deadline requires an audit reason",
-      );
-    }
 
     if (wheel.version !== expectedVersion) {
       if (
@@ -526,6 +514,9 @@ export async function publishWheel(
 
     const existing = await segmentRows(txDb, wheel.id, true);
     const existingById = new Map(existing.map((segment) => [segment.id, segment]));
+    const previousConfiguration = wheel.published_configuration;
+    const previousSegments = new Map(previousConfiguration?.segments.map((segment) => [segment.id, segment]) ?? []);
+    const initialStockCredits: Array<{ segmentId: string; before: number; after: number }> = [];
     const imageIds = Array.from(
       new Set(
         configuration.segments
@@ -560,6 +551,11 @@ export async function publishWheel(
         );
       }
       if (prior) {
+        if ((segment.initialQuantity ?? 0) !== (previousSegments.get(segment.id)?.initialQuantity ?? 0)) {
+          throw new WheelError(409, "WHEEL_UPDATED", "Initial quantity cannot change after a prize is published", {
+            segmentId: segment.id,
+          });
+        }
         await tx.execute(sql`
           UPDATE lucky_wheel_segments
           SET name_th = ${segment.name.th},
@@ -582,9 +578,12 @@ export async function publishWheel(
             ${segment.id}, ${wheel.id}, ${segment.kind},
             ${segment.name.th}, ${segment.name.en}, ${segment.imageId},
             ${segment.enabled}, ${segment.position},
-            ${segment.kind === "prize" ? 0 : null}
+            ${segment.kind === "prize" ? (segment.initialQuantity ?? 0) : null}
           )
         `);
+        if (segment.kind === "prize") {
+          initialStockCredits.push({ segmentId: segment.id, before: 0, after: segment.initialQuantity ?? 0 });
+        }
       }
     }
 
@@ -603,13 +602,15 @@ export async function publishWheel(
     }
 
     const nextVersion = wheel.version + 1;
+    const nextPoolRevision = initialStockCredits.some((credit) =>
+      credit.after > 0 && configuration.segments.some((segment) => segment.id === credit.segmentId && segment.enabled),
+    ) ? wheel.pool_revision + 1 : wheel.pool_revision;
     await tx.execute(sql`
       UPDATE lucky_wheels
       SET published_configuration = ${JSON.stringify(configuration)}::jsonb,
-          collection_instructions = ${JSON.stringify(configuration.collectionInstructions)}::jsonb,
-          collection_deadline = ${configuration.collectionDeadline}::timestamptz,
           enabled = true,
           version = ${nextVersion},
+          pool_revision = ${nextPoolRevision},
           updated_at = clock_timestamp()
       WHERE id = ${wheel.id}
     `);
@@ -622,14 +623,14 @@ export async function publishWheel(
         ${wheel.id}, ${eventId}, ${admin.id}, 'publish',
         ${normalizedReason ?? "publish wheel configuration"},
         ${JSON.stringify({ version: wheel.version, configuration: wheel.published_configuration })}::jsonb,
-        ${JSON.stringify({ version: nextVersion, configuration })}::jsonb
+        ${JSON.stringify({ version: nextVersion, configuration, initialStockCredits })}::jsonb
       )
     `);
 
     return {
       eventId,
       version: nextVersion,
-      poolRevision: wheel.pool_revision,
+      poolRevision: nextPoolRevision,
       paused: wheel.paused,
       configuration,
       replayed: false,
@@ -646,6 +647,9 @@ export async function adjustStock(
   reason: string,
   idempotencyKey: string,
 ) {
+  if (!Number.isInteger(delta) || delta <= 0 || delta > 1_000_000) {
+    throw new WheelError(400, "INVALID_WHEEL_REQUEST", "Stock adjustment must be a positive top-up");
+  }
   return database.transaction(async (tx) => {
     const txDb = tx as unknown as WheelDatabase;
     const wheel = await wheelRow(txDb, eventId, true);

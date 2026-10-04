@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import QRCode from "qrcode";
 import { sql } from "drizzle-orm";
-import { readPrisWheelClaimOrigin } from "../../config/env.js";
+import { validatePrisWheelClaimOrigin } from "../../config/env.js";
 import {
   activeAttendance,
   clock,
@@ -15,7 +15,7 @@ import type { AdminWheelActor, WheelActor } from "./service.js";
 
 export type QrStatus = "closed" | "open";
 export type QrBatchInput = { date: string; names: string[]; idempotencyKey: string };
-export type QrStatusInput = { status: QrStatus; reason: string; idempotencyKey: string };
+export type QrStatusInput = { status: QrStatus; reason?: string; idempotencyKey: string };
 export type QrRevocationInput = { reason: string; idempotencyKey: string };
 
 type QrRow = {
@@ -180,7 +180,8 @@ export async function setQrStatus(
   input: QrStatusInput,
 ): Promise<QrDto & { replayed: boolean }> {
   const operation = input.status === "open" ? "qr_open" : "qr_close";
-  const requestHash = hashRequest({ qrId, status: input.status, reason: input.reason });
+  const reason = input.reason?.trim() || null;
+  const requestHash = hashRequest({ qrId, status: input.status, reason });
   return database.transaction(async (tx) => {
     const txDb = tx as unknown as WheelDatabase;
     const wheel = await lockedWheel(txDb, eventId);
@@ -206,7 +207,7 @@ export async function setQrStatus(
       ? await tx.execute(sql`
         UPDATE lucky_wheel_qr_codes
         SET status = 'open', opened_by = ${actor.id}, opened_at = clock_timestamp(),
-            opened_reason = ${input.reason},
+            opened_reason = ${reason},
             closed_by = NULL, closed_at = NULL, closed_reason = NULL,
             updated_at = clock_timestamp()
         WHERE id = ${qrId} RETURNING *
@@ -214,7 +215,7 @@ export async function setQrStatus(
       : await tx.execute(sql`
         UPDATE lucky_wheel_qr_codes
         SET status = 'closed', closed_by = ${actor.id}, closed_at = clock_timestamp(),
-            closed_reason = ${input.reason}, updated_at = clock_timestamp()
+            closed_reason = ${reason}, updated_at = clock_timestamp()
         WHERE id = ${qrId} RETURNING *
       `);
     const result = toQr((rows as unknown as QrRow[])[0]);
@@ -224,7 +225,7 @@ export async function setQrStatus(
         idempotency_key, reason, before_snapshot, after_snapshot
       ) VALUES (
         ${wheel.id}, ${eventId}, ${actor.id}, ${operation},
-        ${input.idempotencyKey}, ${input.reason},
+        ${input.idempotencyKey}, ${reason},
         ${JSON.stringify({ requestHash, qr: toQr(current) })}::jsonb,
         ${JSON.stringify({ result })}::jsonb
       )
@@ -278,21 +279,23 @@ export async function readQrProjection(
   _actor: AdminWheelActor,
   eventId: number,
   qrId: string,
+  backofficeOrigin: string | null = null,
 ) {
   const rows = await database.execute(sql`
-    SELECT q.*, d.end_at AS current_deadline
+    SELECT q.*, d.end_at AS current_deadline, e.website_url
     FROM lucky_wheel_qr_codes q
     JOIN lucky_wheel_days d ON d.id = q.day_id
+    JOIN events e ON e.id = q.event_id
     WHERE q.event_id = ${eventId} AND q.id = ${qrId}
     LIMIT 1
   `);
-  const row = (rows as unknown as Array<QrRow & { current_deadline: Date | string }>)[0];
+  const row = (rows as unknown as Array<QrRow & { current_deadline: Date | string; website_url: string | null }>)[0];
   if (!row) throw new WheelError(404, "WHEEL_NOT_FOUND", "QR code was not found for this event");
   let origin: string;
   try {
-    origin = readPrisWheelClaimOrigin();
-  } catch {
-    throw new WheelError(503, "WHEEL_NOT_READY", "PRIS claim origin is not configured");
+    origin = validatePrisWheelClaimOrigin(row.website_url, backofficeOrigin);
+  } catch (error) {
+    throw new WheelError(503, "WHEEL_NOT_READY", error instanceof Error ? error.message : "Event PRIS website URL is invalid");
   }
   const claimUrl = `${origin}/th/lucky-wheel/claim#${qrId}`;
   return {

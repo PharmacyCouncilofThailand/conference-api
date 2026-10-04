@@ -301,4 +301,23 @@ test("lucky wheel migration enforces stock, identity, idempotency and historical
     SELECT count(*)::int AS "finalSpinCount" FROM lucky_wheel_spins
   `;
   assert.equal(finalSpinCount, 3);
+  await sql.unsafe(await migrationSql("0036_lucky_wheel_setup_simplification.sql"));
+  await sql`
+    UPDATE lucky_wheels
+    SET collection_instructions = NULL, collection_deadline = NULL
+    WHERE id = ${wheel.id}
+  `;
+  await sql`
+    UPDATE lucky_wheel_qr_codes
+    SET status = 'open', opened_by = ${admin.id}, opened_at = clock_timestamp(), opened_reason = NULL
+    WHERE id = ${qrA.id}
+  `;
+  await sql`
+    UPDATE lucky_wheel_qr_codes
+    SET status = 'closed', closed_by = ${admin.id}, closed_at = clock_timestamp(), closed_reason = NULL
+    WHERE id = ${qrA.id}
+  `;
+  await assert.rejects(sql`
+    UPDATE lucky_wheel_qr_codes SET closed_reason = '   ' WHERE id = ${qrA.id}
+  `);
 });

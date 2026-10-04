@@ -83,6 +83,29 @@ test("wheel request schemas are strict and keep stock/winner/time server-owned",
     },
   });
   assert.equal(publish.configuration.segments[0].id, segmentId);
+  assert.equal(publishWheelBodySchema.safeParse({
+    ...publish,
+    configuration: {
+      ...publish.configuration,
+      segments: [{ ...publish.configuration.segments[0], initialQuantity: 100 }],
+    },
+  }).success, true);
+  for (const initialQuantity of [-1, 1.5, 1_000_001]) {
+    assert.equal(publishWheelBodySchema.safeParse({
+      ...publish,
+      configuration: {
+        ...publish.configuration,
+        segments: [{ ...publish.configuration.segments[0], initialQuantity }],
+      },
+    }).success, false);
+  }
+  assert.equal(publishWheelBodySchema.safeParse({
+    ...publish,
+    configuration: {
+      ...publish.configuration,
+      segments: [{ ...publish.configuration.segments[0], kind: "no_prize", initialQuantity: 1 }],
+    },
+  }).success, false);
   assert.equal(
     publishWheelBodySchema.safeParse({
       ...publish,
