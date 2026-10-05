@@ -38,6 +38,7 @@ export type RedemptionCorrectionInput = {
 };
 
 export type BlockCode =
+  | "ATTENDANCE_SETUP_REQUIRED"
   | "CHECKIN_REQUIRED"
   | "REGISTRATION_REQUIRED"
   | "ACCOUNT_UNAVAILABLE"

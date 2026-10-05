@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "../../database/index.js";
 import { bangkokDay, isWithinSession } from "./policy.js";
+import { lockAttendanceCutover } from "./cutover-lock.js";
 
 export type AttendanceActor = {
   id: number;
@@ -133,6 +134,16 @@ async function authorizeActor(
   }
 }
 
+async function fencedEntitlement(database: Database, registrationSessionId: number): Promise<EntitlementRow> {
+  const discovered = await entitlement(database, registrationSessionId);
+  await lockAttendanceCutover(database, discovered.event_id, discovered.session_id, "shared");
+  const locked = await entitlement(database, registrationSessionId, true);
+  if (locked.event_id !== discovered.event_id || locked.session_id !== discovered.session_id) {
+    throw new AttendanceError(409, "ATTENDANCE_CONFLICT", "Attendance target changed; retry");
+  }
+  return locked;
+}
+
 async function activeDailyRow(
   database: Database,
   registrationSessionId: number,
@@ -214,7 +225,7 @@ export async function checkInSession(
 ): Promise<{ created: boolean; state: AttendanceState }> {
   return database.transaction(async (tx) => {
     const txDb = tx as unknown as Database;
-    const row = await entitlement(txDb, input.registrationSessionId, true);
+    const row = await fencedEntitlement(txDb, input.registrationSessionId);
     await authorizeActor(txDb, input.actor, row.event_id, row.session_id);
 
     if (row.registration_status !== "confirmed") {
@@ -305,7 +316,7 @@ export async function cancelDailyCheckin(
 
   return database.transaction(async (tx) => {
     const txDb = tx as unknown as Database;
-    const row = await entitlement(txDb, registrationSessionId, true);
+    const row = await fencedEntitlement(txDb, registrationSessionId);
     await authorizeActor(txDb, input.actor, row.event_id, row.session_id);
 
     const attendanceRows = await tx.execute(sql`

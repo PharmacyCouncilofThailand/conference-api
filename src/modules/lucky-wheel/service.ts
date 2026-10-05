@@ -7,6 +7,7 @@ import {
   clock,
   confirmedEntitlements,
   requireActiveUser,
+  requireDailyAttendanceReady,
   WheelError,
   type WheelDatabase,
 } from "./access.js";
@@ -20,6 +21,7 @@ import {
   wheelConfigurationSchema,
 } from "./schemas.js";
 import type { BlockCode, SpinInput, WheelSegment } from "./types.js";
+import { readAttendanceReadiness } from "../attendance/readiness.js";
 
 export { WheelError } from "./access.js";
 export type { WheelDatabase } from "./access.js";
@@ -368,6 +370,7 @@ export async function readAdminWheelState(
   return {
     eventId,
     actorId: admin.id,
+    attendanceReadiness: await readAttendanceReadiness(database, eventId, wheel.main_session_id),
     wheel: {
       id: wheel.id,
       mainSessionId: wheel.main_session_id,
@@ -830,6 +833,7 @@ export async function setWheelPaused(
       }
     }
 
+    if (!paused) await requireDailyAttendanceReady(txDb, eventId, wheel.main_session_id);
     await tx.execute(sql`
       UPDATE lucky_wheels
       SET paused = ${paused},
@@ -905,6 +909,12 @@ export async function getEligibility(
   if (!wheel || !wheel.enabled || !wheel.published_configuration) {
     blockCode = "WHEEL_NOT_READY";
   } else {
+    try { await requireDailyAttendanceReady(database, eventId, wheel.main_session_id); }
+    catch (error) {
+      if (!(error instanceof WheelError) || error.code !== "ATTENDANCE_SETUP_REQUIRED") throw error;
+      blockCode = error.code;
+    }
+    if (!blockCode) {
     const entitlements = await confirmedEntitlements(
       database, eventId, actor.id, wheel.main_session_id, false,
     );
@@ -920,6 +930,7 @@ export async function getEligibility(
       } else if (wheel.paused) blockCode = "WHEEL_PAUSED";
       else if (candidateSegments(availability).length === 0) blockCode = "OUT_OF_STOCK";
       else if (counts.unspent === 0) blockCode = "NO_CREDIT";
+    }
     }
   }
   return {
@@ -975,6 +986,7 @@ export async function createSpin(
     }
 
     await requireActiveUser(txDb, actor.id);
+    await requireDailyAttendanceReady(txDb, input.eventId, wheel.main_session_id);
 
     if (!wheel.enabled || !wheel.published_configuration) {
       throw new WheelError(409, "WHEEL_NOT_READY", "Lucky wheel is not published");

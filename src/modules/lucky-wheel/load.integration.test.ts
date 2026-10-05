@@ -36,10 +36,11 @@ async function bootstrap(sqlClient: SqlClient) {
     CREATE TABLE sessions (
       id serial PRIMARY KEY,
       event_id integer NOT NULL REFERENCES events(id),
-      is_main_session boolean NOT NULL DEFAULT false,
+      is_main_session boolean NOT NULL DEFAULT false,is_active boolean NOT NULL DEFAULT true,
       start_time timestamp NOT NULL,
       end_time timestamp NOT NULL
     );
+    CREATE TABLE session_attendance_policies (event_id integer,session_id integer,mode varchar(16) DEFAULT 'daily',enabled boolean DEFAULT true);
     CREATE TABLE users (
       id serial PRIMARY KEY,
       email varchar(255) NOT NULL UNIQUE,
@@ -156,8 +157,11 @@ async function createWheelFixture(
   stock: number,
   day: string,
 ) {
+  // Successive independent synthetic scenarios use the single PRIS code;
+  // the completed scenario retains its IDs/history and makes no more play requests.
+  await sqlClient`UPDATE events SET event_code=${code + '-completed'} WHERE event_code='PRIS-2026'`;
   const [event] = await sqlClient<Array<{ id: number }>>`
-    INSERT INTO events (event_code) VALUES (${code}) RETURNING id
+    INSERT INTO events (event_code) VALUES ('PRIS-2026') RETURNING id
   `;
   const [session] = await sqlClient<Array<{ id: number }>>`
     INSERT INTO sessions (event_id, is_main_session, start_time, end_time)
@@ -168,6 +172,7 @@ async function createWheelFixture(
     INSERT INTO lucky_wheels (event_id, main_session_id, enabled, paused)
     VALUES (${event.id}, ${session.id}, false, false)
   `;
+  await sqlClient`INSERT INTO session_attendance_policies (event_id,session_id) VALUES (${event.id},${session.id})`;
   const configuration = {
     segments: [{
       id: prizeId,

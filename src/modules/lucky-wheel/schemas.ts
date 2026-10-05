@@ -3,6 +3,13 @@ import { z } from "zod";
 const boundedText = (max: number) => z.string().trim().min(1).max(max);
 const uuidKey = z.string().uuid();
 
+export const attendanceSetupBodySchema = z.object({
+  mainSessionId: z.number().int().positive(),
+  expectedReadinessRevision: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: boundedText(500),
+  idempotencyKey: uuidKey,
+}).strict();
+
 export const bilingualTextSchema = z.object({
   th: boundedText(160),
   en: boundedText(160),

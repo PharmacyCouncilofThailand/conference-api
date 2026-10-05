@@ -42,6 +42,10 @@ async function bootstrap(sql: ReturnType<typeof postgres>) {
       start_time timestamp NOT NULL,
       end_time timestamp NOT NULL
     );
+    CREATE TABLE session_attendance_policies (
+      event_id integer NOT NULL,session_id integer NOT NULL,mode varchar(16) NOT NULL DEFAULT 'daily',
+      enabled boolean NOT NULL DEFAULT true,PRIMARY KEY(event_id,session_id)
+    );
     CREATE TABLE users (
       id serial PRIMARY KEY,
       status varchar(32) NOT NULL
@@ -293,7 +297,7 @@ test(
       RETURNING id, email
     `;
     const [event] = await setupSql<Array<{ id: number }>>`
-      INSERT INTO events (event_code) VALUES ('LW-T06') RETURNING id
+      INSERT INTO events (event_code) VALUES ('PRIS-2026') RETURNING id
     `;
     const [mainSession] = await setupSql<Array<{ id: number }>>`
       INSERT INTO sessions (event_id, is_main_session, start_time, end_time)
@@ -474,6 +478,10 @@ test(
       )
     `;
 
+    await setupSql`INSERT INTO session_attendance_policies (event_id,session_id,mode,enabled)
+      VALUES (${event.id},${mainSession.id},'daily',false)`;
+    assert.equal((await getEligibility(database, { id: user.id }, event.id)).blockCode, "ATTENDANCE_SETUP_REQUIRED");
+    await setupSql`UPDATE session_attendance_policies SET enabled=true WHERE event_id=${event.id}`;
     const beforeStock = await getEligibility(database, { id: user.id }, event.id);
     assert.equal(beforeStock.blockCode, "OUT_OF_STOCK");
     assert.equal(beforeStock.unspentCredits, 5);
@@ -605,6 +613,12 @@ test(
       scheduleVersion: 5,
       idempotencyKey: sameUserKey,
     };
+    await setupSql`UPDATE session_attendance_policies SET enabled=false WHERE event_id=${event.id}`;
+    await assert.rejects(() => createSpin(database, { id: user.id }, sameUserInput),
+      error => error instanceof WheelError && error.code === "ATTENDANCE_SETUP_REQUIRED");
+    await assert.rejects(() => setWheelPaused(database, claimedAdmin, event.id, false, "Open without daily setup"),
+      error => error instanceof WheelError && error.code === "ATTENDANCE_SETUP_REQUIRED");
+    await setupSql`UPDATE session_attendance_policies SET enabled=true WHERE event_id=${event.id}`;
     const sameUserResults = await Promise.all(
       Array.from({ length: 100 }, () =>
         createSpin(database, { id: user.id }, sameUserInput),

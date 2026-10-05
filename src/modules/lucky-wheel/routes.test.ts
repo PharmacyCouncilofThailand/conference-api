@@ -74,6 +74,11 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
       return {
         eventId,
         actorId: actor.id,
+        attendanceReadiness: { eventId, mainSessionId: 9, serverDate: "2026-10-29",
+          policyEnabled: true, runtimeReady: true, setupComplete: true, revision: "a".repeat(64),
+          counts: { confirmedRegistrations: 1, confirmedEntitlements: 1, missingEntitlements: 0,
+            unlinkedAccounts: 0, legacySources: 0, pendingLegacyImports: 0, alreadyImported: 0, alreadyCovered: 0, conflicts: 0 },
+          blockers: [] },
         wheel: {
           id: "00000000-0000-4000-8000-000000000150",
           mainSessionId: 9,

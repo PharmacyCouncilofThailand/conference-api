@@ -13,7 +13,11 @@ export class WheelError extends Error {
       | "WHEEL_NOT_FOUND"
       | "INSUFFICIENT_STOCK"
       | "REWARD_CONFIG_ERROR"
-      | "REWARD_CREDENTIAL_COLLISION",
+      | "REWARD_CREDENTIAL_COLLISION"
+      | "ATTENDANCE_SETUP_STALE"
+      | "ATTENDANCE_SETUP_CONFLICT"
+      | "ATTENDANCE_SETUP_BUSY"
+      | "ATTENDANCE_SETUP_REQUIRES_PAUSE",
     message: string,
     public readonly details?: Record<string, unknown>,
   ) {
@@ -43,6 +47,22 @@ export async function requireActiveUser(database: WheelDatabase, userId: number)
   if (!(rows as unknown as Array<{ id: number }>)[0]) {
     throw new WheelError(401, "ACCOUNT_UNAVAILABLE", "Active attendee account is required");
   }
+}
+
+export async function requireDailyAttendanceReady(database: WheelDatabase, eventId: number, mainSessionId: number): Promise<void> {
+  const [schemaReady] = await database.execute(sql`SELECT to_regclass('session_attendance_policies') IS NOT NULL
+    AND to_regclass('session_daily_checkins') IS NOT NULL AS ready`) as unknown as { ready: boolean }[];
+  if (schemaReady.ready) {
+    const [policy] = await database.execute(sql`SELECT 1 AS ready FROM session_attendance_policies p
+      JOIN events e ON e.id=p.event_id JOIN sessions s ON s.id=p.session_id AND s.event_id=e.id
+      JOIN lucky_wheels w ON w.event_id=e.id AND w.main_session_id=s.id
+      WHERE e.id=${eventId} AND e.event_code='PRIS-2026' AND s.id=${mainSessionId}
+        AND s.is_main_session=true AND s.is_active=true AND s.start_time<s.end_time
+        AND isfinite(s.start_time) AND isfinite(s.end_time) AND p.mode='daily' AND p.enabled=true
+    `) as unknown as { ready: number }[];
+    if (policy) return;
+  }
+  throw new WheelError(409, "ATTENDANCE_SETUP_REQUIRED", "Daily Main Session attendance setup is required");
 }
 
 export async function confirmedEntitlements(

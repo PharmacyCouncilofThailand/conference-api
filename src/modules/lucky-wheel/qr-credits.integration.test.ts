@@ -34,9 +34,10 @@ test("admin QR batches are idempotent, independent, event-scoped and individuall
     CREATE TABLE events (id serial PRIMARY KEY, event_code varchar(50) NOT NULL UNIQUE, website_url varchar(500));
     CREATE TABLE sessions (
       id serial PRIMARY KEY, event_id integer NOT NULL REFERENCES events(id),
-      is_main_session boolean NOT NULL DEFAULT false,
+      is_main_session boolean NOT NULL DEFAULT false,is_active boolean NOT NULL DEFAULT true,
       start_time timestamptz NOT NULL, end_time timestamptz NOT NULL
     );
+    CREATE TABLE session_attendance_policies (event_id integer,session_id integer,mode varchar(16) DEFAULT 'daily',enabled boolean DEFAULT true);
     CREATE TABLE users (
       id serial PRIMARY KEY, status varchar(32) NOT NULL DEFAULT 'active',
       first_name varchar(100) NOT NULL DEFAULT 'Test',
@@ -54,7 +55,7 @@ test("admin QR batches are idempotent, independent, event-scoped and individuall
       .replaceAll("--> statement-breakpoint", ""));
   }
   const [event] = await setup<Array<{ id: number }>>`
-    INSERT INTO events (event_code, website_url) VALUES ('LW-QR', 'https://pris.example.com') RETURNING id
+    INSERT INTO events (event_code, website_url) VALUES ('PRIS-2026', 'https://pris.example.com') RETURNING id
   `;
   const [otherEvent] = await setup<Array<{ id: number }>>`
     INSERT INTO events (event_code) VALUES ('LW-OTHER') RETURNING id
@@ -67,6 +68,7 @@ test("admin QR batches are idempotent, independent, event-scoped and individuall
     INSERT INTO lucky_wheels (event_id, main_session_id)
     VALUES (${event.id}, ${session.id})
   `;
+  await setup`INSERT INTO session_attendance_policies (event_id,session_id) VALUES (${event.id},${session.id})`;
   const [admin] = await setup<Array<{ id: number; email: string }>>`
     INSERT INTO backoffice_users (email, role)
     VALUES ('qr-admin@example.invalid', 'admin') RETURNING id, email
@@ -98,6 +100,10 @@ test("admin QR batches are idempotent, independent, event-scoped and individuall
     (error: unknown) => error instanceof WheelError && error.code === "IDEMPOTENCY_CONFLICT",
   );
   const [qrA, qrB] = batch.qrCodes;
+  await setup`UPDATE session_attendance_policies SET enabled=false WHERE event_id=${event.id}`;
+  await assert.rejects(() => setQrStatus(database, actor, event.id, qrA.id, { status: "open", idempotencyKey: randomUUID() }),
+    error => error instanceof WheelError && error.code === "ATTENDANCE_SETUP_REQUIRED");
+  await setup`UPDATE session_attendance_policies SET enabled=true WHERE event_id=${event.id}`;
   assert.equal((await setQrStatus(database, actor, event.id, qrA.id, {
     status: "open", reason: "Morning finished", idempotencyKey: randomUUID(),
   })).status, "open");
@@ -222,9 +228,10 @@ test("shared QR grants one durable credit per eligible account and QR under conc
     CREATE TABLE events (id serial PRIMARY KEY, event_code varchar(50) NOT NULL UNIQUE, website_url varchar(500));
     CREATE TABLE sessions (
       id serial PRIMARY KEY, event_id integer NOT NULL REFERENCES events(id),
-      is_main_session boolean NOT NULL DEFAULT false,
+      is_main_session boolean NOT NULL DEFAULT false,is_active boolean NOT NULL DEFAULT true,
       start_time timestamptz NOT NULL, end_time timestamptz NOT NULL
     );
+    CREATE TABLE session_attendance_policies (event_id integer,session_id integer,mode varchar(16) DEFAULT 'daily',enabled boolean DEFAULT true);
     CREATE TABLE users (id serial PRIMARY KEY, status varchar(32) NOT NULL);
     CREATE TABLE backoffice_users (
       id serial PRIMARY KEY, email varchar(255) NOT NULL,
@@ -257,7 +264,7 @@ test("shared QR grants one durable credit per eligible account and QR under conc
   const startAt = new Date(`${day}T00:00:00.000+07:00`).toISOString();
   const endAt = new Date(new Date(startAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
   const [event] = await setup<Array<{ id: number }>>`
-    INSERT INTO events (event_code) VALUES ('LW-CLAIM') RETURNING id
+    INSERT INTO events (event_code) VALUES ('PRIS-2026') RETURNING id
   `;
   const [otherEvent] = await setup<Array<{ id: number }>>`
     INSERT INTO events (event_code) VALUES ('LW-OTHER') RETURNING id
@@ -276,6 +283,7 @@ test("shared QR grants one durable credit per eligible account and QR under conc
       '2099-12-31T00:00:00Z'
     ) RETURNING id
   `;
+  await setup`INSERT INTO session_attendance_policies (event_id,session_id) VALUES (${event.id},${session.id})`;
   await setup`
     INSERT INTO lucky_wheel_segments (
       id, wheel_id, kind, name_th, name_en, enabled, position, remaining
@@ -318,6 +326,10 @@ test("shared QR grants one durable credit per eligible account and QR under conc
     INSERT INTO session_daily_checkins (id, registration_session_id, attendance_date, checked_in_at)
     VALUES (${randomUUID()}, ${registrationSession.id}, ${day}::date, clock_timestamp()) RETURNING id
   `;
+  await setup`UPDATE session_attendance_policies SET enabled=false WHERE event_id=${event.id}`;
+  await assert.rejects(() => claimQrCredit(database, { id: user.id }, event.id, qrA.id),
+    error => error instanceof WheelError && error.code === "ATTENDANCE_SETUP_REQUIRED");
+  await setup`UPDATE session_attendance_policies SET enabled=true WHERE event_id=${event.id}`;
   const [secondRegistration] = await setup<Array<{ id: number }>>`
     INSERT INTO registrations (event_id, user_id, status)
     VALUES (${event.id}, ${user.id}, 'confirmed') RETURNING id

@@ -36,10 +36,11 @@ async function bootstrap(sqlClient: ReturnType<typeof postgres>) {
     CREATE TABLE sessions (
       id serial PRIMARY KEY,
       event_id integer NOT NULL REFERENCES events(id),
-      is_main_session boolean NOT NULL DEFAULT false,
+      is_main_session boolean NOT NULL DEFAULT false,is_active boolean NOT NULL DEFAULT true,
       start_time timestamp NOT NULL,
       end_time timestamp NOT NULL
     );
+    CREATE TABLE session_attendance_policies (event_id integer,session_id integer,mode varchar(16) DEFAULT 'daily',enabled boolean DEFAULT true);
     CREATE TABLE users (
       id serial PRIMARY KEY,
       email varchar(255) NOT NULL UNIQUE,
@@ -166,7 +167,7 @@ test(
     const actorB = { id: adminB.id, role: "admin", email: adminB.email };
 
     const [event] = await setupSql<Array<{ id: number }>>`
-      INSERT INTO events (event_code) VALUES ('LW-T07-A') RETURNING id
+      INSERT INTO events (event_code) VALUES ('PRIS-2026') RETURNING id
     `;
     const [otherEvent] = await setupSql<Array<{ id: number }>>`
       INSERT INTO events (event_code) VALUES ('LW-T07-B') RETURNING id
@@ -181,6 +182,7 @@ test(
       VALUES (${event.id}, ${mainSession.id}, false, false)
     `;
 
+    await setupSql`INSERT INTO session_attendance_policies (event_id,session_id) VALUES (${event.id},${mainSession.id})`;
     const owner = await createAttendee(setupSql, event.id, mainSession.id, day, "a");
     const prizeId = "00000000-0000-4000-8000-000000000701";
     const noPrizeId = "00000000-0000-4000-8000-000000000702";

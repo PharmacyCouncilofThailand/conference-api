@@ -22,6 +22,7 @@ import {
     readAttendanceRows,
     readAttendanceSummary,
 } from "../../modules/attendance/readers.js";
+import { lockAttendanceCutover } from "../../modules/attendance/cutover-lock.js";
 
 export default async function (fastify: FastifyInstance) {
     // List Check-ins (reads from registration_sessions WHERE checkedInAt IS NOT NULL)
@@ -539,15 +540,29 @@ export default async function (fastify: FastifyInstance) {
             }
 
             const { registrationSessionId } = bodyResult.data;
-            const attendanceState = await readAttendanceState(db, registrationSessionId, new Date());
+            const undone = await db.transaction(async (tx) => {
+            const txDb = tx as unknown as typeof db;
+            const targets = await tx.execute(sql`
+                SELECT r.event_id, rs.session_id FROM registration_sessions rs
+                JOIN registrations r ON r.id=rs.registration_id WHERE rs.id=${registrationSessionId}
+            `) as unknown as Array<{ event_id: number; session_id: number }>;
+            const target = targets[0];
+            if (!target) throw new AttendanceError(404, "ATTENDANCE_NOT_FOUND", "Registration session not found");
+            await lockAttendanceCutover(txDb, target.event_id, target.session_id, "shared");
+            const locked = await tx.execute(sql`
+                SELECT r.event_id,rs.session_id FROM registration_sessions rs
+                JOIN registrations r ON r.id=rs.registration_id WHERE rs.id=${registrationSessionId}
+                FOR UPDATE OF rs
+            `) as unknown as Array<{ event_id: number; session_id: number }>;
+            if (locked[0]?.event_id !== target.event_id || locked[0]?.session_id !== target.session_id) {
+                throw new AttendanceError(409, "ATTENDANCE_CONFLICT", "Attendance target changed; retry");
+            }
+            const attendanceState = await readAttendanceState(txDb, registrationSessionId, new Date());
             if (attendanceState.mode === "daily") {
-                return reply.status(400).send({
-                    error: "Daily attendance must be cancelled by attendanceId with a reason",
-                    code: "DAILY_ATTENDANCE_ID_REQUIRED",
-                });
+                throw new AttendanceError(400, "DAILY_ATTENDANCE_ID_REQUIRED", "Daily attendance must be cancelled by attendanceId with a reason");
             }
 
-            const [rs] = await db
+            const [rs] = await tx
                 .select({
                     id: registrationSessions.id,
                     checkedInAt: registrationSessions.checkedInAt,
@@ -563,35 +578,31 @@ export default async function (fastify: FastifyInstance) {
                 .limit(1);
 
             if (!rs) {
-                return reply.status(404).send({ error: "Registration session not found" });
+                throw new AttendanceError(404, "ATTENDANCE_NOT_FOUND", "Registration session not found");
             }
             if (!rs.checkedInAt) {
-                return reply.status(400).send({ error: "Not checked in yet" });
+                throw new AttendanceError(400, "NOT_CHECKED_IN", "Not checked in yet");
             }
             if (actor.role !== "admin") {
                 const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
                 if (rs.checkedInAt < fiveMinAgo) {
-                    return reply.status(403).send({
-                        error: "สามารถยกเลิกเช็คอินได้ภายใน 5 นาทีเท่านั้น กรุณาติดต่อ admin",
-                        code: "UNDO_TIMEOUT",
-                    });
+                    throw new AttendanceError(403, "UNDO_TIMEOUT", "สามารถยกเลิกเช็คอินได้ภายใน 5 นาทีเท่านั้น กรุณาติดต่อ admin");
                 }
             }
 
-            await db
+            await tx
                 .update(registrationSessions)
                 .set({ checkedInAt: null, checkedInBy: null })
                 .where(eq(registrationSessions.id, registrationSessionId));
 
-            return reply.send({
-                success: true,
-                undone: {
+            return {
                     registrationSessionId,
                     sessionName: rs.sessionName,
                     regCode: rs.regCode,
                     name: `${rs.firstName} ${rs.lastName}`,
-                },
+            };
             });
+            return reply.send({ success: true, undone });
         } catch (error) {
             if (error instanceof AttendanceError) {
                 return reply.status(error.statusCode).send({ error: error.message, code: error.code });

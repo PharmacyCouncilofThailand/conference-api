@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   adminSpinQuerySchema,
+  attendanceSetupBodySchema,
   attendeeSpinHistoryQuerySchema,
   dayChangesQuerySchema,
   dayWindowBodySchema,
@@ -59,6 +60,7 @@ import {
   WheelImageError,
   type WheelImageContext,
 } from "./images.js";
+import { setupWheelAttendance } from "./attendance-setup.js";
 
 const eventIdSchema = z.coerce.number().int().positive();
 const spinIdSchema = z.string().uuid();
@@ -71,6 +73,7 @@ export interface LuckyWheelRouteOptions {
   setWheelPausedFn?: typeof setWheelPaused;
   readAdminWheelStateFn?: typeof readAdminWheelState;
   initializeWheelFn?: typeof initializeWheel;
+  setupWheelAttendanceFn?: typeof setupWheelAttendance;
   readAdminSpinsFn?: typeof readAdminSpins;
   readDayWindowFn?: typeof readDayWindow;
   listDayWindowsFn?: typeof listDayWindows;
@@ -207,6 +210,7 @@ export async function luckyWheelAdminRoutes(
   const setWheelPausedFn = options.setWheelPausedFn ?? setWheelPaused;
   const readAdminWheelStateFn = options.readAdminWheelStateFn ?? readAdminWheelState;
   const initializeWheelFn = options.initializeWheelFn ?? initializeWheel;
+  const setupWheelAttendanceFn = options.setupWheelAttendanceFn ?? setupWheelAttendance;
   const readAdminSpinsFn = options.readAdminSpinsFn ?? readAdminSpins;
   const readDayWindowFn = options.readDayWindowFn ?? readDayWindow;
   const listDayWindowsFn = options.listDayWindowsFn ?? listDayWindows;
@@ -233,6 +237,23 @@ export async function luckyWheelAdminRoutes(
     reply.header("Cache-Control", "no-store");
     return payload;
   });
+
+  fastify.post("/events/:eventId/attendance-setup",
+    { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 4 * 1024 },
+    async (request, reply) => {
+      const event = eventIdSchema.safeParse((request.params as { eventId?: unknown }).eventId);
+      const body = attendanceSetupBodySchema.safeParse(request.body);
+      if (!event.success || !body.success) return invalid(reply, request.id);
+      try {
+        const admin = await requireAdminFromRequest(database, request, reply, event.data, validateAdminActorFn);
+        if (!admin) return;
+        const result = await setupWheelAttendanceFn(database, admin, event.data, body.data);
+        return reply.status(result.replayed ? 200 : 201).send({ ...result, requestId: request.id });
+      } catch (error) {
+        request.log.error({ code: error instanceof WheelError ? error.code : "ATTENDANCE_SETUP_FAILED" });
+        return sendWheelError(reply, error, request.id);
+      }
+    });
 
   fastify.put(
     "/events/:eventId",

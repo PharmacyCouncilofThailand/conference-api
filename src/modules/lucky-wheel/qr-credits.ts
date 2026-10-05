@@ -7,6 +7,7 @@ import {
   clock,
   confirmedEntitlements,
   requireActiveUser,
+  requireDailyAttendanceReady,
   WheelError,
   type WheelDatabase,
 } from "./access.js";
@@ -71,11 +72,11 @@ function hashRequest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-async function lockedWheel(database: WheelDatabase, eventId: number): Promise<{ id: string }> {
+async function lockedWheel(database: WheelDatabase, eventId: number): Promise<{ id: string; main_session_id: number }> {
   const rows = await database.execute(sql`
-    SELECT id FROM lucky_wheels WHERE event_id = ${eventId} FOR UPDATE
+    SELECT id,main_session_id FROM lucky_wheels WHERE event_id = ${eventId} FOR UPDATE
   `);
-  const wheel = (rows as unknown as Array<{ id: string }>)[0];
+  const wheel = (rows as unknown as Array<{ id: string; main_session_id: number }>)[0];
   if (!wheel) throw new WheelError(404, "WHEEL_NOT_FOUND", "Lucky wheel was not found for this event");
   return wheel;
 }
@@ -198,6 +199,7 @@ export async function setQrStatus(
       }
       return { ...(prior.after_snapshot?.result as QrDto), replayed: true };
     }
+    if (input.status === "open") await requireDailyAttendanceReady(txDb, eventId, wheel.main_session_id);
     const current = await qrById(txDb, eventId, qrId, true);
     if (!current) throw new WheelError(404, "WHEEL_NOT_FOUND", "QR code was not found for this event");
     if (current.status === input.status) {
@@ -534,9 +536,15 @@ export async function claimQrCredit(
         const entitlements = await confirmedEntitlements(
           txDb, eventId, actor.id, wheel.main_session_id, false,
         );
-        const attendance = await activeAttendance(
+        let attendanceReady = true;
+        try { await requireDailyAttendanceReady(txDb, eventId, wheel.main_session_id); }
+        catch (error) {
+          if (!(error instanceof WheelError) || error.code !== "ATTENDANCE_SETUP_REQUIRED") throw error;
+          attendanceReady = false;
+        }
+        const attendance = attendanceReady ? await activeAttendance(
           txDb, eventId, actor.id, wheel.main_session_id, date, false,
-        );
+        ) : null;
         const userRows = await tx.execute(sql`
           SELECT id FROM users WHERE id = ${actor.id} AND status = 'active' LIMIT 1
         `);
@@ -553,6 +561,7 @@ export async function claimQrCredit(
       };
     }
     await requireActiveUser(txDb, actor.id);
+    await requireDailyAttendanceReady(txDb, eventId, wheel.main_session_id);
     const entitlements = await confirmedEntitlements(
       txDb, eventId, actor.id, wheel.main_session_id, true,
     );
