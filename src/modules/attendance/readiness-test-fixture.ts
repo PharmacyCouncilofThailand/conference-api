@@ -60,6 +60,14 @@ export async function createAttendanceFixture() {
     async cleanup() {
       // Only this synthetic event/account; never reset the full-schema test database.
       await client`DELETE FROM lucky_wheel_audit_events WHERE event_id=${event.id}`;
+      await client`DELETE FROM lucky_wheel_redemption_corrections WHERE event_id=${event.id}`;
+      await client`DELETE FROM lucky_wheel_redemption_confirmations WHERE event_id=${event.id}`;
+      await client`DELETE FROM lucky_wheel_redemptions WHERE event_id=${event.id}`;
+      await client`DELETE FROM lucky_wheel_spins WHERE event_id=${event.id}`;
+      await client`DELETE FROM lucky_wheel_credit_claims WHERE event_id=${event.id}`;
+      await client`DELETE FROM lucky_wheel_qr_codes WHERE event_id=${event.id}`;
+      await client`DELETE FROM lucky_wheel_days WHERE event_id=${event.id}`;
+      await client`DELETE FROM lucky_wheel_segments WHERE wheel_id=${wheel.id}`;
       await client`DELETE FROM lucky_wheels WHERE event_id=${event.id}`;
       await client`DELETE FROM session_daily_checkins WHERE registration_session_id IN
         (SELECT rs.id FROM registration_sessions rs JOIN registrations r ON r.id=rs.registration_id WHERE r.event_id=${event.id})`;

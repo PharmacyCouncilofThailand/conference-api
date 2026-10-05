@@ -6,6 +6,64 @@ import { createAttendanceFixture } from "../attendance/readiness-test-fixture.js
 import { readAttendanceReadiness } from "../attendance/readiness.js";
 import { setupWheelAttendance, type AttendanceSetupInput } from "./attendance-setup.js";
 import { WheelError } from "./access.js";
+import { lockAttendanceCutover } from "../attendance/cutover-lock.js";
+import { cancelDailyCheckin, checkInSession } from "../attendance/service.js";
+import type { WheelDatabase } from "./access.js";
+
+test("in-flight legacy scan makes setup wait then reject stale evidence until reviewed again", { timeout: 15_000 }, async t => {
+  const f = await createAttendanceFixture(); t.after(() => f.cleanup());
+  const input: AttendanceSetupInput = { mainSessionId: f.mainSessionId,
+    expectedReadinessRevision: (await readAttendanceReadiness(f.database, f.eventId, f.mainSessionId)).revision,
+    reason: "Synthetic cutover preview", idempotencyKey: crypto.randomUUID() };
+  let acquired!: () => void; let release!: () => void;
+  const held = new Promise<void>(resolve => { acquired = resolve; });
+  const unblock = new Promise<void>(resolve => { release = resolve; });
+  const scanner = f.database.transaction(async tx => {
+    const txDb = tx as unknown as WheelDatabase;
+    await lockAttendanceCutover(txDb, f.eventId, f.mainSessionId, "shared");
+    const result = await checkInSession(txDb, { registrationSessionId: f.entitlementId, actor: f.admin });
+    assert.equal(result.state.mode, "single"); assert.equal(result.created, true);
+    acquired(); await unblock;
+  });
+  await held;
+  const setup = setupWheelAttendance(f.database, f.admin, f.eventId, input)
+    .then(result => ({ result, error: null }), error => ({ result: null, error }));
+  let waiting = false;
+  try {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const [row] = await f.client`SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND mode='ExclusiveLock'
+        AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())) AS waiting`;
+      if (row.waiting) { waiting = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  } finally { release(); }
+  await scanner;
+  const outcome = await setup;
+  assert.equal(waiting, true, "setup must wait for the in-flight real scanner's shared fence");
+  assert.ok(outcome.error instanceof WheelError);
+  assert.equal(outcome.error.code, "ATTENDANCE_SETUP_STALE");
+  const [untouched] = await f.client`SELECT
+    (SELECT count(*)::int FROM session_attendance_policies WHERE event_id=${f.eventId}) AS policies,
+    (SELECT count(*)::int FROM session_daily_checkins WHERE registration_session_id=${f.entitlementId}) AS imports,
+    (SELECT count(*)::int FROM lucky_wheel_audit_events WHERE event_id=${f.eventId}) AS audits`;
+  assert.deepEqual(untouched, { policies: 0, imports: 0, audits: 0 });
+  const [source] = await f.client`SELECT checked_in_at::text,checked_in_by FROM registration_sessions WHERE id=${f.entitlementId}`;
+  assert.ok(source.checked_in_at); assert.equal(source.checked_in_by, f.admin.id);
+  const reviewed = { ...input, expectedReadinessRevision:
+    (await readAttendanceReadiness(f.database, f.eventId, f.mainSessionId)).revision,
+    idempotencyKey: crypto.randomUUID() };
+  assert.notEqual(reviewed.expectedReadinessRevision, input.expectedReadinessRevision);
+  const result = await setupWheelAttendance(f.database, f.admin, f.eventId, reviewed);
+  assert.equal(result.importedCount, 1); assert.equal(result.replayed, false);
+  assert.equal((await setupWheelAttendance(f.database, f.admin, f.eventId, reviewed)).replayed, true);
+  const [after] = await f.client`SELECT checked_in_at::text,checked_in_by FROM registration_sessions WHERE id=${f.entitlementId}`;
+  assert.deepEqual(after, source);
+  const [counts] = await f.client`SELECT
+    (SELECT count(*)::int FROM session_daily_checkins WHERE registration_session_id=${f.entitlementId}) AS imports,
+    (SELECT count(*)::int FROM lucky_wheel_audit_events WHERE event_id=${f.eventId} AND operation='attendance_setup') AS audits`;
+  assert.deepEqual(counts, { imports: 1, audits: 1 });
+});
 
 test("setup NOWAIT rolls back during grant parent contention and the same request succeeds after release", { timeout: 15_000 }, async t => {
   const f = await createAttendanceFixture(); t.after(() => f.cleanup());
@@ -139,12 +197,91 @@ test("setup creates no checkin without legacy evidence and refuses missing confi
 });
 
 test("two independently keyed setups from one preview cannot silently reuse stale evidence", async t => {
-  const f = await createAttendanceFixture(); t.after(() => f.cleanup());
+  const f = await createAttendanceFixture();
+  const [other] = await f.client<{ id: number; email: string }[]>`INSERT INTO backoffice_users (email,password_hash,role,first_name,last_name,is_active)
+    VALUES (${`second-admin-${crypto.randomUUID()}@example.invalid`},'x','admin','Second','Admin',true) RETURNING id,email`;
+  t.after(async () => {
+    await f.client`DELETE FROM lucky_wheel_audit_events WHERE event_id=${f.eventId}`;
+    await f.client`DELETE FROM backoffice_users WHERE id=${other.id}`;
+    await f.cleanup();
+  });
   const revision = (await readAttendanceReadiness(f.database, f.eventId, f.mainSessionId)).revision;
   const requests = Array.from({ length: 2 }, () => ({ mainSessionId: f.mainSessionId,
     expectedReadinessRevision: revision, reason: "Reviewed setup", idempotencyKey: crypto.randomUUID() }));
-  const results = await Promise.allSettled(requests.map(input => setupWheelAttendance(f.database, f.admin, f.eventId, input)));
+  const actors = [f.admin, { ...other, role: "admin" as const }];
+  const results = await Promise.allSettled(requests.map((input, index) => setupWheelAttendance(f.database, actors[index], f.eventId, input)));
   assert.equal(results.filter(row => row.status === "fulfilled").length, 1);
   const rejected = results.find(row => row.status === "rejected") as PromiseRejectedResult;
   assert.equal(rejected.reason.code, "ATTENDANCE_SETUP_STALE");
+});
+
+test("scanner queued behind actual setup re-reads the committed daily policy", { timeout: 15_000 }, async t => {
+  const f = await createAttendanceFixture(); t.after(() => f.cleanup());
+  const input = { mainSessionId: f.mainSessionId, expectedReadinessRevision:
+    (await readAttendanceReadiness(f.database, f.eventId, f.mainSessionId)).revision,
+    reason: "Synthetic reviewed cutover", idempotencyKey: crypto.randomUUID() };
+  let acquired!: () => void; let release!: () => void;
+  const held = new Promise<void>(resolve => { acquired = resolve; });
+  const unblock = new Promise<void>(resolve => { release = resolve; });
+  const setup = f.database.transaction(async tx => {
+    const result = await setupWheelAttendance(tx as unknown as WheelDatabase, f.admin, f.eventId, input);
+    assert.equal(result.importedCount, 0); acquired(); await unblock;
+  });
+  await held;
+  const scan = checkInSession(f.database, { registrationSessionId: f.entitlementId, actor: f.admin });
+  let waiting = false;
+  try {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const [row] = await f.client`SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory'
+        AND mode='ShareLock' AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())) AS waiting`;
+      if (row.waiting) { waiting = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  } finally { release(); }
+  await setup;
+  const result = await scan;
+  assert.equal(waiting, true); assert.equal(result.state.mode, "daily"); assert.equal(result.created, true);
+});
+
+test("in-flight imported-source cancellation makes setup stale and cannot resurrect history", { timeout: 15_000 }, async t => {
+  const f = await createAttendanceFixture(); t.after(() => f.cleanup());
+  await f.client`UPDATE registration_sessions SET checked_in_at=clock_timestamp() AT TIME ZONE 'UTC',checked_in_by=${f.admin.id} WHERE id=${f.entitlementId}`;
+  const command = async () => ({ mainSessionId: f.mainSessionId, expectedReadinessRevision:
+    (await readAttendanceReadiness(f.database, f.eventId, f.mainSessionId)).revision,
+    reason: "Synthetic cancellation cutover", idempotencyKey: crypto.randomUUID() });
+  await setupWheelAttendance(f.database, f.admin, f.eventId, await command());
+  const [attendance] = await f.client`SELECT id FROM session_daily_checkins WHERE registration_session_id=${f.entitlementId}`;
+  const input = await command();
+  let acquired!: () => void; let release!: () => void;
+  const held = new Promise<void>(resolve => { acquired = resolve; });
+  const unblock = new Promise<void>(resolve => { release = resolve; });
+  const cancel = f.database.transaction(async tx => {
+    await cancelDailyCheckin(tx as unknown as WheelDatabase, {
+      attendanceId: attendance.id, actor: f.admin, reason: "Synthetic in-flight cancellation" });
+    acquired(); await unblock;
+  });
+  await held;
+  const setup = setupWheelAttendance(f.database, f.admin, f.eventId, input)
+    .then(result => ({ result, error: null }), error => ({ result: null, error }));
+  let waiting = false;
+  try {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const [row] = await f.client`SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory'
+        AND mode='ExclusiveLock' AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())) AS waiting`;
+      if (row.waiting) { waiting = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  } finally { release(); }
+  await cancel;
+  const outcome = await setup;
+  assert.equal(waiting, true); assert.equal(outcome.error?.code, "ATTENDANCE_SETUP_STALE");
+  assert.equal((await setupWheelAttendance(f.database, f.admin, f.eventId, await command())).importedCount, 0);
+  const [counts] = await f.client`SELECT count(*)::int AS total,count(*) FILTER (WHERE cancelled_at IS NULL)::int AS active
+    FROM session_daily_checkins WHERE registration_session_id=${f.entitlementId}`;
+  assert.deepEqual(counts, { total: 1, active: 0 });
+  const [rejectedWrites] = await f.client`SELECT count(*)::int AS audits FROM lucky_wheel_audit_events
+    WHERE event_id=${f.eventId} AND idempotency_key=${input.idempotencyKey}`;
+  assert.equal(rejectedWrites.audits, 0);
 });

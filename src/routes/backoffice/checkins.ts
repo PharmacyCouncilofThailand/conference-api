@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { db } from "../../database/index.js";
+import { db as defaultDatabase } from "../../database/index.js";
 import {
     registrations,
     registrationSessions,
@@ -24,7 +24,8 @@ import {
 } from "../../modules/attendance/readers.js";
 import { lockAttendanceCutover } from "../../modules/attendance/cutover-lock.js";
 
-export default async function (fastify: FastifyInstance) {
+export default async function (fastify: FastifyInstance, options: { database?: typeof defaultDatabase }) {
+    const db = options.database ?? defaultDatabase;
     // List Check-ins (reads from registration_sessions WHERE checkedInAt IS NOT NULL)
     fastify.get("", async (request, reply) => {
         const queryResult = checkinListSchema.safeParse(request.query);

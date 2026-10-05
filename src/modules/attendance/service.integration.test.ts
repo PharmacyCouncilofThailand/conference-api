@@ -13,11 +13,14 @@ import {
   readAttendanceState,
 } from "./service.js";
 import { bangkokDay } from "./policy.js";
+import { createAttendanceFixture } from "./readiness-test-fixture.js";
+import { readAttendanceReadiness } from "./readiness.js";
+import { setupWheelAttendance } from "../lucky-wheel/attendance-setup.js";
 
 type Database = typeof db;
 
 test(
-  "shared attendance writer isolates daily policy, preserves legacy behavior, and backfills repeat-safely",
+  "shared attendance writer isolates daily policy and preserves legacy behavior",
   { timeout: 60_000 },
   async (t) => {
     const clientA = openSessionGrantTestDatabase();
@@ -225,60 +228,41 @@ test(
       (error: unknown) => error instanceof AttendanceError && error.code === "NO_ACCESS",
     );
 
-    const [backfillRegistration] = await clientA<Array<{ id: number }>>`
-      INSERT INTO registrations (
-        reg_code,event_id,ticket_type_id,email,first_name,last_name,status
-      ) VALUES (
-        ${`LW-T02-BACKFILL-${unique}`},${event.id},${ticket.id},
-        ${`lw-t02-backfill-${unique}@example.invalid`},'Legacy','Person','confirmed'
-      ) RETURNING id
-    `;
-    const [backfillEntitlement] = await clientA<Array<{ id: number }>>`
-      INSERT INTO registration_sessions (
-        registration_id,session_id,ticket_type_id,source,checked_in_at,checked_in_by
-      ) VALUES (
-        ${backfillRegistration.id},${dailySession.id},${ticket.id},'purchase',
-        '2026-10-29 17:30:00',${admin.id}
-      ) RETURNING id
-    `;
-    const backfillSql = await readFile(
-      resolve(process.cwd(), "sql", "lucky-wheel-setup", "01_backfill_daily_attendance.sql"),
-      "utf8",
-    );
-    await clientA.unsafe(backfillSql);
-    const [imported] = await clientA<
-      Array<{
-        id: string;
-        attendance_date: string;
-        checked_in_at: Date | string;
-        checked_in_by: number | null;
-        legacy_source_key: string;
-      }>
-    >`
-      SELECT
-        id,attendance_date::text AS attendance_date,checked_in_at,checked_in_by,legacy_source_key
-      FROM session_daily_checkins
-      WHERE legacy_source_key=${`registration_sessions:${backfillEntitlement.id}`}
-    `;
-    assert.equal(imported.attendance_date, "2026-10-30");
-    assert.equal(new Date(imported.checked_in_at).toISOString(), "2026-10-29T17:30:00.000Z");
-    assert.equal(imported.checked_in_by, admin.id);
-
-    await clientA`
-      UPDATE session_daily_checkins
-      SET cancelled_at=clock_timestamp(),
-          cancelled_by=${admin.id},
-          cancellation_reason='legacy correction'
-      WHERE id=${imported.id}
-    `;
-    await clientA.unsafe(backfillSql);
-    const [replay] = await clientA<Array<{ total: number; active: number }>>`
-      SELECT
-        count(*)::int AS total,
-        count(*) FILTER (WHERE cancelled_at IS NULL)::int AS active
-      FROM session_daily_checkins
-      WHERE legacy_source_key=${`registration_sessions:${backfillEntitlement.id}`}
-    `;
-    assert.deepEqual(replay, { total: 1, active: 0 });
   },
 );
+
+
+test("retired SQL only inventories reviewed targets; actual setup imports once and preserves cancellations", async t => {
+  const f = await createAttendanceFixture(); t.after(() => f.cleanup());
+  await f.client`UPDATE registration_sessions SET checked_in_at='2026-10-29 17:30:00',checked_in_by=${f.admin.id} WHERE id=${f.entitlementId}`;
+  const inventory = await readFile(resolve(process.cwd(), "sql/lucky-wheel-setup/00_readiness.sql"), "utf8");
+  const retired = await readFile(resolve(process.cwd(), "sql/lucky-wheel-setup/01_backfill_daily_attendance.sql"), "utf8");
+  assert.match(retired, /\\ir 00_readiness\.sql/);
+  assert.doesNotMatch(retired + inventory, /\b(?:INSERT|UPDATE|DELETE|TRUNCATE|LOCK TABLE)\b/i);
+  const scoped = (main: number) => inventory.replace(/:'event_id'/g, `'${f.eventId}'`)
+    .replace(/:'main_session_id'/g, `'${main}'`);
+  // Reserve the connection so a deliberately rejected transaction can be rolled back.
+  const connection = await f.client.reserve();
+  try {
+    await connection.unsafe(scoped(f.mainSessionId));
+    const [empty] = await connection`SELECT count(*)::int AS n FROM session_daily_checkins WHERE registration_session_id=${f.entitlementId}`;
+    assert.equal(empty.n, 0);
+    await assert.rejects(() => connection.unsafe(scoped(f.workshopId)), /binding mismatch/);
+    await connection`ROLLBACK`;
+  } finally { connection.release(); }
+  const command = async () => ({ mainSessionId: f.mainSessionId, expectedReadinessRevision:
+    (await readAttendanceReadiness(f.database, f.eventId, f.mainSessionId)).revision,
+    reason: "Reviewed synthetic legacy import", idempotencyKey: crypto.randomUUID() });
+  const input = await command();
+  assert.equal((await setupWheelAttendance(f.database, f.admin, f.eventId, input)).importedCount, 1);
+  const [imported] = await f.client`SELECT id,attendance_date::text AS day,checked_in_at::text AS instant,checked_in_by
+    FROM session_daily_checkins WHERE legacy_source_key=${`registration_sessions:${f.entitlementId}`}`;
+  assert.equal(imported.day, "2026-10-30"); assert.equal(new Date(imported.instant).toISOString(), "2026-10-29T17:30:00.000Z");
+  assert.equal(imported.checked_in_by, f.admin.id);
+  await cancelDailyCheckin(f.database, { attendanceId: imported.id, actor: f.admin, reason: "Synthetic imported correction" });
+  assert.equal((await setupWheelAttendance(f.database, f.admin, f.eventId, input)).replayed, true);
+  assert.equal((await setupWheelAttendance(f.database, f.admin, f.eventId, await command())).importedCount, 0);
+  const [counts] = await f.client`SELECT count(*)::int AS total,count(*) FILTER (WHERE cancelled_at IS NULL)::int AS active
+    FROM session_daily_checkins WHERE legacy_source_key=${`registration_sessions:${f.entitlementId}`}`;
+  assert.deepEqual(counts, { total: 1, active: 0 });
+});

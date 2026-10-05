@@ -1,103 +1,56 @@
-# Lucky Wheel database setup
+# PRIS daily attendance and shared QR release runbook
 
-This directory contains reviewed, manual SQL support for PRIS2026 Lucky Wheel. It is not an automatic production migration path.
+These scripts inspect one reviewed event/Main Session; they do not grant tickets, enable policy or import attendance. `01_backfill_daily_attendance.sql` is retained as a **read-only** candidate/conflict report and includes the same scoped inventory as `00_readiness.sql`. The sole import/activation path is the authenticated, audited admin setup endpoint.
 
-## Order and safety
+## Reviewed target and backup
 
-1. Run `00_readiness.sql` read-only against the intended environment and review every result set.
-2. Confirm exactly one intended PRIS2026 Main Session, inspect missing entitlement links, null `user_id` rows, and legacy check-ins. Do not repair anything implicitly.
-3. Apply `drizzle/0033_pris_daily_attendance.sql` through the deployment process that owns manually numbered SQL migrations.
-4. Do **not** use `db:push` as evidence that 0033 ran. The repository's Drizzle journal is older than the manually managed SQL sequence.
-5. Verify schema state directly:
-   - `pg_catalog.pg_class` / `to_regclass` shows `session_attendance_policies` and `session_daily_checkins`.
-   - `pg_indexes` shows `session_daily_checkins_active_day_unique`, `session_daily_checkins_legacy_source_unique`, `session_daily_checkins_registration_history_idx`, and `session_daily_checkins_date_report_idx`.
-   - `pg_constraint` shows the cancellation-consistency check and foreign keys.
-6. Enabling daily attendance is a separate, audited operational step. Insert/update a policy only after the exact event/session IDs have been reviewed. The migration deliberately does not auto-enable every Main Session.
-7. The legacy backfill belongs to the controlled cutover in Task 2. Do not copy legacy timestamps into daily history before the shared writer/cutover checks are ready.
-
-## Local verification
-
-Use only a dedicated test database whose database/schema name contains `test`, and keep it distinct from `DATABASE_URL`. The integration harness must retain the repository's destructive-test guard. Verify migration reruns, partial unique indexes, cancellation history, and original entitlement counts before marking the task complete.
-
-No production data, credentials, event/session IDs, prize setup, or R2 values belong in this directory.
-
-
-## Reviewed release runbook
-
-Deployment remains a separate reviewed operation. The commands below are not authorization to run against production; the operator must first select the reviewed target, backup destination, event/session IDs, prize inventory, R2 configuration and collection deadline.
-
-### 1. Readiness and backup
-
-1. Export the intended deployment database URL through the deployment secret manager. Do not copy credentials into this repository or acceptance evidence.
-2. Run the read-only inventory and save its output for review:
-   ```sh
-   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/lucky-wheel-setup/00_readiness.sql
-   ```
-3. Confirm exactly one intended PRIS event/Main Session pair, every confirmed registration that should participate has its existing entitlement, and every null user or legacy check-in is understood before mutation.
-4. Take the deployment-owned PostgreSQL backup before schema/cutover work:
-   ```sh
-   pg_dump --format=custom --file="$BACKUP_FILE" "$DATABASE_URL"
-   ```
-   The operator must verify the backup artifact exists and is restorable under the deployment procedure before continuing.
-
-### 2. Schema and daily-attendance cutover
-
-Apply the reviewed numbered SQL through the deployment process that owns manually numbered migrations. Do not use `db:push` as migration evidence.
+1. Resolve DATABASE_URL from the selected environment's secret configuration. Record host/port/database only, never credentials. Local and Railway are separate targets; a successful Local run does not authorize Railway activation.
+2. Review event code `PRIS-2026`, the original active Main Session, its finite valid times and the wheel's exact binding. Preserve existing ticket/QR/registration/entitlement IDs. Do not create replacement sessions/grants or pre-create attendance.
+3. Take a full custom-format PostgreSQL backup and verify restore into an isolated, guarded test database before operational mutation. Use the database owner's supported pg_dump/pg_restore version. Keep backup artifacts private, outside Git.
+4. Run with explicit reviewed IDs; omitted/invalid/mismatched IDs fail instead of broadening scope:
 
 ```sh
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f drizzle/0033_pris_daily_attendance.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f drizzle/0034_lucky_wheel.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v event_id="$EVENT_ID" -v main_session_id="$MAIN_SESSION_ID" -f sql/lucky-wheel-setup/00_readiness.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v event_id="$EVENT_ID" -v main_session_id="$MAIN_SESSION_ID" -f sql/lucky-wheel-setup/01_backfill_daily_attendance.sql
 ```
 
-Re-run the readiness inventory and direct catalog checks for the tables, indexes, constraints and activation trigger before enabling policy. Deploy the shared daily-attendance writer before the legacy backfill, then run:
+Inspect missing confirmed entitlements, unlinked accounts and every legacy classification. These SQL reports do not replace the API's readiness fingerprint. No names/emails/ticket codes belong in generic acceptance logs.
 
-```sh
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/lucky-wheel-setup/01_backfill_daily_attendance.sql
-```
+## Schema and all-writer gate
 
-The backfill prints conflicts and does not overwrite them. Any returned conflict must be reconciled explicitly before daily attendance is enabled for the reviewed PRIS event/Main Session pair.
+Verify manually managed migrations **0033–0036** through the deployment owner's process; never use `db:push` or the older Drizzle journal as proof. These migrations do not automatically enable the daily policy.
 
-### 3. Reconciliation before enablement
+- 0033: daily policy/history, active-day and legacy-source unique indexes, cancellation checks/FKs.
+- 0034: wheel/segments/spins/audit, reward confirmations/corrections and activation guard.
+- 0035: shared QR/day windows/credit claims, one account per QR, one allocation per spent credit; multiple spins per day allowed.
+- 0036: initial prize quantities and optional collection deadline/instructions, event website URL based QR link.
 
-Before wheel enablement, record and review:
+Check actual `pg_class`, `pg_indexes`, `pg_constraint`, columns and trigger/function definitions against the numbered SQL. Verify **every** running scanner/undo/API writer uses the shared attendance cutover fence. Stop if an old instance or deployment version is unknown. Deploy/restart is separately reviewed; this runbook does not authorize push/deploy.
 
-- confirmed entitlement count for the intended event/Main Session;
-- active daily check-in duplicates: expected zero;
-- Lucky Wheel duplicate account/event/day spins: expected zero;
-- negative physical-prize stock: expected zero;
-- imported legacy daily rows and any conflicts;
-- current wheel version/pool revision and audit history.
+## Paused, reviewed admin setup
 
-Use the same invariant SQL recorded in the Task 12 acceptance evidence. Do not delete cancelled attendance, redemption corrections or audit history to make totals balance.
+1. Keep the wheel paused; record original pause/configuration/pool/QR state. Pausing stops new claims/spins and preserves existing results/credits/stock.
+2. Use a real active authenticated admin, select the existing bound Main Session and reload authoritative readiness. Resolve blockers explicitly; do not fabricate missing evidence or bypass login.
+3. Submit `POST /api/backoffice/lucky-wheel/events/:eventId/attendance-setup` with `mainSessionId`, current `expectedReadinessRevision`, meaningful `reason` and a new UUID `idempotencyKey`.
+4. An in-flight scanner may make setup wait then return `ATTENDANCE_SETUP_STALE`: no setup writes commit. Reload and review the new facts, then submit a new command/key. For uncertain response or BUSY, retry the **same exact command/key**; never manufacture a second operation before determining its outcome.
+5. Setup atomically enables the explicit daily policy and imports only proven UTC legacy timestamps/scanners as their actual Asia/Bangkok dates. No other days are invented. Imported cancellations stay cancelled. Audit records actor/reason/counts/source digest/IDs.
+6. Reload server state; verify setupComplete, exact import count/actor/time/audit, source preservation, unchanged original ticket/grant counts, no duplicate active attendance or legacy source. Setup never opens QR or unpauses automatically.
 
-### 4. Admin operational setup
+## Daily scanner, QR and participant flow
 
-1. Verify the intended admin identities are active and event-scoped.
-2. Configure the exact reviewed Main Session; do not create a second entitlement/session model for the wheel.
-3. Configure real bilingual prize names and stock through the admin adjustment flow. Do not seed sample prizes.
-4. Configure and verify the R2 bucket/public base/credentials through the deployment secret/config process; upload only wheel images and verify history retains referenced images.
-5. Configure the real collection instructions and deadline.
-6. Publish the reviewed configuration while the wheel remains paused.
-7. Re-read the authoritative admin state and confirm configuration version, pool revision, stock and audit entries.
+- Selected, assigned and check-all scans share daily rules only for the configured Main Session. Scanner shows server Thai date. Same-day duplicate returns the first active record/time; next-day scan creates that day's history. Workshops retain their original rules. Cancel one exact daily ID; preserve other days/history.
+- Admin sets one Thai daily interval for **both** QR claims and spins, freely editable with actor/reason/old-new audit. Unspent non-revoked credits temporarily stop outside the current interval and resume when reopened in the same Thai day. Previous-day credits permanently expire.
+- Create named closed QR batches; explicitly open only reviewed date/name/IDs after separate operational authorization. Multiple QR may stay open together; opening B never closes A. Download PNG links to PRIS via event website_url and never opens QR/grants credit. No fallback input code or screen projection flow.
+- One logged-in confirmed account with original Main entitlement and today's active attendance receives one credit per QR. Re-scan/retry/concurrent requests return the original claim. At spin re-check attendance, interval, pause and actual stock; consume one distinct credit and allocate stock atomically. Paused/empty physical stock stops both new claims/spins without spending rights, even with unlimited no-prize segments.
+- Publish real bilingual prizes with initial quantity once. Later use audited positive stock top-ups. Do not seed sample prizes. Verify wheel-image R2 separately. Stock is shared across days; nothing refills automatically.
+- Keep reward QR/manual lookup, owner verification and exactly-once staff collection. Participant shows static pickup instruction; no mandatory hidden collection deadline. Collection does not cut stock again. Cancelled attendance never reverses committed spin/result/stock automatically.
 
-### 5. Controlled smoke activation
+For operational Local repair, import only the photographed incident's proven legacy history through setup. Leave current QR closed unless exact opening is explicitly authorized. Do not allocate a smoke prize or mutate a real participant's check-in merely to demonstrate a test.
 
-Keep the wheel paused until readiness, reconciliation, admin setup, staging/device checks and rollback ownership are confirmed. During the reviewed smoke window:
+## Verification and rollback
 
-1. verify original PRIS login and original Main Session QR/check-in;
-2. verify eligibility without allocating a prize;
-3. unpause under an identified admin;
-4. perform only the explicitly authorized smoke spin/collection flow;
-5. verify history/proof, reward lookup, identity check and exactly-once handover;
-6. recheck stock, duplicate-day and attendance invariants;
-7. pause again if the activation window is not immediately continuing.
+Use guarded isolated test databases, sequential destructive wheel suites then full-schema synthetic attendance suites, builds/lint and authenticated desktop/mobile browser checks. Do not reset operational data or change admin passwords to bypass access. Keep real device/LINE/camera/R2 checks explicitly NOT VERIFIED if unavailable.
 
-No local implementation command in this repository authorizes a live smoke allocation.
+Reconcile per selected event/session: active-day duplicates=0, duplicate legacy sources=0, duplicate account/QR claims=0, duplicate credit spends=0, negative stock=0; original sessions/tickets/entitlements and legacy timestamp/scanner unchanged; setup audit exactly once. Preserve allocation/redemption/history audit counts before/after setup. Account/event/day spin uniqueness is obsolete.
 
-### 6. Incident pause and rollback
-
-For an incident, pause the wheel first through the admin pause operation so existing attendance, spins, reward proofs, audit rows and redemption history remain queryable. Do not refund stock or daily rights automatically.
-
-A code rollback must preserve both `session_daily_checkins` history and all Lucky Wheel allocation/redemption tables. Do not restore the old once-per-session scan semantics while a live event depends on daily attendance. Schema/data rollback or backup restore is a separate incident decision requiring explicit database-owner review; never drop the new history tables merely to roll back application code.
-
-After any rollback or incident change, rerun readiness/catalog checks and the invariant queries before re-enabling the wheel.
+For an incident, pause wheel and close new QR claims through admin operations. Preserve schema/history/source/credits/spins/stock/confirmations/corrections. Never auto-refund, drop history, disable daily policy or restore an old single-session writer once live daily attendance depends on it. Schema restore/data rollback requires a separate reviewed database-owner incident decision. Reconcile and review readiness again before reopening.
