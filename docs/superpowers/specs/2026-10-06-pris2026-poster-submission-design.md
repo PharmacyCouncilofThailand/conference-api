@@ -2,7 +2,7 @@
 
 วันที่: 6 ตุลาคม 2569 (2026-10-06), Asia/Bangkok
 
-สถานะ: ผู้ใช้ยืนยันข้อกำหนดและ Layout แล้ว เอกสารฉบับนี้รอทบทวนก่อนเขียน implementation plan
+สถานะ: ผู้ใช้ยืนยันข้อกำหนดและ Layout แล้ว และสั่งให้เขียน implementation plan เมื่อ 7 ตุลาคม 2569
 
 ครอบคลุม: conference-api, conference-backoffice และ Pris2026
 
@@ -333,4 +333,4 @@ mutations มี idempotency key และ request fingerprint คำขอเ�
 
 ข้อกำหนดธุรกิจและตัวเลือกทั้งหมดได้รับคำตอบแล้ว เอกสารนี้รวมคำตอบล่าสุด โดยเฉพาะสิทธิ์ครั้งเดียว คำขอแก้ไขที่แก้ย้อนหลังไม่ได้ การตรวจซ้ำก่อน finalize การคงปุ่ม PDF และธีมเดียวกัน
 
-ยังไม่เขียน implementation plan หรือแก้ระบบ ขั้นถัดไปหลังผู้ใช้ทบทวนเอกสารนี้คือ writing-plans ตาม workflow ที่ร้องขอ
+Implementation plan บันทึกที่ `D:/confer/confer/conference/conference-api/docs/superpowers/plans/2026-10-07-pris2026-poster-submission.md` ตาม writing-plans ที่ผู้ใช้ร้องขอ ยังไม่ได้แก้ระบบหรือ deploy
