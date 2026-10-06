@@ -37,7 +37,12 @@
     "jobs:session-grants:health": "tsx src/modules/session-grants/jobs-runner.ts --healthcheck",
     "jobs:session-grants:prod": "node dist/modules/session-grants/jobs-runner.js",
     "jobs:session-grants:prod:once": "node dist/modules/session-grants/jobs-runner.js --once",
-    "jobs:session-grants:prod:health": "node dist/modules/session-grants/jobs-runner.js --healthcheck"
+    "jobs:session-grants:prod:health": "node dist/modules/session-grants/jobs-runner.js --healthcheck",
+    "test:posters": "tsx --test src/modules/posters/policy.test.ts src/modules/posters/data.test.ts src/modules/posters/file-validation.test.ts src/modules/posters/storage.test.ts src/modules/posters/email-template.test.ts",
+    "test:posters:integration": "tsx --test --test-concurrency=1 src/modules/posters/migration.integration.test.ts src/modules/posters/reconcile.integration.test.ts src/modules/posters/access.integration.test.ts src/modules/posters/operations.integration.test.ts src/modules/posters/revisions.integration.test.ts src/modules/posters/uploads.integration.test.ts src/modules/posters/email-jobs.integration.test.ts src/modules/posters/readers.integration.test.ts src/modules/posters/routes.integration.test.ts",
+    "posters:worker:dev": "tsx src/modules/posters/jobs-runner.ts",
+    "posters:worker": "node dist/modules/posters/jobs-runner.js",
+    "posters:worker:health": "node dist/modules/posters/jobs-runner.js --healthcheck"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",
@@ -55,6 +60,7 @@
     "drizzle-orm": "^0.38.3",
     "fastify": "^5.2.0",
     "googleapis": "^170.0.0",
+    "pdf-lib": "1.17.1",
     "postgres": "^3.4.5",
     "qrcode": "^1.5.4",
     "react": "^19.2.3",

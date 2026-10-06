@@ -48,6 +48,7 @@ export type WheelImageStorage = {
     body: Buffer;
     contentType: string;
     cacheControl: string;
+    signal?: AbortSignal;
   }): Promise<void>;
   deleteObject(key: string): Promise<void>;
 };
@@ -171,7 +172,7 @@ export function createR2ImageStorage(config: R2ImageConfig): WheelImageStorage {
         ContentType: input.contentType,
         ContentLength: input.body.length,
         CacheControl: input.cacheControl,
-      }));
+      }), { abortSignal: input.signal });
     },
     async deleteObject(key) {
       await client.send(new DeleteObjectCommand({

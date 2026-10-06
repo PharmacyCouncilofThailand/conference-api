@@ -48,6 +48,10 @@
 
 ## 0. วิธีใช้แผนและ baseline
 
+**Binding execution override (2026-10-07):** อ่าน `.superpowers/sdd/2026-10-07-pris2026-poster-submission/execution-policy.md` ก่อนทุก task. ทุก worker/reviewerใช้ `gpt-6.1-sol` effort `medium`, ไม่มี helpers. Controller serialize shared-file writers และ DB integration tests; tests + spec/quality review ผ่านก่อนเริ่ม dependent task. แก้ plan discrepancyให้ตรง approved Design ได้โดยไม่ถาม; genuine unresolved blockerยังต้องหยุด. ไม่มี per-task staging/commit; controller commit groups T01–T13 / T14–T17 / T18–T20 หลัง gates, no push. T21–T22 เป็น verification/runbookเท่านั้นใน sessionนี้; ห้าม deployment/live email. Final deletionของ workspace/container/volume/data ต้องถาม.
+
+ทุก integration command ด้านล่างรัน native host PowerShell จาก API cwd หลัง T02 verified environment block; ไม่อ่าน `.env` เลือก DB, ไม่สร้าง PostgreSQL อีกตัว. ใช้ fake storage/mailใน tests.
+
 Repo ทั้งสามเป็น Git คนละ repository ห้าม commit ข้าม repo โดยคิดว่า root เป็น repo เดียว ใช้ working directory ของ task ให้ตรง; sample IDs/emails ใน tests ใช้ข้อมูลสังเคราะห์เท่านั้น
 
 | Repository / cwd | หน้าที่ |
@@ -58,7 +62,7 @@ Repo ทั้งสามเป็น Git คนละ repository ห้าม 
 
 อ่านก่อน execution: Design, `src/index.ts`, API `src/database/schema.ts`, `src/modules/abstracts/tracking.repository.ts`, `src/services/emailService.ts`, `src/modules/session-grants/email-jobs.ts`, `src/modules/lucky-wheel/images.ts`, Pris2026 `src/lib/localizedRedirect.ts`/`refreshRedirect.ts`, Backoffice `src/lib/api.ts`/`contexts/AuthContext.tsx`.
 
-Local execution skills มีที่ `D:/confer/confer/conference/vendor/superpowers/skills/subagent-driven-development/SKILL.md` และ `D:/confer/confer/conference/vendor/superpowers/skills/executing-plans/SKILL.md` หากเลือก worktree ให้อ่าน `D:/confer/confer/conference/vendor/superpowers/skills/using-git-worktrees/SKILL.md` ตอน execution ใช้ checkout ที่เหมาะสมและเคารพงานของผู้ใช้
+Local execution skills มีที่ `D:/confer/confer/conference/vendor/superpowers/skills/subagent-driven-development/SKILL.md` และ `D:/confer/confer/conference/vendor/superpowers/skills/executing-plans/SKILL.md` ใช้ current feature checkouts `feat/pris2026-poster-submission` เท่านั้น ไม่สร้าง worktree
 
 ลำดับ dependency: T01 → T02/T03 → T04/T05 → T06/T07 → T08 → T09 → T10/T11 → T12 → T13–T19 → T20–T22. ไม่เปิด production feature ก่อน T22
 
@@ -80,7 +84,7 @@ Local execution skills มีที่ `D:/confer/confer/conference/vendor/super
 | `src/modules/posters/email-template.ts`, `email-jobs.ts`, `jobs-runner.ts` | pure bilingual drafts, durable queue/transport/recovery, worker |
 | `src/modules/posters/public.routes.ts`, `backoffice.routes.ts`, `startup.ts` | Fastify contracts/registration/startup reconciliation |
 | `src/modules/posters/test-support.ts`, `*.test.ts`, `*.integration.test.ts` | isolated representative schema, fixtures and behavior checks |
-| `docker-compose.posters-test.yml`, `sql/posters-setup/{01_preflight,02_verify}.sql` | isolated tests and explicit deploy verification; fake mailใช้in-processtransport |
+| `sql/posters-setup/{01_preflight,02_verify}.sql` | isolated tests and explicit deploy verification; fake mailใช้in-processtransport |
 | `package.json`, `package-lock.json`, `Dockerfile`, `.env.example`, `src/index.ts` | parser/scripts/worker role/config and feature wiring |
 
 | Pris2026 path | ความรับผิดชอบ |
@@ -142,7 +146,7 @@ test('source relocation preserves original announcement JSON', () => {
 
 Hash นี้เป็นหลักฐาน parity สำหรับการย้ายรอบแรก เมื่อเจ้าหน้าที่เปลี่ยน source ในอนาคตให้อัปเดต integrity expectation ใน commit ที่ตรวจ diff ประกาศแล้ว ไม่สร้างค่าคาดหวังจาก input อัตโนมัติเพื่อหลบ test
 
-- [ ] **Step 2 — รัน red check** ที่ API cwd: `npx --no-install tsx --test src/modules/posters/policy.test.ts src/modules/posters/data.test.ts`; คาด FAIL module ยังไม่มี
+- [ ] **Step 2 — รัน red check** ที่ API cwd (T02 explicit environmentเมื่อมี DB imports): `npx --no-install tsx --test src/modules/posters/policy.test.ts src/modules/posters/data.test.ts`; คาด FAIL module ยังไม่มี
 - [ ] **Step 3 — กำหนด types/schemas และ pure policy**
 
 ```ts
@@ -251,11 +255,11 @@ import { approvedRound2Abstracts } from './approvedRound2Abstracts.js';
 export const loadPosterAnnouncements = () => [...approvedRound1Abstracts, ...approvedRound2Abstracts];
 ```
 
-- [ ] **Step 5 — green check + commit** รันคำสั่ง Step 2 และ `npm run build`; คาด tests PASS และ TypeScript exit 0 แล้ว `git add src/modules/posters` / `git commit -m "feat(posters): define contracts and authoritative announcement source"`
+- [ ] **Step 5 — green check + review handoff** รันคำสั่ง Step 2 และ `npm run build`; คาด tests PASS และ TypeScript exit 0; ส่ง test/build evidence ให้ controller milestone T01–T13
 
 ## T02 — Isolated DB harness และ dependency สำหรับ PDF
 
-**Files:** Create API `docker-compose.posters-test.yml`, `src/modules/posters/test-support.ts`, `migration.integration.test.ts`; Modify API `package.json`, `package-lock.json`
+**Files:** Create API `src/modules/posters/test-support.ts`, `migration.integration.test.ts`; Modify API `package.json`, `package-lock.json`
 
 **Interfaces:** ผลิต `openPosterTestDatabase()`, `resetPosterTestDatabase(Sql)`, `seedPosterScenario(Sql)`; ใช้ guard `validateSessionGrantTestDatabaseUrl`/`resetSessionGrantIntegrationSchema` เดิม ไม่สร้าง guard DB อีกชุด
 
@@ -264,10 +268,18 @@ export const loadPosterAnnouncements = () => [...approvedRound1Abstracts, ...app
 ```ts
 import { randomUUID } from 'node:crypto';
 import type postgres from 'postgres';
-import { openSessionGrantTestDatabase, resetSessionGrantIntegrationSchema } from '../session-grants/test-database.js';
+import { openSessionGrantTestDatabase, resetSessionGrantIntegrationSchema, validateSessionGrantTestDatabaseUrl } from '../session-grants/test-database.js';
 export type TestSql = ReturnType<typeof postgres>;
-export const openPosterTestDatabase = () => openSessionGrantTestDatabase();
+export const openPosterTestDatabase = () => {
+  const url = new URL(validateSessionGrantTestDatabaseUrl());
+  if (url.hostname !== '127.0.0.1' || url.port !== '55073' || url.pathname !== '/confer_posters_integration_test' || url.search)
+    throw new Error('Refusing unapproved Poster test database');
+  return openSessionGrantTestDatabase();
+};
 export async function resetPosterTestDatabase(sql: TestSql) {
+  const [target] = await sql`SELECT current_database() AS database,current_schema() AS schema`;
+  if (target.database !== 'confer_posters_integration_test' || target.schema !== 'public')
+    throw new Error('Refusing reset outside the authorized integration database');
   await resetSessionGrantIntegrationSchema(sql);
   await sql.unsafe(`CREATE TABLE events(id serial PRIMARY KEY,event_code text UNIQUE NOT NULL,website_url text,short_name text,event_name text);
     CREATE TABLE users(id serial PRIMARY KEY,email text,role text NOT NULL DEFAULT 'pharmacist',first_name text,last_name text,status text NOT NULL DEFAULT 'active');
@@ -290,51 +302,30 @@ export async function seedPosterScenario(sql: TestSql) {
 }
 ```
 
-- [ ] **Step 2 — เพิ่ม compose แยกฐานข้อมูล ไม่มี R2/NipaMail credentials จริง**
-
-```yaml
-name: pris-posters-test
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: posters_test
-      POSTGRES_PASSWORD: posters_test
-      POSTGRES_DB: confer_posters_runtime_test
-    healthcheck:
-      test: [CMD-SHELL, "pg_isready -U posters_test -d confer_posters_runtime_test"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-    volumes: [posters_pgdata:/var/lib/postgresql/data]
-  api-tools:
-    image: node:20-alpine
-    working_dir: /workspace/conference-api
-    environment:
-      NODE_ENV: test
-      POSTER_SUBMISSIONS_ENABLED: "true"
-      POSTER_EMAILS_ENABLED: "true"
-      DATABASE_URL: postgres://posters_test:posters_test@postgres:5432/confer_posters_runtime_test
-      TEST_DATABASE_URL: postgres://posters_test:posters_test@postgres:5432/confer_posters_integration_test
-    volumes:
-      - ./:/workspace/conference-api
-      - posters_node_modules:/workspace/conference-api/node_modules
-    depends_on:
-      postgres: {condition: service_healthy}
-volumes:
-  posters_pgdata:
-  posters_node_modules:
-```
-
-- [ ] **Step 3 — เตรียม test DB ด้วยคำสั่งที่ทำซ้ำได้** ที่ API cwd:
+- [ ] **Step 2 — verify the one existing PostgreSQL container (read-only)** API cwd PowerShell:
 
 ```powershell
-docker compose -f docker-compose.posters-test.yml up -d --wait postgres
-@'
-SELECT 'CREATE DATABASE confer_posters_integration_test'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='confer_posters_integration_test')\gexec
-'@ | docker compose -f docker-compose.posters-test.yml exec -T postgres psql -U posters_test -d postgres -v ON_ERROR_STOP=1
+$posterContainer = docker inspect pris2026-posters-test-20261007 | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $posterContainer.Id -ne '6ba1d0f3241b017abacdfde1b854cefc89e2c9a30cc8767e33d547f4d1ecaf97') { throw 'Unexpected PostgreSQL container' }
+$posterPort = $posterContainer.NetworkSettings.Ports.'5432/tcp'
+if ($posterPort.Count -ne 1 -or $posterPort[0].HostIp -ne '127.0.0.1' -or $posterPort[0].HostPort -ne '55073') { throw 'Unexpected PostgreSQL binding' }
+docker exec pris2026-posters-test-20261007 psql -U posters_test -d confer_posters_integration_test -v ON_ERROR_STOP=1 -Atc "SELECT current_database(),current_schema(),current_setting('server_version_num');"
+if ($LASTEXITCODE -ne 0) { throw 'Integration database verification failed' }
 ```
+
+Expected container identity/binding exactly above, `confer_posters_integration_test|public|16xxxx`; runtime database remains separate and is never reset. No compose/database create/up/down/prune.
+
+- [ ] **Step 3 — explicit native test environment** in the same PowerShell session before EVERY native API build/test command below:
+
+```powershell
+$env:NODE_ENV = 'test'
+$env:DATABASE_URL = 'postgres://posters_test:posters_test@127.0.0.1:55073/confer_posters_runtime_test'
+$env:TEST_DATABASE_URL = 'postgres://posters_test:posters_test@127.0.0.1:55073/confer_posters_integration_test'
+$env:POSTER_SUBMISSIONS_ENABLED = 'true'
+$env:POSTER_EMAILS_ENABLED = 'true'
+```
+
+Flags exercise fake transports only. Tests execute serially; before reset validate actual connection DB `confer_posters_integration_test` + public schema and configured endpoint 127.0.0.1:55073. Reset authorization is limited to that DB in this container; original runtime/shared/production DBs remain outside authorization.
 
 - [ ] **Step 4 — เพิ่ม parser และ scripts** `npm install --save-exact pdf-lib@1.17.1`; package scripts ที่ต้องเพิ่ม:
 
@@ -342,15 +333,15 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='confer_posters_integrat
 {
   "test:posters": "tsx --test src/modules/posters/policy.test.ts src/modules/posters/data.test.ts src/modules/posters/file-validation.test.ts src/modules/posters/storage.test.ts src/modules/posters/email-template.test.ts",
   "test:posters:integration": "tsx --test --test-concurrency=1 src/modules/posters/migration.integration.test.ts src/modules/posters/reconcile.integration.test.ts src/modules/posters/access.integration.test.ts src/modules/posters/operations.integration.test.ts src/modules/posters/revisions.integration.test.ts src/modules/posters/uploads.integration.test.ts src/modules/posters/email-jobs.integration.test.ts src/modules/posters/readers.integration.test.ts src/modules/posters/routes.integration.test.ts",
-  "jobs:posters": "tsx src/modules/posters/jobs-runner.ts",
-  "jobs:posters:prod": "node dist/modules/posters/jobs-runner.js",
-  "jobs:posters:prod:health": "node dist/modules/posters/jobs-runner.js --healthcheck"
+  "posters:worker:dev": "tsx src/modules/posters/jobs-runner.ts",
+  "posters:worker": "node dist/modules/posters/jobs-runner.js",
+  "posters:worker:health": "node dist/modules/posters/jobs-runner.js --healthcheck"
 }
 ```
 
 Scripts สำหรับไฟล์ test ที่ตามมาใช้เมื่อไฟล์เหล่านั้นถูกสร้างแล้ว ช่วง T02 รันเฉพาะ migration test ใน T03 ห้ามใช้ broad script ที่ยังไม่มีไฟล์แล้วรายงานว่าผ่าน
 
-- [ ] **Step 5 — ตรวจ guard ปฏิเสธ shared/non-test DB** ใช้ existing guard tests หรือเพิ่ม test โดย `assert.throws(() => validateSessionGrantTestDatabaseUrl({TEST_DATABASE_URL:'postgres://x:x@localhost/app',DATABASE_URL:'postgres://x:x@localhost/app'}))`; `npm run build` ต้องผ่าน แล้ว commit harness/parser เท่านั้น
+- [ ] **Step 5 — ตรวจ guard ปฏิเสธ shared/non-test DB** ใช้ existing guard tests หรือเพิ่ม test โดย `assert.throws(() => validateSessionGrantTestDatabaseUrl({TEST_DATABASE_URL:'postgres://x:x@localhost/app',DATABASE_URL:'postgres://x:x@localhost/app'}))`; `npm run build` ต้องผ่าน แล้วส่ง harness/parser evidence ให้ controller
 
 ## T03 — Additive migration และ constraints ที่กัน race
 
@@ -381,7 +372,7 @@ test('poster migration preserves abstract and enforces target/request identity',
 });
 ```
 
-- [ ] **Step 2 — red run**: `docker compose -f docker-compose.posters-test.yml run --rm api-tools npm ci`, แล้ว `docker compose -f docker-compose.posters-test.yml run --rm api-tools npx tsx --test --test-concurrency=1 src/modules/posters/migration.integration.test.ts`; คาด FAIL migration ยังไม่มี
+- [ ] **Step 2 — red run**: `npm ci`, แล้ว `npx --no-install tsx --test --test-concurrency=1 src/modules/posters/migration.integration.test.ts`; คาด FAIL migration ยังไม่มี
 - [ ] **Step 3 — ใส่ migration ต่อไปนี้ทั้งไฟล์** ไม่ใช้ `db:push` แทน raw constraints:
 
 ```sql
@@ -536,7 +527,7 @@ await assert.rejects(sql`UPDATE poster_revision_requests SET status='open',cance
 
 เพิ่ม same-target current-file/request FKs, duplicate initial/revision version และ unchanged original tables ใน testเดียวกันเพื่อพิสูจน์ constraints ที่ API ต้องพึ่ง
 
-- [ ] **Step 6 — green + preflight/verify SQL + commit** preflight ตรวจ event PRIS-2026, existing migration prerequisite, duplicate source matches แบบ read-only; verify ตรวจ tables/constraints/settings/target counts. รัน migration integration command Step 2 และ `npm run build` exit 0 แล้ว commit `feat(posters): add durable poster schema and constraints`
+- [ ] **Step 6 — green + preflight/verify SQL + review handoff** preflight ตรวจ event PRIS-2026, existing migration prerequisite, duplicate source matches แบบ read-only; verify ตรวจ tables/constraints/settings/target counts. รัน migration integration command Step 2 และ `npm run build` exit 0 แล้ว; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T04 — Guards, DB clock และ idempotent Admin operations
 
@@ -561,7 +552,7 @@ await requirePosterStaff(database,reviewerActor,f.eventId,false);
 await assert.rejects(requirePosterStaff(database,reviewerActor,f.eventId,true), {code:'POSTER_ACCESS_DENIED'});
 ```
 
-- [ ] **Step 2 — red run**: dedicated compose runner `npx tsx --test --test-concurrency=1 src/modules/posters/access.integration.test.ts`; คาด FAIL guard imports
+- [ ] **Step 2 — red run**: native host (T02 environment) `npx tsx --test --test-concurrency=1 src/modules/posters/access.integration.test.ts`; คาด FAIL guard imports
 - [ ] **Step 3 — implementation ของ guards/clock**
 
 ```ts
@@ -639,7 +630,7 @@ export async function audit(tx:PosterTx,eventId:number,abstractId:number|null,ac
 Lock order ของทุก task: operation-key advisory (ถ้ามี) → settings → abstract/user เมื่อจำเป็น → target → request → upload attempt → mail jobs. Network/validation/R2 อยู่นอก transaction. `clock_timestamp()` อ่านหลังได้ locks ที่ต้องใช้
 
 - [ ] **Step 4 — เพิ่ม idempotency/race checks** เรียก `adminOperation` พร้อมกันด้วย key เดียวและงานเพิ่ม audit; assert มีหนึ่ง audit/result เดียว แล้ว key เดิม/input ต่างต้อง `POSTER_IDEMPOTENCY_CONFLICT`; public token numeric ID ชนกับ admin ID ยังถูกปฏิเสธ
-- [ ] **Step 5 — green/commit** รัน guard integration และ `npm run build`; commit `feat(posters): enforce database-backed roles and idempotency`
+- [ ] **Step 5 — green/review handoff** รัน guard integration และ `npm run build`; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T05 — Atomic reconciliation และ public announcement reader
 
@@ -663,7 +654,7 @@ assert.equal((await sql`SELECT initial_enabled FROM poster_targets`)[0].initial_
 assert.equal((await sql`SELECT match_state FROM poster_announcements`)[0].match_state,'conflict');
 ```
 
-- [ ] **Step 2 — red run** dedicated compose `npx tsx --test --test-concurrency=1 src/modules/posters/reconcile.integration.test.ts`; คาด FAIL exports. Publicprojectiontestอยู่data.test.ts; scopedreadersintegrationเริ่มT13เมื่อmoduleครบ
+- [ ] **Step 2 — red run** native host (T02 environment) `npx tsx --test --test-concurrency=1 src/modules/posters/reconcile.integration.test.ts`; คาด FAIL exports. Publicprojectiontestอยู่data.test.ts; scopedreadersintegrationเริ่มT13เมื่อmoduleครบ
 - [ ] **Step 3 — bulk candidate query และ public allowlist**
 
 ```ts
@@ -712,8 +703,8 @@ export async function reconcilePosters(database:PosterDatabase,manifest:Announce
         if(!tracking) continue;
         const found=index.get(tracking)??new Map<number,DbCandidate>();found.set(c.abstractId,c);index.set(tracking,found);
       }
-      const previous=await rows<{source_key:string;target_id:string|null;verified_fingerprint:string|null;abstract_id:number|null}>(tx,
-        sql`SELECT a.source_key,a.target_id,a.verified_fingerprint,t.abstract_id FROM poster_announcements a
+      const previous=await rows<{source_key:string;target_id:string|null;verified_fingerprint:string|null;abstract_id:number|null;match_snapshot:unknown;present:boolean}>(tx,
+        sql`SELECT a.source_key,a.target_id,a.verified_fingerprint,a.match_snapshot,a.present,t.abstract_id FROM poster_announcements a
           LEFT JOIN poster_targets t ON t.id=a.target_id WHERE a.event_id=${event.id}`);
       const checked=manifest.map(row=>{
         const old=previous.find(p=>p.source_key===sourceKey(row));
@@ -741,6 +732,13 @@ export async function reconcilePosters(database:PosterDatabase,manifest:Announce
           ON CONFLICT(event_id,source_key) DO UPDATE SET source_row=EXCLUDED.source_row,source_digest=EXCLUDED.source_digest,
             target_id=EXCLUDED.target_id,match_state=EXCLUDED.match_state,match_fingerprint=EXCLUDED.match_fingerprint,
             match_snapshot=EXCLUDED.match_snapshot,present=true`);
+        const snapshot={announcement:row,candidates:[...(index.get(row.trackingId??'')?.values()??[])],match};
+        const [difference]=await rows<{changed:boolean}>(tx,sql`SELECT ${JSON.stringify(old?.match_snapshot??null)}::jsonb IS DISTINCT FROM ${JSON.stringify(snapshot)}::jsonb AS changed`);
+        if(!old||!old.present||difference.changed){
+          await tx.execute(sql`INSERT INTO poster_audit_events(event_id,abstract_id,action,before_state,after_state)
+            VALUES(${event.id},${targetId?old?.abstract_id??match.abstractId:null},'match_changed',
+            ${JSON.stringify(old?.match_snapshot??null)}::jsonb,${JSON.stringify(snapshot)}::jsonb)`);
+        }
         counts[match.state]=(counts[match.state]??0)+1;
       }
       const keyJson=JSON.stringify(keys);
@@ -811,7 +809,7 @@ assert.deepEqual(Object.keys(publicAnnouncements()[0]).sort(),
 assert.equal(JSON.stringify(publicAnnouncements()).includes('recipient'),false);
 ```
 
-- [ ] **Step 6 — green/commit** integration tests และ `npm run build`; commit `feat(posters): reconcile authoritative roster without resetting history`
+- [ ] **Step 6 — green/review handoff** integration tests และ `npm run build`; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T06 — Bilingual email template และ enqueue ที่ไม่เรียก provider ใน transaction
 
@@ -823,7 +821,7 @@ assert.equal(JSON.stringify(publicAnnouncements()).includes('recipient'),false);
 
 ```ts
 import assert from 'node:assert/strict';import test from 'node:test';
-import {renderPosterEmail} from './email-template.js';import type {MailPayload} from './types.js';
+import {renderPosterEmail,buildSubmissionUrl} from './email-template.js';import type {MailPayload} from './types.js';
 test('draft is bilingual, scoped to work and escapes text',()=>{
  const payload:MailPayload={kind:'initial',abstractId:501,trackingId:'PRIS-2026-P001',title:'<script>x</script>',
    submitterName:'ชื่อ นามสกุล',recipient:'owner@example.invalid',websiteOrigin:'https://example.invalid',
@@ -833,6 +831,8 @@ test('draft is bilingual, scoped to work and escapes text',()=>{
  assert.ok(!result.html.includes('<script>'));assert.ok(result.html.includes('30 MB'));
  assert.ok(result.html.includes('23:59:59'));assert.ok(result.html.includes('pr@pharmactcouncil.org'));
  assert.ok(result.html.includes('บัญชีที่ใช้ส่ง'));assert.ok(result.html.includes('sign in'));
+ const revisionUrl=new URL(buildSubmissionUrl(payload.websiteOrigin,501,'11111111-1111-4111-8111-111111111111'));
+ assert.equal(revisionUrl.searchParams.get('requestId'),'11111111-1111-4111-8111-111111111111');
 });
 ```
 
@@ -841,17 +841,19 @@ test('draft is bilingual, scoped to work and escapes text',()=>{
 
 ```ts
 import type {MailPayload} from './types.js';
+import {z} from 'zod';
 const escape=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 export function buildSubmissionUrl(origin:string,abstractId:number,requestId?:string) {
  const base=new URL(origin);if(base.protocol!=='https:'||base.username||base.password||base.search||base.hash) throw Error('POSTER_WEBSITE_INVALID');
  const url=new URL('/th/poster-submission',base.origin);url.searchParams.set('abstractId',String(abstractId));
- if(requestId)url.searchParams.set('revisionRequestId',requestId);return url.toString();
+ if(requestId)url.searchParams.set('requestId',requestId);return url.toString();
 }
 function deadline(close:string,locale:'th'|'en') {
  return new Intl.DateTimeFormat(locale==='th'?'th-TH-u-ca-buddhist':'en-GB',
    {timeZone:'Asia/Bangkok',dateStyle:'long',timeStyle:'medium',hour12:false}).format(new Date(Date.parse(close)-1000));
 }
 export function renderPosterEmail(p:MailPayload) {
+ if(!z.string().email().safeParse(p.recipient).success)throw Error('POSTER_EMAIL_INVALID');
  const subject={initial:'แจ้งส่งไฟล์ Poster',reminder:'เตือนส่งไฟล์ Poster',revision:'ขอแก้ไข Poster',receipt:'ระบบได้รับไฟล์ Poster แล้ว'}[p.kind];
  const href=escape(buildSubmissionUrl(p.websiteOrigin,p.abstractId,p.revisionRequestId??undefined));
  const parts=[`<p>เรียน ${escape(p.submitterName)} / Dear ${escape(p.submitterName)},</p>`,
@@ -915,7 +917,7 @@ export async function enqueuePosterMail(tx:PosterTx,targetId:string,payload:Mail
 
 Receipt ต้องไม่ rollback file เพราะ email/website config หาย: ถ้า build/render ไม่ได้ให้ T11 บันทึก job state `failed` พร้อม error และ minimal payload/subject ที่ผูก upload จริง แทน throw ออกจาก upload transaction; Admin ซ่อม config และ resend จาก upload เดิม รายการอีเมลไม่ถูกต้องไม่ใช้ email ของบุคคลอื่น
 
-- [ ] **Step 5 — เพิ่ม tests สำหรับทั้งสี่ kind, escaping details, actual receivedAt, no approval claims และ malformed trusted origin** รัน unit check/build; commit `feat(posters): add scoped bilingual mail drafts and durable enqueue`
+- [ ] **Step 5 — เพิ่ม tests สำหรับทั้งสี่ kind, escaping details, actual receivedAt, no approval claims และ malformed trusted origin** รัน unit check/build; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T07 — Alias verification, deadline settings, previews และ manual notification batches
 
@@ -936,7 +938,7 @@ assert.equal(jobs.length,2);assert.equal(new Set(jobs.map(j=>j.abstract_id)).siz
 assert.equal(new Set(jobs.map(j=>j.recipient)).size,1);
 ```
 
-- [ ] **Step 2 — red run** compose `npx tsx --test --test-concurrency=1 src/modules/posters/operations.integration.test.ts src/modules/posters/email-jobs.integration.test.ts`
+- [ ] **Step 2 — red run** native host (T02 environment) `npx --no-install tsx --test --test-concurrency=1 src/modules/posters/operations.integration.test.ts src/modules/posters/email-jobs.integration.test.ts`
 - [ ] **Step 3 — verification/settings operations**
 
 ```ts
@@ -958,7 +960,8 @@ export async function verifyAlias(database:PosterDatabase,actor:PosterActor,even
     verified_at=clock_timestamp(),verification_reason=${input.reason},match_state='ready'
     WHERE event_id=${eventId} AND source_key=${input.sourceKey}`);
   await tx.execute(sql`UPDATE poster_targets SET initial_enabled=true WHERE id=${ann.target_id}::uuid`);
-  await audit(tx,eventId,match.abstractId,actor.id,'alias_verified',input.reason,null,match);
+  await audit(tx,eventId,match.abstractId,actor.id,'alias_verified',input.reason,null,
+    {announcement:fresh.source_row,candidates:await readCandidates(tx,eventId),match});
   return {abstractId:match.abstractId,state:'ready' as const};
  });
 }
@@ -1034,7 +1037,7 @@ export async function previewPosterMail(database:PosterDatabase,actor:PosterActo
    requestId=input.requestId;closesAt=payload.closesAt!;
   }else{
    const open=await rows(database,sql`SELECT id FROM poster_revision_requests WHERE target_id=${target.id}::uuid AND status='open' AND closes_at>clock_timestamp()`);
-   if(open.length)fail('POSTER_REQUEST_ALREADY_OPEN');
+   if(open.length)fail('POSTER_ACTIVE_REQUEST_EXISTS');
    closesAt=new Date(input.closesAt).toISOString();if(!isBeforeClose(now,new Date(closesAt)))fail('POSTER_DEADLINE_INVALID');
    requestId=randomUUID();const base=await buildMailPayload(database,target.id,'initial');
    payload={...base,kind:'revision',revisionRequestId:requestId,revisionDetails:input.details,closesAt};
@@ -1079,7 +1082,7 @@ export async function createNotificationBatch(database:PosterDatabase,actor:Post
 
 `assertInitialReady`/`buildMailPayload` รับreadexecutorเพื่อใช้ทั้งDBและtransaction; previewรองรับทุกkindผ่านstrictschemaเดียว และไม่enqueueอีเมลหรือเปิดสิทธิ์
 
-- [ ] **Step 5 — green/commit** รัน operations/email integration + build. Change source/title/deadline/emailหลังpreviewต้อง409ทั้งbatchไม่มีบางรายการถูกส่งแล้ว; duplicates selected IDsไม่เพิ่ม jobs. Commit `feat(posters): add verified manual notifications and deadline management`
+- [ ] **Step 5 — green/review handoff** รัน operations/email integration + build. Change source/title/deadline/emailหลังpreviewต้อง409ทั้งbatchไม่มีบางรายการถูกส่งแล้ว; duplicates selected IDsไม่เพิ่ม jobs; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T08 — Immutable revision requests, cancellation และ resend semantics
 
@@ -1105,7 +1108,7 @@ assert.equal((await sql`SELECT current_upload_id FROM poster_targets`)[0].curren
 
 fixtureต้องสร้าง original successful upload/attempt ด้วยข้อมูลสังเคราะห์จาก T03 เพื่อไม่เปิด requestก่อนเคยส่ง. ใช้ timestampจากDBในการseed ไม่ผูก testsกับ deadlineเงินจริงในอนาคต
 
-- [ ] **Step 2 — red run** compose `npx tsx --test --test-concurrency=1 src/modules/posters/revisions.integration.test.ts`
+- [ ] **Step 2 — red run** native host (T02 environment) `npx --no-install tsx --test --test-concurrency=1 src/modules/posters/revisions.integration.test.ts`
 - [ ] **Step 3 — implementation create/cancel**
 
 ```ts
@@ -1195,7 +1198,7 @@ export async function resendPosterMail(database:PosterDatabase,actor:PosterActor
 
 initial/reminder resendต้องยังไม่เคยส่งไฟล์และก่อน deadline เช่น batch ไม่ใช้ readinessอย่างเดียว; receipt resendอนุญาต historical uploadที่สำเร็จแล้ว ไม่สร้าง receiptอัตโนมัติซ้ำ ไม่เปลี่ยนrequest/rights. Date fieldsใน DTO แปลง ISOทั้งหมดใน reader (T13)
 
-- [ ] **Step 5 — green checks** request immutable SQL trigger, cancelled/expired/new request, original request resend retainsclose/details, viewer403, noPoster409, concurrentcreate exactlyone, samekey replays original response. Commit `feat(posters): add immutable revision and cancellation lifecycle`
+- [ ] **Step 5 — green checks** request immutable SQL trigger, cancelled/expired/new request, original request resend retainsclose/details, viewer403, noPoster409, concurrentcreate exactlyone, samekey replays original response; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T09 — Validate actual PNG/PDF โดยไม่กำหนดขนาดภาพเพิ่ม
 
@@ -1269,7 +1272,7 @@ export async function validatePosterFile(file:{buffer:Buffer;filename:string;mim
     if(error instanceof Error&&'code' in error)throw error;
     fail('POSTER_FILE_INVALID',422);
   }
- } else fail('POSTER_FILE_INVALID',422);
+ } else fail(/\.(png|pdf)$/i.test(file.filename)?'POSTER_FILE_INVALID':'POSTER_FILE_TYPE_MISMATCH',/\.(png|pdf)$/i.test(file.filename)?422:415);
  if(!file.filename.toLowerCase().endsWith(`.${extension}`))fail('POSTER_FILE_TYPE_MISMATCH',415);
  if(!['','application/octet-stream',mimeType].includes(file.mimetype.toLowerCase()))fail('POSTER_FILE_TYPE_MISMATCH',415);
  return {...file,mimeType,extension,sizeBytes:buffer.length,digest:createHash('sha256').update(buffer).digest('hex')};
@@ -1302,7 +1305,7 @@ test('reject PDF marked as encrypted without asking for password',async()=>{
  await assert.rejects(validatePosterFile({buffer,filename:'encrypted.pdf',mimetype:'application/pdf'}),{code:'POSTER_PDF_ENCRYPTED'});
 });
 ```
-- [ ] **Step 5 — green/commit** unit tests + build; commit `feat(posters): validate unencrypted single-page originals`
+- [ ] **Step 5 — green/review handoff** unit tests + build; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T10 — R2 original storage, durable attempts และ cleanup ที่ไม่ลบไฟล์สำเร็จ
 
@@ -1313,7 +1316,7 @@ test('reject PDF marked as encrypted without asking for password',async()=>{
 `UploadGate={targetId,eventId,abstractId,closesAt:Date,requestId:string|null}`, `AttemptReservation={kind:'reserved'|'stored'|'replay',attemptId:string,claimToken:string,objectKey:string,upload:UploadDto|null}`. `ValidatedFile=Awaited<ReturnType<typeof validatePosterFile>>`. ไม่มีไฟล์ใหม่ถูกส่งให้ storageก่อนvalidationผ่าน
 
 - [ ] **Step 1 — failure/retry tests** Memory storage ใช้ Map เก็บ Bufferเดิมแล้ว assertไม่มีresize, keyไม่มีPII, failedPutไม่ใช้สิทธิ์, requestIdผิดtargetปฏิเสธ, samekeydifferentdigest409, samekeyacceptedคืนversionเดิม. FailหลังPutต้องไม่ลบ current/historical upload
-- [ ] **Step 2 — red run** API `npx --no-install tsx --test src/modules/posters/storage.test.ts`; compose `npx tsx --test --test-concurrency=1 src/modules/posters/uploads.integration.test.ts`
+- [ ] **Step 2 — red run** API `npx --no-install tsx --test src/modules/posters/storage.test.ts`; native host (T02 environment) `npx --no-install tsx --test --test-concurrency=1 src/modules/posters/uploads.integration.test.ts`
 - [ ] **Step 3 — ใช้ R2 helper เดิม ไม่สร้าง client/config parser ซ้ำ** เพิ่ม `signal?:AbortSignal` ใน inputของ `WheelImageStorage.putObject` และส่งเป็นoptionsของclient:
 
 ```ts
@@ -1407,8 +1410,9 @@ Reserveใช้settings→owner→target→request→attempt; gateที่เ�
 
 ```ts
 export async function storePosterAttempt(database:PosterDatabase,attempt:AttemptReservation,file:ValidatedFile,storage:PosterStorage) {
- await storage.putObject({key:attempt.objectKey,body:file.buffer,contentType:file.mimeType,
-   cacheControl:'public, max-age=31536000, immutable',signal:AbortSignal.timeout(60000)});
+ try{await storage.putObject({key:attempt.objectKey,body:file.buffer,contentType:file.mimeType,
+   cacheControl:'public, max-age=31536000, immutable',signal:AbortSignal.timeout(60000)});}
+ catch{fail('POSTER_STORAGE_FAILED',503);}
  const result=await rows<{id:string}>(database,sql`UPDATE poster_upload_attempts SET state='stored'
    WHERE id=${attempt.attemptId}::uuid AND claim_token=${attempt.claimToken}::uuid AND state='reserved'
      AND lease_until>clock_timestamp() RETURNING id`);
@@ -1438,7 +1442,7 @@ export async function cleanupFailedAttempt(database:PosterDatabase,attemptId:str
 
 Cleanupclaimภายใต้target/attemptlocksแล้วทำterminalstateก่อนdeleteเพื่อให้processเก่าที่resume finalizeไม่ได้; `finalize`T11ต้องrequirestored+validlease. Faileduploadก่อนleaseหมดอาจยังไม่ถูกลบทันที: workerลบหลังlease<=clockโดยตรวจsuccessfulrowก่อนเสมอ. ถ้าoutcomeDBunknownห้ามdelete. ไม่มีการลบhistoricalobjectจากชื่อ
 
-- [ ] **Step 6 — green/commit** wheel image unit testsเดิม, storage/unit+upload integration, build; commit `feat(posters): store originals with recoverable upload attempts`
+- [ ] **Step 6 — green/review handoff** wheel image unit testsเดิม, storage/unit+upload integration, build; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T11 — Atomic upload finalization, receipt outbox และ idempotent response
 
@@ -1465,7 +1469,7 @@ assert.equal(Number((await sql`SELECT count(*) AS n FROM poster_uploads`)[0].n),
 
 Expiry raceใช้requestcloseจากDBclock+10secondsแล้วblockR2. Poll`SELECT clock_timestamp() >= closes_at AS closed FROM poster_revision_requests WHERE id=...`ในtestจนclosedก่อนreleaseR2 (boundedtesttimeout30seconds); ไม่ใช้browserclockหรือเดาระยะsleepเป็นหลักฐาน. ตรวจ`clock_timestamp()`หลังlockwaitด้วยtransactionอื่นholdtargetข้ามdeadline; expiredไม่มีnewversion/receipt
 
-- [ ] **Step 2 — red run** compose uploads integration
+- [ ] **Step 2 — red run** native host (T02 environment) `npx --no-install tsx --test --test-concurrency=1 src/modules/posters/uploads.integration.test.ts`
 - [ ] **Step 3 — finalize transaction**
 
 ```ts
@@ -1527,7 +1531,7 @@ export async function submitPosterUpload(database:PosterDatabase,actor:PosterAct
 
 - [ ] **Step 4 — receipt failure check** puretemplate/configfailureต้องfailedjob+successfulupload; SQLfailedjobinsertต้องrollbacknewversion. DBread/inserterrorsไม่catchแล้วเขียนในabortedtransaction; NipaMailfailureภายหลังไม่rollbackไฟล์. unit/integrationassertjobautomatic_receipt_foruniqueและfailedjobresendlinkedเดิม
 
-- [ ] **Step 5 — green matrix** two differentkeys simultaneousinitial exactlyoneversion; samekeysamefile response replayexactlyone receipt; changedfilekeyconflict; failedR2/DB no consume; revisioncancel/expiry stale ID; successfulrevision updatescurrent preservesversions; post-COMMIT injectedconnectionfailure no deletion; receiptmissingconfig failedjob butacceptedupload. Commit `feat(posters): finalize uploads atomically with durable receipts`
+- [ ] **Step 5 — green matrix** two differentkeys simultaneousinitial exactlyoneversion; samekeysamefile response replayexactlyone receipt; changedfilekeyconflict; failedR2/DB no consume; revisioncancel/expiry stale ID; successfulrevision updatescurrent preservesversions; post-COMMIT injectedconnectionfailure no deletion; receiptmissingconfig failedjob butacceptedupload; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T12 — Mail worker, recovery และ startup reconciliation
 
@@ -1550,7 +1554,7 @@ assert.equal((await client`SELECT state FROM poster_email_jobs WHERE id=${second
 assert.equal(await runPosterMailOnce(database,transport),false);
 ```
 
-- [ ] **Step 2 — red run** compose `npx tsx --test --test-concurrency=1 src/modules/posters/email-jobs.integration.test.ts`; คาด missing worker exports
+- [ ] **Step 2 — red run** native host (T02 environment) `npx --no-install tsx --test --test-concurrency=1 src/modules/posters/email-jobs.integration.test.ts`; คาด missing worker exports
 - [ ] **Step 3 — worker claim และ transaction ก่อน transport** เพิ่มใน `email-jobs.ts` โดยใช้ NipaMail helper เดิม:
 
 ```ts
@@ -1644,15 +1648,16 @@ export async function initializePosters(database:PosterDatabase):Promise<void>{
  await reconcilePosters(database);
 }
 // jobs-runner.ts
+import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {writeFile,readFile} from 'node:fs/promises';
 import {setTimeout as pause} from 'node:timers/promises';
 import {db,closeDatabase} from '../../database/index.js';
 import {createPosterMailTransport,runPosterMailOnce,recoverPosterJobs} from './email-jobs.js';
 import {createPosterStorage} from './storage.js';
-import {cleanupFailedAttempt} from './uploads.js';
+import {cleanupFailedAttempt} from './storage.js';
 import {rows} from './access.js';
 import {sql} from 'drizzle-orm';
-const heartbeat='/tmp/pris-poster-worker-heartbeat';
+const heartbeat=join(tmpdir(),'pris-poster-worker-heartbeat');
 if(process.argv.includes('--healthcheck')){
  try{process.exit(Date.now()-Number(await readFile(heartbeat,'utf8'))<60000?0:1);}catch{process.exit(1);}
 }
@@ -1673,13 +1678,13 @@ await closeDatabase();process.exit(0);
 
 Add package script `"posters:worker":"node dist/modules/posters/jobs-runner.js"`; `.env.example` เพิ่ม `POSTER_SUBMISSIONS_ENABLED=false` / `POSTER_EMAILS_ENABLED=false` พร้อม comment ว่า closeอ่านDB. `src/index.ts` เรียก `initializePosters(db)` ก่อน listen; catch/log readinessไม่ผ่านแต่ยังเปิด routesอื่น, `poster_settings.reconcile_ready=false` จาก reconciliation failure. เพิ่ม readiness componentของPosterเมื่อflagtrue. Docker HEALTHCHECK เพิ่ม branch `SERVICE_ROLE=poster-worker` → jobs-runner healthcheck ก่อน existingbranches; deployworkerใช้ command `npm run posters:worker` จริง ไม่เปลี่ยนCMDของAPI
 
-- [ ] **Step 5 — green checks** composeworkerclaim/recovery/cancelbeforeprecheck/stale-source/closeddeadline/receiptstillaccepted; `npm run build`; ทดสอบ startupสองinstanceไม่duplicate targetและsourcehashเดิมไม่resetsettings. Commit `feat(posters): process durable mail and recover interrupted attempts`
+- [ ] **Step 5 — green checks** native worker claim/recovery/cancelbeforeprecheck/stale-source/closeddeadline/receiptstillaccepted; `npm run build`; ทดสอบ startupสองinstanceไม่duplicate targetและsourcehashเดิมไม่resetsettings; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T13 — REST routes และ read models ที่แยกข้อมูลสาธารณะ/ผู้ส่ง/เจ้าหน้าที่
 
 **Files:** Create API `src/modules/posters/{readers,public.routes,backoffice.routes}.ts`, `routes.integration.test.ts`, `readers.integration.test.ts`; Modify `src/index.ts`
 
-**Interfaces:** ผลิต `readOwnerPoster(database,actor,abstractId,requestId?):Promise<OwnerPosterDto>`, `readPosterList(database,actor,eventId,query):Promise<PosterListDto>`, `readPosterDetail(database,actor,eventId,abstractId):Promise<PosterDetailDto>`. ทุก response `{success:true,data:T}` / error `{success:false,code,error}`; upload status `201` fresh/`200` replay, Adminaction200, `400` invalidschema, `401` noJWT, `403` role/owner, `404` notfound/wrongEvent, `409` stale/used/expired/cancelled, `413` oversized, `415` declaredtype/extensionmismatch, `422` invalidfile, `503` reconciliation/config unavailable
+**Interfaces:** ผลิต `readOwnerPoster(database,actor,abstractId,requestId?):Promise<OwnerPosterDto>`, `readPosterList(database,actor,eventId,query):Promise<PosterListDto>`, `readPosterDetail(database,actor,eventId,abstractId):Promise<PosterDetailDto>`, `readPosterSettings(database,actor,eventId):Promise<PosterSettingsHistoryDto>`, `recheckPosters(database,actor,eventId,key):Promise<PosterReconciliationDto>`. ทุก response `{success:true,data:T}` / error `{success:false,code,error}`; upload status `201` fresh/replay, resource creates201; asynchronous mail queue202; settings update/preview/reads200, `400` invalidschema, `401` noJWT, `403` role/owner, `404` notfound/wrongEvent, `409` stale/used/expired/cancelled, `413` oversized, `415` declaredtype/extensionmismatch, `422` invalidfile, `503` reconciliation/config unavailable
 
 - [ ] **Step 1 — red inject/security test** instantiate Fastifyแยกไม่import productionindex, registermultipart/JWT testkey/routes/decorateauthenticate, injectsyntheticactors. ตัวอย่างที่ต้องมี:
 
@@ -1688,7 +1693,7 @@ const res=await app.inject({method:'GET',url:'/api/events/PRIS-2026/approved-abs
 assert.equal(res.statusCode,200);
 assert.deepEqual(Object.keys(res.json().data[0]).sort(),[
  'affiliation','categoryId','categoryName','id','presentationType','round','sequence','submitterName','title','trackingId'].sort());
-const denied=await app.inject({method:'GET',url:`/api/posters/abstracts/${f.abstractId}`,headers:{authorization:`Bearer ${otherUserToken}`}});
+const denied=await app.inject({method:'GET',url:`/api/abstracts/${f.abstractId}/poster`,headers:{authorization:`Bearer ${otherUserToken}`}});
 assert.equal(denied.statusCode,403);assert.equal(denied.json().code,'POSTER_OWNER_REQUIRED');
 assert.equal(JSON.stringify(denied.json()).includes(f.owner.email),false);
 ```
@@ -1737,6 +1742,8 @@ export type PosterListRow={sourceKey:string;announcement:Announcement;abstractId
  submitterEmail:string|null;progress:PosterProgress;currentUpload:UploadDto|null;activeRequest:RevisionDto|null;
  lastEmail:{id:string;kind:MailKind;state:MailState;createdAt:string;errorCode:string|null}|null;canNotify:boolean};
 export type PosterSettingsDto={eventId:number;closesAt:string;version:number;reconcileReady:boolean;reconciledAt:string|null};
+export type PosterSettingsHistoryDto={settings:PosterSettingsDto;history:Array<{id:string;actorId:number|null;reason:string|null;before:unknown;after:unknown;createdAt:string}>;capabilities:{read:true;manage:boolean}};
+export type PosterReconciliationDto={eventId:number;digest:string;counts:Record<string,number>};
 export type PosterListDto={items:PosterListRow[];total:number;page:number;pageSize:number;settings:PosterSettingsDto;
  capabilities:{read:true;manage:boolean};counts:Record<PosterProgress,number>};
 export type PosterDetailDto={row:PosterListRow;uploads:UploadDto[];requests:RevisionDto[];
@@ -1850,6 +1857,17 @@ export async function readPosterDetail(database:PosterDatabase,actor:PosterActor
  return {row,uploads,requests:requests.map(r=>revisionDto(r,now)),emailJobs:jobs.map(j=>({...j,createdAt:iso(j.createdAt),finishedAt:maybeIso(j.finishedAt),
   attempts:attempts.filter(a=>a.job_id===j.id)})),audit,capabilities:{read:true,manage:actor.role==='admin'}};
 }
+export async function readPosterSettings(database:PosterDatabase,actor:PosterActor,eventId:number):Promise<PosterSettingsHistoryDto>{
+ await requirePosterStaff(database,actor,eventId,false);
+ const [setting]=await rows<PosterSettingsDto>(database,sql`SELECT event_id AS "eventId",closes_at AS "closesAt",version,
+  reconcile_ready AS "reconcileReady",last_reconciled_at AS "reconciledAt" FROM poster_settings WHERE event_id=${eventId}`);
+ if(!setting)fail('POSTER_RECONCILE_REQUIRED',503);
+ const history=await rows<PosterSettingsHistoryDto['history'][number]>(database,sql`SELECT id,actor_id AS "actorId",reason,
+  before_state AS before,after_state AS after,created_at AS "createdAt" FROM poster_audit_events
+  WHERE event_id=${eventId} AND action='deadline_changed' ORDER BY created_at DESC,id DESC`);
+ return {settings:{...setting,closesAt:iso(setting.closesAt),reconciledAt:maybeIso(setting.reconciledAt)},
+  history:history.map(h=>({...h,createdAt:iso(h.createdAt)})),capabilities:{read:true,manage:actor.role==='admin'}};
+}
 export async function readPosterBatch(database:PosterDatabase,actor:PosterActor,eventId:number,batchId:string):Promise<PosterBatchDto>{
  await requirePosterStaff(database,actor,eventId,false);
  const jobs=await rows<PosterBatchDto['jobs'][number]>(database,sql`SELECT j.id,t.abstract_id AS "abstractId",j.payload->>'recipient' AS recipient,j.state,j.error_code AS "errorCode"
@@ -1858,27 +1876,29 @@ export async function readPosterBatch(database:PosterDatabase,actor:PosterActor,
 }
 ```
 
-`readRosterRows` intentionallyreadsEventmetadataทั้งหมดก่อนpaginateสำหรับรายชื่อคงที่ขนาดไม่กี่ร้อยรายการ; ใส่comment`ponytail: bounded conference roster; switch to SQL filtering/pagination if events grow to thousands of works`. ไม่มีfilebytesในresponse. `canNotify`cachedpreviewhintต้องrevalidateในPOSTpreview+transactionเสมอ
+`readRosterRows` intentionallyreadsEventmetadataทั้งหมดก่อนpaginateสำหรับรายชื่อคงที่ขนาดไม่กี่ร้อยรายการ; ใส่comment`ponytail: bounded conference roster; switch to SQL filtering/pagination if events grow to thousands of works`. ไม่มีfilebytesในresponse. `canNotify` cached preview hint ต้อง revalidateในPOSTpreview+transactionเสมอ
 
 `canNotify` ต้องready+present+emailvalid+ยังไม่มีupload+deadlineไม่หมด; ไม่อาศัยlastEmailอย่างเดียว. Apply exact filters round/type/match/progress; search title/name/tracking/emailเฉพาะstaff, casefold whitespaceสำหรับsearchเท่านั้นไม่ใช้match. Countก่อนpaginateและหลังscope/type filter; pageSize<=100. Detailต้องguardEventก่อนquery, `WHERE t.event_id=eventId AND t.abstract_id=abstractId`; filesORDERversionDESC; requestsORDERcreatedDESC; jobswithattemptsORDERcreatedDESC; auditORDERcreatedDESC. ISO conversionทุกtimestamp ไม่คืนrawDate/nullผิดtype. Unit progress และ integrationlist orphan/readonlyassignedEvent/detailwrongEvent ต้องPASS
 
 - [ ] **Step 4 — REST contract register** ไม่มี pathแก้ currentfile/deletefile/change-request-deadline:
 
-| Method/path (absolute path after registration) | Body/query | Handler |
+| Method/path (absolute path after registration) | Body/query | Handler / status |
 | --- | --- | --- |
-| GET `/api/events/PRIS-2026/approved-abstracts` | none/public | `publicAnnouncements()` |
-| GET `/api/posters/abstracts/:abstractId` | `requestId?` UUID | owner reader |
-| POST `/api/posters/abstracts/:abstractId/uploads` | multipart file + `requestId?`; Idempotency-Key UUID | `submitPosterUpload` |
-| GET `/api/backoffice/posters/events/:eventId` | listquery | staff list |
-| GET `/api/backoffice/posters/events/:eventId/abstracts/:abstractId` | none | staff detail |
-| POST `/api/backoffice/posters/events/:eventId/verify` | verification schema | `verifyAlias` |
-| PATCH `/api/backoffice/posters/events/:eventId/settings` | settings schema | `changePosterSettings` |
-| POST `/api/backoffice/posters/events/:eventId/email-preview` | preview schema | `previewPosterMail` |
-| POST `/api/backoffice/posters/events/:eventId/email-batches` | batch schema | `createNotificationBatch` |
-| GET `/api/backoffice/posters/events/:eventId/email-batches/:batchId` | none | guard + jobs byEvent/batch |
-| POST `/api/backoffice/posters/events/:eventId/abstracts/:abstractId/revision-requests` | create schema | `createPosterRevision` |
-| POST `/api/backoffice/posters/events/:eventId/revision-requests/:requestId/cancel` | reason | `cancelPosterRevision` |
-| POST `/api/backoffice/posters/events/:eventId/email-jobs/:jobId/resend` | `previewFingerprint` | `resendPosterMail` |
+| GET `/api/events/:eventCode/approved-abstracts` | none/public | `publicAnnouncements()` / 200 |
+| GET `/api/abstracts/:abstractId/poster` | `requestId?` UUID | owner reader / 200 |
+| POST `/api/abstracts/:abstractId/poster-uploads` | multipart file + `requestId?`; Idempotency-Key UUID | `submitPosterUpload` / 201 |
+| GET `/api/backoffice/events/:eventId/poster-targets` | listquery | staff list / 200 |
+| GET `/api/backoffice/events/:eventId/poster-targets/:abstractId` | none | staff detail / 200 |
+| POST `/api/backoffice/events/:eventId/poster-reconciliations` | strict empty JSON; Idempotency-Key UUID | `recheckPosters`, automatic source only; 201 |
+| GET `/api/backoffice/events/:eventId/poster-settings` | none | `readPosterSettings` + deadline history; 200 |
+| POST `/api/backoffice/events/:eventId/poster-verifications` | verification schema | `verifyAlias` / 201 |
+| PATCH `/api/backoffice/events/:eventId/poster-settings` | settings schema | `changePosterSettings` / 200 |
+| POST `/api/backoffice/events/:eventId/poster-email-previews` | preview schema | `previewPosterMail` / 200 |
+| POST `/api/backoffice/events/:eventId/poster-notification-batches` | batch schema | `createNotificationBatch` / 202 |
+| GET `/api/backoffice/events/:eventId/poster-notification-batches/:batchId` | none | guard + jobs byEvent/batch / 200 |
+| POST `/api/backoffice/events/:eventId/poster-targets/:abstractId/revision-requests` | create schema | `createPosterRevision` / 201 |
+| POST `/api/backoffice/events/:eventId/poster-revision-requests/:requestId/cancellations` | reason | `cancelPosterRevision` / 201 |
+| POST `/api/backoffice/events/:eventId/poster-email-jobs/:jobId/resends` | `previewFingerprint` | `resendPosterMail` / 202 |
 
 Handlersparse `z` bodies/query/paramsstrict; use `operationKeySchema.parse(request.headers['idempotency-key'])` for allwrites, actor=request.user afterauthenticate. Publicannouncementsindependentof receivingflag; read routeskeepworkingwhenmutationsdisabled. Posterupload validationcode returns422 viaexistingApiError; oversized multipart catch returns413; otherApiErrorthrough existingglobalhandler. Actualmultipartconsumer:
 
@@ -1897,7 +1917,7 @@ async function readPosterMultipart(request:FastifyRequest){
 }
 ```
 
-RegistrationในAPIindex: publicannouncementpluginprefix`/api/events`; protectedownerpluginprefix`/api/posters` withpreHandlerauthenticate; backofficepluginprefix`/posters` ในexisting`/api/backoffice` group. Testplugin injectdeps database/storage; productionusesdb/storage onlyatregistration ไม่instantiateR2ถ้ารับไฟล์flagfalse
+RegistrationในAPIindex: publicannouncementpluginprefix`/api/events`; protectedownerpluginprefix`/api/abstracts` withpreHandlerauthenticate; backofficeplugin with no added prefix ในexisting`/api/backoffice` group. Testplugin injectdeps database/storage; productionusesdb/storage onlyatregistration ไม่instantiateR2ถ้ารับไฟล์flagfalse
 
 Routewrappersที่ต้องใช้เพื่อให้contracttableตรงกับhandlers (importsทุกsymbolจากmoduleที่taskกำหนด ไม่ใช้productionindexในtests):
 
@@ -1905,15 +1925,19 @@ Routewrappersที่ต้องใช้เพื่อให้contracttable
 // public.routes.ts
 import type {FastifyPluginAsync} from 'fastify';
 export const posterAnnouncementRoutes:FastifyPluginAsync=async app=>{
- app.get('/PRIS-2026/approved-abstracts',async()=>({success:true,data:publicAnnouncements()}));
+ app.get('/:eventCode/approved-abstracts',async request=>{
+  const {eventCode}=z.object({eventCode:z.string()}).parse(request.params);
+  if(eventCode!=='PRIS-2026')fail('POSTER_EVENT_NOT_FOUND',404);
+  return {success:true,data:publicAnnouncements()};
+ });
 };
 export const posterOwnerRoutes:FastifyPluginAsync<{database:PosterDatabase;storage?:PosterStorage}>=async(app,{database,storage})=>{
- app.get('/abstracts/:abstractId',async request=>{
+ app.get('/:abstractId/poster',async request=>{
   const {abstractId}=z.object({abstractId:idSchema}).parse(request.params);
   const {requestId}=z.object({requestId:z.string().uuid().optional()}).strict().parse(request.query);
   return {success:true,data:await readOwnerPoster(database,request.user as PosterActor,abstractId,requestId)};
  });
- app.post('/abstracts/:abstractId/uploads',async(request,reply)=>{
+ app.post('/:abstractId/poster-uploads',async(request,reply)=>{
   const {abstractId}=z.object({abstractId:idSchema}).parse(request.params);const actor=request.user as PosterActor;
   await requirePosterOwner(database,actor,abstractId);
   if(process.env.POSTER_SUBMISSIONS_ENABLED!=='true')fail('POSTER_RECEIVING_DISABLED',503);
@@ -1925,40 +1949,77 @@ export const posterOwnerRoutes:FastifyPluginAsync<{database:PosterDatabase;stora
    }throw error;
   }
   const result=await submitPosterUpload(database,actor,abstractId,key,input.requestId,input.file,storage??createPosterStorage());
-  return reply.code(result.replayed?200:201).send({success:true,data:result});
+  return reply.code(201).send({success:true,data:result});
  });
 };
 // backoffice.routes.ts
 import type {FastifyPluginAsync,FastifyRequest} from 'fastify';
+// backoffice.routes.ts helper: reconciliation is independently atomic/idempotent (T05).
+// Operation transaction holds only its key lock, never settings/target locks while invoking reconciliation.
+// A crash after reconciliation but before recording its response safely rechecks without resetting history.
+export async function recheckPosters(database:PosterDatabase,actor:PosterActor,eventId:number,key:string):Promise<PosterReconciliationDto>{
+ return adminOperation(database,actor,eventId,'reconciliation',key,{},async()=>{
+  const result=await reconcilePosters(database);
+  if(result.eventId!==eventId)fail('POSTER_EVENT_NOT_FOUND',404);
+  return result;
+ });
+}
 export const posterBackofficeRoutes:FastifyPluginAsync<{database:PosterDatabase}>=async(app,{database})=>{
  const params=(r:FastifyRequest)=>r.params as Record<string,string>;
  const event=(r:FastifyRequest)=>idSchema.parse(params(r).eventId);
  const actor=(r:FastifyRequest)=>r.user as PosterActor;
  const key=(r:FastifyRequest)=>operationKeySchema.parse(r.headers['idempotency-key']);
- app.get('/events/:eventId',async r=>({success:true,data:await readPosterList(database,actor(r),event(r),listQuerySchema.parse(r.query))}));
- app.get('/events/:eventId/abstracts/:abstractId',async r=>({success:true,data:await readPosterDetail(database,actor(r),event(r),idSchema.parse(params(r).abstractId))}));
- app.get('/events/:eventId/email-batches/:batchId',async r=>({success:true,data:await readPosterBatch(database,actor(r),event(r),z.string().uuid().parse(params(r).batchId))}));
- app.post('/events/:eventId/verify',async r=>({success:true,data:await verifyAlias(database,actor(r),event(r),key(r),verificationInputSchema.parse(r.body))}));
- app.patch('/events/:eventId/settings',async r=>({success:true,data:await changePosterSettings(database,actor(r),event(r),key(r),settingsInputSchema.parse(r.body))}));
- app.post('/events/:eventId/email-preview',async r=>({success:true,data:await previewPosterMail(database,actor(r),event(r),mailPreviewInputSchema.parse(r.body))}));
- app.post('/events/:eventId/email-batches',async r=>({success:true,data:await createNotificationBatch(database,actor(r),event(r),key(r),batchInputSchema.parse(r.body))}));
- app.post('/events/:eventId/abstracts/:abstractId/revision-requests',async r=>({success:true,data:await createPosterRevision(database,actor(r),event(r),idSchema.parse(params(r).abstractId),key(r),createRevisionInputSchema.parse(r.body))}));
- app.post('/events/:eventId/revision-requests/:requestId/cancel',async r=>({success:true,data:await cancelPosterRevision(database,actor(r),event(r),z.string().uuid().parse(params(r).requestId),key(r),cancelInputSchema.parse(r.body))}));
- app.post('/events/:eventId/email-jobs/:jobId/resend',async r=>{
+ app.get('/events/:eventId/poster-settings',async r=>({success:true,data:await readPosterSettings(database,actor(r),event(r))}));
+ app.post('/events/:eventId/poster-reconciliations',async(r,reply)=>{
+  z.object({}).strict().parse(r.body);
+  return reply.code(201).send({success:true,data:await recheckPosters(database,actor(r),event(r),key(r))});
+ });
+ app.get('/events/:eventId/poster-targets',async r=>({success:true,data:await readPosterList(database,actor(r),event(r),listQuerySchema.parse(r.query))}));
+ app.get('/events/:eventId/poster-targets/:abstractId',async r=>({success:true,data:await readPosterDetail(database,actor(r),event(r),idSchema.parse(params(r).abstractId))}));
+ app.get('/events/:eventId/poster-notification-batches/:batchId',async r=>({success:true,data:await readPosterBatch(database,actor(r),event(r),z.string().uuid().parse(params(r).batchId))}));
+ app.post('/events/:eventId/poster-verifications',async(r,reply)=>reply.code(201).send({success:true,data:await verifyAlias(database,actor(r),event(r),key(r),verificationInputSchema.parse(r.body))}));
+ app.patch('/events/:eventId/poster-settings',async r=>({success:true,data:await changePosterSettings(database,actor(r),event(r),key(r),settingsInputSchema.parse(r.body))}));
+ app.post('/events/:eventId/poster-email-previews',async r=>({success:true,data:await previewPosterMail(database,actor(r),event(r),mailPreviewInputSchema.parse(r.body))}));
+ app.post('/events/:eventId/poster-notification-batches',async(r,reply)=>reply.code(202).send({success:true,data:await createNotificationBatch(database,actor(r),event(r),key(r),batchInputSchema.parse(r.body))}));
+ app.post('/events/:eventId/poster-targets/:abstractId/revision-requests',async(r,reply)=>reply.code(201).send({success:true,data:await createPosterRevision(database,actor(r),event(r),idSchema.parse(params(r).abstractId),key(r),createRevisionInputSchema.parse(r.body))}));
+ app.post('/events/:eventId/poster-revision-requests/:requestId/cancellations',async(r,reply)=>reply.code(201).send({success:true,data:await cancelPosterRevision(database,actor(r),event(r),z.string().uuid().parse(params(r).requestId),key(r),cancelInputSchema.parse(r.body))}));
+ app.post('/events/:eventId/poster-email-jobs/:jobId/resends',async(r,reply)=>{
   const {previewFingerprint}=z.object({previewFingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(r.body);
-  return {success:true,data:await resendPosterMail(database,actor(r),event(r),z.string().uuid().parse(params(r).jobId),key(r),previewFingerprint)};
+  return reply.code(202).send({success:true,data:await resendPosterMail(database,actor(r),event(r),z.string().uuid().parse(params(r).jobId),key(r),previewFingerprint)});
  });
 };
 // src/index.ts: within existing registration locations
 fastify.register(posterAnnouncementRoutes,{prefix:'/api/events'});
-fastify.register(async app=>{app.addHook('preHandler',fastify.authenticate);app.register(posterOwnerRoutes,{database:db});},{prefix:'/api/posters'});
+fastify.register(async app=>{app.addHook('preHandler',fastify.authenticate);app.register(posterOwnerRoutes,{database:db});},{prefix:'/api/abstracts'});
 // Inside protectedRoutes /api/backoffice callback:
-protectedRoutes.register(posterBackofficeRoutes,{prefix:'/posters',database:db});
+protectedRoutes.register(posterBackofficeRoutes,{database:db});
 ```
 
-Adminwritesใช้200 `{success,data}` ตามexistingbackofficestyle; uploadใช้201fresh/200replay. BOGETdetailให้previewstoredmailกับreadonlyroleด้วยreadguard; POSTemail-previewไว้Adminเท่านั้น. ถ้าreceivingfalse ownerreads/historyยังเปิดได้ แต่POSTupload503; mainsettings/verificationAdminยังจัดการได้ก่อนเปิดรับ. PublicPDF/announcementrouteไม่ขึ้นกับR2config
+Resource creation (upload/verifications/revisions/cancellations/reconciliations) ใช้201; mail batch/resendใช้202; reads/previews/settings PATCHใช้200. Idempotent replayคืน statusของ original operation; upload replayใช้201เช่น original create. BOGETdetailให้previewstoredmailกับreadonlyroleด้วยreadguard; POSTemail-previewไว้Adminเท่านั้น. ถ้าreceivingfalse ownerreads/historyยังเปิดได้ แต่POSTupload503; mainsettings/verificationAdminยังจัดการได้ก่อนเปิดรับ. PublicPDF/announcementrouteไม่ขึ้นกับR2config
 
-- [ ] **Step 5 — green routes matrix** noJWT, owner/otheraccount, querytamper, publictokenstaffIDcollision, reviewer/orgeventscope, allAdminwrite403forviewers, malformedUUID/bodyextra, multipart2files/overlimit, success/replay. `npm run test:posters`, composeintegration, `npm run build`; commit `feat(posters): expose scoped poster and announcement endpoints`
+- [ ] **Step 4b — contract/status regressions** `routes.integration.test.ts` uses the fixture app/dependencies from Step 1. Add success assertions to every creation fixture, not just returned JSON; replay each with the same Idempotency-Key and compare status/body. Exercise all 15 Design section 14 methods/paths. Concrete read/recheck checks:
+
+```ts
+const settingsUrl=`/api/backoffice/events/${f.eventId}/poster-settings`;
+const staffHeaders={authorization:`Bearer ${adminToken}`};
+const settingsRead=await app.inject({method:'GET',url:settingsUrl,headers:staffHeaders});
+assert.equal(settingsRead.statusCode,200);
+assert.ok(Array.isArray(settingsRead.json().data.history));
+const recheckKey=randomUUID();
+const recheckUrl=`/api/backoffice/events/${f.eventId}/poster-reconciliations`;
+const recheckInput={method:'POST' as const,url:recheckUrl,headers:{...staffHeaders,'idempotency-key':recheckKey},payload:{}};
+const checked=await app.inject(recheckInput);assert.equal(checked.statusCode,201);
+const replay=await app.inject(recheckInput);assert.equal(replay.statusCode,201);assert.deepEqual(replay.json(),checked.json());
+const imported=await app.inject({...recheckInput,headers:{...staffHeaders,'idempotency-key':randomUUID()},payload:{rows:[]}});
+assert.equal(imported.statusCode,400);
+const readOnlyHeaders={authorization:`Bearer ${reviewerToken}`};
+assert.equal((await app.inject({method:'GET',url:settingsUrl,headers:readOnlyHeaders})).statusCode,200);
+assert.equal((await app.inject({...recheckInput,headers:{...readOnlyHeaders,'idempotency-key':randomUUID()}})).statusCode,403);
+```
+
+T16 `posterApi.test.ts` asserts fetch URL `/api/abstracts/501/poster?requestId=...` and XHR URL `/api/abstracts/501/poster-uploads`; T18 typed client paths must match the table verbatim. T19 reviewer settings/history visible, recheck hidden; direct reviewer POST still 403. Neither recheck nor preview may enqueue email; assert job counts unchanged. Recheck must preserve settings.version/closesAt/upload/request histories while source sync remains automatic at startup.
+
+- [ ] **Step 5 — green routes matrix** noJWT, owner/otheraccount, querytamper, publictokenstaffIDcollision, reviewer/orgeventscope, allAdminwrite403forviewers, malformedUUID/bodyextra, multipart2files/overlimit, success/replay. `npm run test:posters`, `npm run test:posters:integration`, `npm run build`; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T14 — หน้า approved-abstracts เปลี่ยนแหล่งข้อมูลโดยรักษาพฤติกรรมเดิม
 
@@ -2010,7 +2071,7 @@ useEffect(()=>{setCurrentPage(page=>Math.min(page,totalPages));},[totalPages]);
 ตรวจหน้า1มี10รายการ/หน้าถัดไปได้ลำดับต่อเนื่อง; แสดงยอดตามRoundจากdataจริง; filter/Round change resetหน้า1; APIreloadบนหน้าสุดท้ายเมื่อdataลดลงต้องกลับอยู่ในช่วงหน้า; Round2ใช้cardkeysไม่ชนRound1; copied ID เป็นค่าจริงจากAPI. Loading/failureไม่แสดงempty-stateหรือยอด0เป็นผลประกาศที่สำเร็จ
 
 - [ ] **Step 4 — eliminate duplicate source after consumer passes** `rg -n 'approvedRound1Abstracts' src` ต้องไม่พบruntimeimportในPris. ย้ายเฉพาะsourceintegritytestไปAPI เปลี่ยนfiltertestsใช้syntheticrows. PowerShell `Remove-Item -LiteralPath 'D:/confer/confer/conference/Pris2026/src/data/approvedRound1Abstracts.ts'` (ไฟล์เดียว). ตรวจ UIsearch/type/category/Round/PDF, cards/pagination10items/stats/dropdown/Copy Tracking ID ตามbaseline `fdf67a2` ด้วยbrowser; APIdown/retry/round2idcollision/data-shrink reload. `npm test`, `npm run build`; คาดPASSและPDFเปิดURLเดิม
-- [ ] **Step 5 — commit** Pris `git add src/types/posters.ts src/lib/posterApi.ts src/app messages src/data src/lib/acceptedAbstractsFilter.test.ts` เลือกเฉพาะไฟล์taskที่เปลี่ยนจริง; commit `feat(announcements): read the authoritative API roster`
+- [ ] **Step 5 — milestone handoff** ส่ง diff และ test/build evidence ให้ controller; ไม่ stage/commit ราย task
 
 ## T15 — Login return, reload และภาษาไม่ทำ context ของ Poster หาย
 
@@ -2060,7 +2121,7 @@ if((pathname==='/sessions/confirm'||pathname==='/poster-submission')&&typeof win
 ใช้`newLocale`/existingrouterจาก`@/i18n/routing`; Loginมีsafe localizedredirectเดิม. Wrongaccountปุ่ม `logout()` แล้ว `router.replace('/login?redirect='+encodeURIComponent(returnPath))` ผ่านlocalizedrouter; ไม่ใส่owneremailลงURL
 
 - [ ] **Step 4 — green** redirectunitทั้งหมด+browser openingemaillink→login→sameabstract/request, refresh/pageThai→English→queryเหมือนเดิม, wrongaccount→logout→login; `npm test`, `npm run build`
-- [ ] **Step 5 — commit** `git add src/lib/localizedRedirect.ts src/lib/refreshRedirect.ts src/components/layout/Header.tsx src/lib/*.test.ts`; `git commit -m "fix(posters): preserve the owned work through authentication"`
+- [ ] **Step 5 — milestone handoff** ส่ง diff และ test/build evidence ให้ controller; ไม่ stage/commit ราย task
 
 ## T16 — Frontend upload transport และสถานะที่แยก selected/progress/received
 
@@ -2083,14 +2144,14 @@ assert.equal(submissionState({loading:false,owner,selected:true,sending:false,re
 export class PosterApiError extends Error{constructor(public code:string,public status:number){super(code);}}
 export async function getOwnerPoster(token:string,abstractId:number,requestId?:string,signal?:AbortSignal):Promise<OwnerPosterDto>{
  const query=requestId?'?requestId='+encodeURIComponent(requestId):'';
- const response=await fetch(`${API_BASE}/api/posters/abstracts/${abstractId}${query}`,{signal,cache:'no-store',headers:{Authorization:`Bearer ${token}`}});
+ const response=await fetch(`${API_BASE}/api/abstracts/${abstractId}/poster${query}`,{signal,cache:'no-store',headers:{Authorization:`Bearer ${token}`}});
  const body=await response.json();if(!response.ok||!body.success)throw new PosterApiError(body.code??'POSTER_LOAD_FAILED',response.status);
  return body.data;
 }
 export type PosterUploadInput={token:string;abstractId:number;requestId:string|null;file:File;key:string;onProgress:(percentage:number)=>void};
 export function uploadPoster(input:PosterUploadInput):Promise<{upload:UploadDto;replayed:boolean}>{
  return new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();
-  xhr.open('POST',`${API_BASE}/api/posters/abstracts/${input.abstractId}/uploads`);
+  xhr.open('POST',`${API_BASE}/api/abstracts/${input.abstractId}/poster-uploads`);
   xhr.setRequestHeader('Authorization',`Bearer ${input.token}`);xhr.setRequestHeader('Idempotency-Key',input.key);
   xhr.timeout=180000; // deadline is enforced by server, independent from this browser timeout
   xhr.upload.onprogress=e=>{if(e.lengthComputable)input.onProgress(Math.round(e.loaded/e.total*100));};
@@ -2116,7 +2177,7 @@ export function submissionState(s:{loading:boolean;owner:OwnerPosterDto|null;sel
 ImporttypesจากT01ในposterApi. UnittransportmockXMLHttpRequestตรวจAuthorization/Idempotency/FormDataไม่มีmanualContent-Type/2xx/422/networkunknown; don'tmockserversecurity. Selectedfilenew→newUUID; unknownerrorretry **samefile+samekey**; knownrejectionfilecanreselectnewkey. Receiving201/200meansserverreceived; uploadprogress100%หมายถึงส่งbyteแล้ว ยังแสดงตรวจไฟล์ ไม่แสดงสำเร็จก่อนresponse
 
 - [ ] **Step 3 — run green** `npm test`, `npm run build`; browserNetworkดูmultipartand30MBprogress ไม่ใช้fixtureจริงมีPII
-- [ ] **Step 4 — commit** `git add src/lib/posterApi.ts src/lib/posterSubmissionState.ts src/lib/poster*.test.ts`; `git commit -m "feat(posters): add authenticated upload transport and state"`
+- [ ] **Step 4 — milestone handoff** ส่ง diff และ test/build evidence ให้ controller; ไม่ stage/commit ราย task
 
 ## T17 — หน้า Poster สองภาษา ธีมร่วม และ receipt Modal
 
@@ -2192,11 +2253,15 @@ AuthProviderhydrateคืนnullอยู่แล้ว ไม่เพิ่�
 ```tsx
 'use client';
 import {useTranslations,useLocale} from 'next-intl';
+import {useEffect,useState} from 'react';
 import {UploadCloud,FileText,CheckCircle2} from 'lucide-react';
 import type {OwnerPosterDto} from '@/types/posters';
 export function PosterWorkspace(p:{owner:OwnerPosterDto;file:File|null;onFile:(f:File|null)=>void;onSubmit:()=>void;
  sending:boolean;progress:number;error:string|null}){
  const t=useTranslations('poster');const locale=useLocale();const o=p.owner;
+ const [previewUrl,setPreviewUrl]=useState<string|null>(null);
+ useEffect(()=>{if(!p.file){setPreviewUrl(null);return;}const url=URL.createObjectURL(p.file);setPreviewUrl(url);
+  return()=>URL.revokeObjectURL(url);},[p.file]);
  const date=(iso:string)=>new Intl.DateTimeFormat(locale==='th'?'th-TH':'en-GB',{dateStyle:'long',timeStyle:'medium',timeZone:'Asia/Bangkok'}).format(new Date(iso));
  const close=o.selectedRequest?.closesAt??o.mainClosesAt;
  return <main className="min-h-screen bg-[#fafafa] px-4 pb-16 pt-28 text-slate-900 sm:px-6">
@@ -2211,7 +2276,8 @@ export function PosterWorkspace(p:{owner:OwnerPosterDto;file:File|null;onFile:(f
   <span className="rounded-md bg-blue-50 px-3 py-1 text-sm text-blue-700">{o.presentationType==='highlighted-poster'?t('highlighted'):t('poster')}</span>
   <p className="mt-4 font-medium">{o.trackingId}</p><h3 className="mt-2 text-xl font-semibold leading-relaxed">{o.title}</h3>
   <dl className="mt-6 space-y-3 text-sm"><div><dt className="text-slate-500">{t('submitter')}</dt><dd>{o.submitterName}</dd></div>
-   <div><dt className="text-slate-500">{t('category')}</dt><dd>{o.categoryName}</dd></div></dl>
+   <div><dt className="text-slate-500">{t('category')}</dt><dd>{o.categoryName}</dd></div>
+   <div><dt>Round</dt><dd>{o.round}</dd></div></dl>
   {o.selectedRequest&&<div className="mt-6 rounded-xl border border-orange-200 bg-orange-50 p-4"><h3 className="font-semibold">{t('revisionDetails')}</h3>
    <p className="mt-2 whitespace-pre-wrap">{o.selectedRequest.details}</p><p className="mt-2 text-sm">{t('requestStatus')}: {t('requestStates.'+o.selectedRequest.status)}</p></div>}
  </section>
@@ -2226,8 +2292,9 @@ export function PosterWorkspace(p:{owner:OwnerPosterDto;file:File|null;onFile:(f
    <input className="sr-only" type="file" accept="image/png,application/pdf,.png,.pdf" disabled={p.sending} onChange={e=>p.onFile(e.target.files?.[0]??null)}/></label>
    {p.file&&<div className="mt-4 flex items-center gap-2 text-sm"><FileText size={18}/><span>{p.file.name} · {(p.file.size/1024/1024).toFixed(2)} MB</span>
     <span className="text-blue-700">{t('selected')}</span><button disabled={p.sending} onClick={()=>p.onFile(null)} className="ml-auto underline">{t('removeSelection')}</button></div>}
+   {previewUrl&&p.file&&<div className="mt-4">{p.file.name.toLowerCase().endsWith('.png')?<img src={previewUrl} alt={p.file.name} className="max-h-80 w-full object-contain"/>:<iframe src={previewUrl} title={p.file.name} className="h-80 w-full"/>}<a href={previewUrl} target="_blank" rel="noopener noreferrer" className="underline">{t('openPreview')}</a></div>}
    {p.sending&&<div className="mt-4" role="status"><progress className="w-full" max={100} value={p.progress}/><p>{t(p.progress===100?'checking':'sending')}</p></div>}
-   <button className="mt-6 w-full rounded-xl bg-[#020617] px-5 py-3 font-medium text-white transition-colors hover:bg-[#ca9b52] hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4" disabled={!p.file||p.sending||!!p.error&&p.error!=='POSTER_NETWORK_UNKNOWN'} onClick={p.onSubmit}>{t(p.error==='POSTER_NETWORK_UNKNOWN'?'retryUpload':'submit')}</button>
+   <button className="mt-6 w-full rounded-xl bg-[#020617] px-5 py-3 font-medium text-white transition-colors hover:bg-[#ca9b52] hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4" disabled={!p.file||p.sending} onClick={p.onSubmit}>{t(p.error==='POSTER_NETWORK_UNKNOWN'?'retryUpload':'submit')}</button>
   </>:<p className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm" role="status">{t.has('blocks.'+(o.blockCode??'POSTER_ALREADY_SUBMITTED'))?t('blocks.'+(o.blockCode??'POSTER_ALREADY_SUBMITTED')):t('loadError')}</p>}
   {p.error&&<p className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">{t.has('errors.'+p.error)?t('errors.'+p.error):t('uploadError')}</p>}
   <p className="mt-5 text-sm text-slate-500">{t('support')} <a className="underline" href="mailto:pr@pharmactcouncil.org">pr@pharmactcouncil.org</a></p>
@@ -2251,7 +2318,8 @@ export function PosterSuccessDialog({upload,owner,onClose}:{upload:UploadDto;own
  return <dialog ref={ref} onCancel={e=>{e.preventDefault();onClose();}} aria-labelledby="poster-receipt-title" className="w-[calc(100%-2rem)] max-w-lg rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 shadow-xl backdrop:bg-black/40">
   <h2 id="poster-receipt-title" className="text-2xl font-semibold">{t('received')}</h2>
   <dl className="mt-5 space-y-3"><div><dt>{t('tracking')}</dt><dd>{owner.trackingId}</dd></div><div><dt>{t('work')}</dt><dd>{owner.title}</dd></div>
-   <div><dt>{t('file')}</dt><dd>{upload.fileName}</dd></div><div><dt>{t('receivedAt')}</dt><dd>{received} {t('thaiTime')}</dd></div></dl>
+   <div><dt>{t('file')}</dt><dd>{upload.fileName}</dd></div><div><dt>{t('version')}</dt><dd>{upload.version}</dd></div><div><dt>{t('receivedAt')}</dt><dd>{received} {t('thaiTime')}</dd></div></dl>
+  <a href={upload.publicUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-block underline">{t('viewFile')}</a>
   <p className="mt-5 text-sm text-slate-600">{t('receiptNotice')}</p><button autoFocus onClick={onClose} className="mt-6 w-full rounded-xl bg-[#020617] px-5 py-3 text-white hover:bg-[#ca9b52] hover:text-slate-950">{t('close')}</button>
  </dialog>;
 }
@@ -2261,6 +2329,7 @@ export function PosterSuccessDialog({upload,owner,onClose}:{upload:UploadDto;own
 
 | Key | th | en |
 | --- | --- | --- |
+| openPreview / viewFile | เปิดดูไฟล์ที่เลือก / ดูไฟล์ Poster | Open selected file / View Poster file |
 | title / revisionTitle | ส่งไฟล์ Poster / ส่ง Poster ฉบับแก้ไข | Submit your Poster / Submit a revised Poster |
 | deadline / thaiTime | วันสุดท้ายที่ส่งได้ / เวลาไทย | Submission deadline / Thailand time |
 | completionRule | ระบบต้องรับและตรวจไฟล์เสร็จภายในกำหนดเวลา | The server must receive and validate the file before the deadline. |
@@ -2306,13 +2375,13 @@ Errorcopyที่ห้ามfallbackจนเหตุผลสำคัญห
 
 `blocks.POSTER_RECONCILE_REQUIRED`=กำลังตรวจรายชื่อ กรุณาตรวจใหม่ภายหลัง / The roster is being checked. Please try again later. `POSTER_RECEIVING_DISABLED`=ขณะนี้ระบบพักการรับไฟล์ / File submissions are currently paused. UIfilevalidationerrorยังไม่ใช้สิทธิ์ และ200/201responseเท่านั้นที่ถือว่าได้รับไฟล์
 
-- [ ] **Step 6 — visual/behavior acceptance** ใช้browserที่อนุญาตตรวจdesktop1440/mobile390ทั้งinitial/revision/locked/wrongaccount/expired/error/progress/success; เทียบสองDesignimagesและabstract-submission theme. Tab order+visiblefocus+SpaceEnterfileinput+Escape/close focusreturn; titleยาวและThaiwrapไม่มีhorizontaloverflow. `npm test`, `npm run build`; คาดPASS ไม่มีmissingkey/hydration/Suspense error. Commit `feat(posters): build the bilingual submission and revision workspace`
+- [ ] **Step 6 — visual/behavior acceptance** ใช้browserที่อนุญาตตรวจdesktop1440/mobile390ทั้งinitial/revision/locked/wrongaccount/expired/error/progress/success; เทียบสองDesignimagesและabstract-submission theme. Tab order+visiblefocus+SpaceEnterfileinput+Escape/close focusreturn; titleยาวและThaiwrapไม่มีhorizontaloverflow. `npm test`, `npm run build`; คาดPASS ไม่มีmissingkey/hydration/Suspense error; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T18 — Backoffice typed client, capability และเวลาไทย
 
 **Files:** Create Backoffice `src/types/posters.ts`, `src/lib/posterUi.ts`, `posterUi.test.ts`; Modify `src/lib/api.ts`, `src/contexts/AuthContext.tsx`, `src/components/layout/Sidebar.tsx`
 
-**Interfaces:** copy staffDTOจากT13; ผลิต `api.posters`methodsด้านล่าง, `canManagePosters(role:string):boolean`, `thaiDeadlineInput(close:string):string`, `deadlineInputToClose(value:string):string`, `selectablePosterIds(rows:PosterListRow[]):number[]`. ห้ามอ้างDBeventId=2ในproductioncode
+**Interfaces:** copy staffDTOรวม PosterSettingsHistoryDto/PosterReconciliationDto จากT13; ผลิต `api.posters`methodsด้านล่าง, `canManagePosters(role:string):boolean`, `thaiDeadlineInput(close:string):string`, `deadlineInputToClose(value:string):string`, `selectablePosterIds(rows:PosterListRow[]):number[]`. ห้ามอ้างDBeventId=2ในproductioncode
 
 - [ ] **Step 1 — failing helper test**
 
@@ -2349,23 +2418,25 @@ export function deadlineInputToClose(value:string){
 export const selectablePosterIds=(rows:PosterListRow[])=>[...new Set(rows.filter(r=>r.canNotify&&r.abstractId!==null).map(r=>r.abstractId!))];
 // api.ts: imports types and add posters property inside existing api object
 posters:{
- list:(eventId:number,query:URLSearchParams,token:string)=>fetchAPI<{success:true;data:PosterListDto}>(`/api/backoffice/posters/events/${eventId}?${query}`,{token}),
- detail:(eventId:number,abstractId:number,token:string)=>fetchAPI<{success:true;data:PosterDetailDto}>(`/api/backoffice/posters/events/${eventId}/abstracts/${abstractId}`,{token}),
- preview:(eventId:number,input:PosterPreviewInput,token:string)=>fetchAPI<{success:true;data:PosterPreviewDto}>(`/api/backoffice/posters/events/${eventId}/email-preview`,{token,method:'POST',body:JSON.stringify(input)}),
- batch:(eventId:number,input:{kind:'initial'|'reminder';abstractIds:number[];previewFingerprint:string},key:string,token:string)=>fetchAPI<{success:true;data:{batchId:string;queued:number;jobIds:string[]}}>(`/api/backoffice/posters/events/${eventId}/email-batches`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(input)}),
- batchResult:(eventId:number,batchId:string,token:string)=>fetchAPI<{success:true;data:PosterBatchDto}>(`/api/backoffice/posters/events/${eventId}/email-batches/${batchId}`,{token}),
- verify:(eventId:number,input:{sourceKey:string;fingerprint:string;reason:string},key:string,token:string)=>fetchAPI<{success:true;data:{abstractId:number;state:'ready'}}>(`/api/backoffice/posters/events/${eventId}/verify`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(input)}),
- settings:(eventId:number,input:{closesAt:string;version:number;reason:string},key:string,token:string)=>fetchAPI<{success:true;data:{closesAt:string;version:number}}>(`/api/backoffice/posters/events/${eventId}/settings`,{token,method:'PATCH',headers:{'Idempotency-Key':key},body:JSON.stringify(input)}),
- createRevision:(eventId:number,abstractId:number,input:{requestId:string;details:string;closesAt:string;previewFingerprint:string},key:string,token:string)=>fetchAPI<{success:true;data:{request:RevisionDto;emailJobId:string}}>(`/api/backoffice/posters/events/${eventId}/abstracts/${abstractId}/revision-requests`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(input)}),
- cancelRevision:(eventId:number,requestId:string,reason:string,key:string,token:string)=>fetchAPI<{success:true;data:RevisionDto}>(`/api/backoffice/posters/events/${eventId}/revision-requests/${requestId}/cancel`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({reason})}),
- resend:(eventId:number,jobId:string,previewFingerprint:string,key:string,token:string)=>fetchAPI<{success:true;data:{jobId:string}}>(`/api/backoffice/posters/events/${eventId}/email-jobs/${jobId}/resend`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({previewFingerprint})}),
+ getSettings:(eventId:number,token:string)=>fetchAPI<{success:true;data:PosterSettingsHistoryDto}>(`/api/backoffice/events/${eventId}/poster-settings`,{token}),
+ recheck:(eventId:number,key:string,token:string)=>fetchAPI<{success:true;data:PosterReconciliationDto}>(`/api/backoffice/events/${eventId}/poster-reconciliations`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({})}),
+ list:(eventId:number,query:URLSearchParams,token:string)=>fetchAPI<{success:true;data:PosterListDto}>(`/api/backoffice/events/${eventId}/poster-targets?${query}`,{token}),
+ detail:(eventId:number,abstractId:number,token:string)=>fetchAPI<{success:true;data:PosterDetailDto}>(`/api/backoffice/events/${eventId}/poster-targets/${abstractId}`,{token}),
+ preview:(eventId:number,input:PosterPreviewInput,token:string)=>fetchAPI<{success:true;data:PosterPreviewDto}>(`/api/backoffice/events/${eventId}/poster-email-previews`,{token,method:'POST',body:JSON.stringify(input)}),
+ batch:(eventId:number,input:{kind:'initial'|'reminder';abstractIds:number[];previewFingerprint:string},key:string,token:string)=>fetchAPI<{success:true;data:{batchId:string;queued:number;jobIds:string[]}}>(`/api/backoffice/events/${eventId}/poster-notification-batches`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(input)}),
+ batchResult:(eventId:number,batchId:string,token:string)=>fetchAPI<{success:true;data:PosterBatchDto}>(`/api/backoffice/events/${eventId}/poster-notification-batches/${batchId}`,{token}),
+ verify:(eventId:number,input:{sourceKey:string;fingerprint:string;reason:string},key:string,token:string)=>fetchAPI<{success:true;data:{abstractId:number;state:'ready'}}>(`/api/backoffice/events/${eventId}/poster-verifications`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(input)}),
+ settings:(eventId:number,input:{closesAt:string;version:number;reason:string},key:string,token:string)=>fetchAPI<{success:true;data:{closesAt:string;version:number}}>(`/api/backoffice/events/${eventId}/poster-settings`,{token,method:'PATCH',headers:{'Idempotency-Key':key},body:JSON.stringify(input)}),
+ createRevision:(eventId:number,abstractId:number,input:{requestId:string;details:string;closesAt:string;previewFingerprint:string},key:string,token:string)=>fetchAPI<{success:true;data:{request:RevisionDto;emailJobId:string}}>(`/api/backoffice/events/${eventId}/poster-targets/${abstractId}/revision-requests`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(input)}),
+ cancelRevision:(eventId:number,requestId:string,reason:string,key:string,token:string)=>fetchAPI<{success:true;data:RevisionDto}>(`/api/backoffice/events/${eventId}/poster-revision-requests/${requestId}/cancellations`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({reason})}),
+ resend:(eventId:number,jobId:string,previewFingerprint:string,key:string,token:string)=>fetchAPI<{success:true;data:{jobId:string}}>(`/api/backoffice/events/${eventId}/poster-email-jobs/${jobId}/resends`,{token,method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({previewFingerprint})}),
 },
 ```
 
 เพิ่ม exactDTOในAPItypesและBOtypes: `PosterPreviewInput`=z.inferpreviewSchema; `PosterPreviewDto={fingerprint:string;messages:Array<{abstractId:number;recipient:string;subject:string;html:string;templateVersion:string}>;requestId?:string;closesAt?:string}`; `PosterBatchDto={batchId:string;jobs:Array<{id:string;abstractId:number;recipient:string;state:MailState;errorCode:string|null}>}`. `fetchAPI`มีexistingAuthorization/Content-Type mergeให้ใช้เดิม; don'tunwrapสองครั้ง responseของnewroutesdataอยู่envelope
 
 - [ ] **Step 4 — role and sidebar** เพิ่ม`/posters`ในorganizer/reviewer `rolePageAccess` arrays. Add `{href:'/posters',label:'Poster submissions'}`ในAbstractsubmenu. ปรับ **ทั้ง** organizerและreviewer children.filter เป็น `['/abstracts','/posters'].includes(child.href)`; ไม่เพิ่มstaff/verifier/teamviewer. pagecanManage = `isAdmin && data.capabilities.manage`; hiddenbuttonsไม่ใช่APIpermission
-- [ ] **Step 5 — green/commit** helpertest+`npm run build`; manuallyrole3menu/Eventscopecheck. Commit `feat(posters): add backoffice client and read capabilities`
+- [ ] **Step 5 — green/review handoff** helpertest+`npm run build`; manuallyrole3menu/Eventscopecheck; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T19 — Backoffice รายชื่อ/รับรอง/กำหนดส่ง และ previewก่อนกดส่ง
 
@@ -2415,6 +2486,23 @@ await api.posters.verify(eventId,{sourceKey:row.sourceKey,fingerprint:row.matchF
 setVerifyRow(null);setRefresh(v=>v+1);
 ```
 
+Settings/historyต้องโหลดจาก `api.posters.getSettings(eventId,token)` สำหรับทุก read role; แสดง history actor/reason/before/after/Thai time. Admin ตรวจซ้ำหลังแก้ DB โดยปุ่มนี้ (no client roster import):
+
+```tsx
+const [settingsHistory,setSettingsHistory]=useState<PosterSettingsHistoryDto|null>(null);
+useEffect(()=>{let current=true;if(!eventId||!token)return;
+ api.posters.getSettings(eventId,token).then(r=>{if(current)setSettingsHistory(r.data);}).catch(e=>{if(current)setError(e.message);});
+ return()=>{current=false;};
+},[eventId,token,refresh]);
+const [recheckKey,setRecheckKey]=useState(()=>crypto.randomUUID());
+const [rechecking,setRechecking]=useState(false);
+const recheck=async()=>{if(!manage||rechecking||!eventId||!token)return;setRechecking(true);
+ try{await api.posters.recheck(eventId,recheckKey,token);setRecheckKey(crypto.randomUUID());setRefresh(v=>v+1);}
+ catch(e){setError(e instanceof Error?e.message:'Recheck failed');}finally{setRechecking(false);}};
+// Render in verification tab only for Admin:
+{manage&&<button disabled={rechecking} onClick={recheck}>ตรวจรายชื่อซ้ำ</button>}
+```
+
 Onlyalias_pendingapprove; conflictไม่มีapprovebuttonและบอกแก้source/DBตามexistingtoolsแล้วdeploy/reconcile. DeadlineformAdmin: native`input type=datetime-local step=1` labelวันสุดท้ายเวลาไทย, versionจากdata.settings, reasonrequired; `closesAt:deadlineInputToClose(value)`. serverstaleversion409ให้reloadไม่forceoverwrite; showprevious+newdeadlinebeforeSave
 
 - [ ] **Step 4 — mail preview dialog** usefullserverhtmlใน sandbox iframeไม่`dangerouslySetInnerHTML`ในapp origin; noallow-scripts/noallow-same-origin, `referrerPolicy=no-referrer`; แสดงrecipient/tracking/titleและหนึ่งผลงานหนึ่งเมลแยกทุกรายการ. codeexecutioncycle:
@@ -2436,7 +2524,7 @@ const send=async()=>{if(!preview||busy)return;setBusy(true);setFailure(null);
 
 DialogpropsabstractIdsarraystable(useMemo); stalepreview409clearpreview/refetch+newreview, networkunknownretry sameoperationkey+input. `onQueued`displayqueuedcountsไม่รายงานsentทันที, `batchResult`manualRefreshbuttonอ่านjobs pending/sent/failed/unknown/suppressed; ไม่มีautomaticnotification. ไม่pollรายการตลอดเมื่อpageไม่เปิด
 
-- [ ] **Step 5 — green UI/APIcheck** Adminmultiworkssameemail→2previews2jobs, disabledinvalid, eventchangeclearselection, vieweronly, conflictcannotapprove, closeformThai/UTC, previewstale atomic, batchnetworkretry; helpercheck+`npm run build`. Commit `feat(posters): add roster verification and manual mail controls`
+- [ ] **Step 5 — green UI/APIcheck** Adminmultiworkssameemail→2previews2jobs, disabledinvalid, eventchangeclearselection, vieweronly, conflictcannotapprove, closeformThai/UTC, previewstale atomic, batchnetworkretry; helpercheck+`npm run build`; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T20 — Backoffice ดูไฟล์/ทุกฉบับ/ประวัติ และขอแก้ไขหรือยกเลิก
 
@@ -2502,7 +2590,7 @@ Cancelmodalshowsoldterms+deadline+requiredreasonก่อนbutton; confirmusesc
 
 Emailhistorydisplaykind/state/actorcreatedAt/recipient/finishedAt/errorCode/attempts+linkrequest/file; auditdisplayactionactorreasonbefore/after/times. ผู้ใช้readonlyดูทั้งstoredmailpreviewและhistoryได้แต่ไม่มีwritebuttons
 
-- [ ] **Step 5 — green full workflow** create→mailfail→resendsame→uploadrevised→currentv2oldv1history; cancel→oldlinkdenied→newrequest; cancelafteruploadstartsdenied andv1stays; expiredoldrequest/newfutureaftermainclose; noViewerwrites. `npm run build`, helpers, APIrevisionintegration; commit `feat(posters): manage version history and immutable revision requests`
+- [ ] **Step 5 — green full workflow** create→mailfail→resendsame→uploadrevised→currentv2oldv1history; cancel→oldlinkdenied→newrequest; cancel while upload in flight succeeds and blocks finalization; cancel after upload commits is denied and v2 stays; expiredoldrequest/newfutureaftermainclose; noViewerwrites. `npm run build`, helpers, APIrevisionintegration; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T21 — Acceptance matrix, regression และหลักฐานก่อนเปิดจริง
 
@@ -2527,7 +2615,7 @@ Emailhistorydisplaykind/state/actorcreatedAt/recipient/finishedAt/errorCode/atte
 ```powershell
 # cwd conference-api
 npm run test:posters
-docker compose -f docker-compose.posters-test.yml run --rm api-tools npm run test:posters:integration
+npm run test:posters:integration
 npm run build
 # cwd Pris2026
 npm test
@@ -2566,8 +2654,8 @@ npm run build
 | A21 |mainsettingsversion/audit/noresetondeploy/norevisiondeadlinechange/nousedrightsreset |03,04,07,19|
 | A22 |everyrequest/file/email/auditretained;cancelledlinklateststatus;historysorted |03,08,11,13,20|
 
-- [ ] **Step 4 — staging end-to-end** ใช้syntheticEventfixtureในisolatedDBกับfakeR2/fakeMailก่อน, productionlikePRISstagingแยกบัญชีtestที่ได้รับอนุญาต. ลำดับ: deploysource→readylist→aliasapprove→previewselect2works→queue→workerfakecaptures2→ownerloginuploadPNG→locked/Modal/receipt→Adminrevision→ownerPDFv2→Admincancelanotherrequest→oldlinkblocked→history. ไม่ใช้รายชื่อ119คนจริงส่งทดลอง. ScreenshotAPIerrors/redactednetworkไม่มีtokens/credentials/emailproduction
-- [ ] **Step 5 — record/commit** acceptance.mdบันทึกversions/commits/checkcommands/exitstatuses/caseactual/knownlimits; don'tcommitsecrets/providercredentials/realposterbuffers. Commit `test(posters): verify ownership deadlines and recovery workflows`
+- [ ] **Step 4 — staging end-to-end** ใช้syntheticEventfixtureในisolatedDBกับfakeR2/fakeMailก่อน, sessionนี้ทำเฉพาะ synthetic isolated fixture; production-like staging/deployment รอคำสั่งผู้ใช้ภายหลัง. ลำดับ: deploysource→readylist→aliasapprove→previewselect2works→queue→workerfakecaptures2→ownerloginuploadPNG→locked/Modal/receipt→Adminrevision→ownerPDFv2→Admincancelanotherrequest→oldlinkblocked→history. ไม่ใช้รายชื่อ119คนจริงส่งทดลอง. ScreenshotAPIerrors/redactednetworkไม่มีtokens/credentials/emailproduction
+- [ ] **Step 5 — record/review handoff** acceptance.mdบันทึกversions/commits/checkcommands/exitstatuses/caseactual/knownlimits; don'tcommitsecrets/providercredentials/realposterbuffers; ส่ง evidence ให้ controller สำหรับ milestone review
 
 ## T22 — Migration/cutover/deploy/rollback และ runbook
 
@@ -2641,11 +2729,11 @@ if(process.argv.includes('--reconcile')){
 // package.json: "posters:reconcile":"node dist/modules/posters/startup.js --reconcile"
 ```
 
-สำหรับisolatedSQLfixtureใช้PowerShell: `Get-Content -Raw -LiteralPath sql/posters-setup/02_verify.sql | docker compose -f docker-compose.posters-test.yml exec -T postgres psql -U posters_test -d confer_posters_integration_test -v ON_ERROR_STOP=1`; expectedหลังfixtureinitialization+reconcileไม่มีSQLerror. ProductionเลือกDBผ่านdeploymentexistingsecretinjection ไม่ใส่DATABASE_URL/tokenลงcommandที่commitในdocs
+สำหรับisolatedSQLfixtureใช้PowerShell: `Get-Content -Raw -LiteralPath sql/posters-setup/02_verify.sql | docker exec -i pris2026-posters-test-20261007 psql -U posters_test -d confer_posters_integration_test -v ON_ERROR_STOP=1`; expectedหลังfixtureinitialization+reconcileไม่มีSQLerror. ProductionเลือกDBผ่านdeploymentexistingsecretinjection ไม่ใส่DATABASE_URL/tokenลงcommandที่commitในdocs
 
 - [ ] **Step 4 — rollback procedure** ปิดPOSTER_EMAILS_ENABLEDก่อนเพื่อหยุดnewclaims; ปิดreceivingflagก่อนrollbackAPIrelease; gracefulworkerstopdrain15stimeout+lease180s; **ไม่drop0038** ไม่ลบR2objects/metadata. RollbackPrisหน้าpublicconsumerต้องcompatibleกับAPIsourceที่ยังเปิดหรือเก็บAPInewreadroutesไว้จนconsumerrollback; OldPrisstaticrosteronlyจากpreviousGitartifactไม่copysourceกลับbranchใหม่. Rollingbacksourcemanifestไม่re-enablewithdrawn/usedrightsไม่ชัดเจน: maintainDBhistory/runreconcileonlyonceversionintentional. Ifunknowntransportoutcome don'tauto resend; ifattemptstoragependinguseworkercleanupconfirmnoacceptedrow. ReturntofeatureonlyafterT21affectedcasesrepassed
 - [ ] **Step 5 — runbook operational tasks** ระบุmanualcommandsroute/workflowสำหรับ: addRound2fileandreconcile; editannouncementpreservesID/round; fixmismatchandrecheck; mainclosereason/version; sendinitial/reminder; failed/unknownmailretry; revisioncreate/cancel/recreate; viewallversions; receivingpause; diagnoseR2/DBfailure; clearabandonedattemptthroughworkeronly. Cleanupsuccessfuloldfilesไม่อยู่ในscope. TemplatePDFdownloadreplaceprocedureเหมือนเดิม. รายชื่อRound2usescommonsettingsไม่insertdefaultdeadlineทับAdminvalue
-- [ ] **Step 6 — final release gate/commit** everyA01–A22actualPASSหรือexplicitblockerrecord, worker/R2/mailflagsasintended, compatibilitysourceconsumerverified, noPIIlogs/secretcommit, migrationsreviewed. Commit `docs(posters): document cutover verification and rollback`; releaseเมื่อผู้ใช้สั่งdeploymentตามสิทธิ์sessionตอนexecution ไม่deployขณะเขียนแผน
+- [ ] **Step 6 — final release gate/review handoff** everyA01–A22actualPASSหรือexplicitblockerrecord, worker/R2/mailflagsasintended, compatibilitysourceconsumerverified, noPIIlogs/secretcommit, migrationsreviewed; ส่ง evidence ให้ controller สำหรับ milestone review; releaseเมื่อผู้ใช้สั่งdeploymentตามสิทธิ์sessionตอนexecution ไม่deployขณะเขียนแผน
 
 ## Self-review ก่อน handoff
 
@@ -2663,3 +2751,15 @@ if(process.argv.includes('--reconcile')){
 5. **หลัง T21–T22:** หลักฐานacceptanceและrunbookพร้อม จึงตัดสินใจdeployได้
 
 แต่ละcheckpoint reviewdeliverableที่เสร็จแล้ว; ไม่กลับไปถามข้อกำหนดที่ผู้ใช้ยืนยันแล้ว. หากเจอข้อมูลใหม่ที่จำเป็น เช่นproductiondeploymentcommandที่repoไม่มี ให้รวบรวมข้อขาดเดียวครั้งเดียวเมื่อถึงขั้นdeployment พร้อมทำงานที่ไม่ขึ้นกับข้อมูลนั้นต่อ
+
+## Authorized milestone review handoff
+
+No task worker stages or commits. Controller reviews complete uncommitted diffs and test evidence per task, then commits only changed scoped files at these boundaries (separate Git repos):
+
+| Tasks | Repository | Commit title | Body evidence |
+| --- | --- | --- | --- |
+| T01–T13 | conference-api | `feat(posters): implement scoped poster submission and durable mail` | contracts/source parity; isolated migration/ownership/deadline/race/recovery checks; API build; spec/quality reviews |
+| T14–T17 | Pris2026 | `feat(posters): add authoritative announcements and bilingual submissions` | announcement/PDF parity; auth return; transport/component tests; build; visual/accessibility checks |
+| T18–T20 | conference-backoffice | `feat(posters): add event-scoped poster management` | read-only roles; settings history/recheck; preview/request/file history; helper/build/review checks |
+
+T21–T22 verification/runbook updates are reviewed with the final deliverable; no automatic extra commit, push or deployment authorization. Source deletion occurs only after API/UI parity gates in T14. Keep this checkout and the one verified DB container/volume at finish until the user confirms cleanup.
