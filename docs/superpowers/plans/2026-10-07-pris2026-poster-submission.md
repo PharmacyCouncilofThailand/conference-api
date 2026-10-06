@@ -10,6 +10,8 @@
 
 **Prepared:** 7 ตุลาคม 2569 (2026-10-07), Asia/Bangkok. Designและข้อกำหนดได้รับการยืนยันแล้วโดยคำขอให้เขียนแผน; ยังไม่ได้เริ่มimplementation
 
+**Baseline update — Pris2026:** pull `main` แบบ fast-forward จาก `c0f809a` ถึง `fdf67a2` เมื่อ 7 ตุลาคม 2569. หน้า `approved-abstracts` ล่าสุดเป็นการ์ดแบบแบ่งหน้า 10 รายการ พร้อมสถิติตาม Round, category dropdown และปุ่มคัดลอก Tracking ID; ไม่ใช้ grouped sections เดิมแล้ว. T14 ต้องรักษา UI และพฤติกรรมฉบับนี้ขณะเปลี่ยนแหล่งข้อมูลเป็น API. รายชื่อ Round 1, PDF, filter helper, Login/redirect/Header, abstract-submission และ dependencies ไม่เปลี่ยนในช่วง commit นี้. PageHero ปรับขนาดหัวข้อและ spacing; ใช้ shared component ล่าสุด ไม่ย้อนแก้เพื่อคืนภาพเก่า
+
 **Design:** `D:/confer/confer/conference/conference-api/docs/superpowers/specs/2026-10-06-pris2026-poster-submission-design.md`
 
 **แผนนี้ไม่ใช่รายงานว่าทำเสร็จ:** checkbox ทุกข้อยังไม่ถูกทำ ห้ามส่งเมลจริง เปลี่ยน production DB หรือเปิดรับไฟล์จริงระหว่างเขียนแผน
@@ -1997,9 +1999,17 @@ const filteredAbstracts=useMemo(()=>filterAcceptedAbstracts(abstracts,{search:de
  [abstracts,deferredSearchQuery,selectedType,selectedRound,selectedCategory]);
 ```
 
-เพิ่มloading/errorก่อนresultsไม่แสดง “ไม่มีผลงาน” ระหว่างfetchfail; retry `onClick={()=>setReload(v=>v+1)}`. รอบ2emptyใช้existingemptytextจนsourceมีข้อมูล; groupedkeysเป็น`${abstract.round}:${abstract.id}` กันชนข้ามRound. ทุกexistingPDFmarkupและURLเดิมไม่แตะ. Thai`loading:'กำลังโหลดรายชื่อ'`, `loadError:'โหลดรายชื่อไม่สำเร็จ กรุณาลองใหม่'`, `retry:'ลองใหม่'`; English`Loading announcements`, `Unable to load announcements. Please try again.`, `Try again`
+เพิ่มloading/errorก่อนresultsไม่แสดง “ไม่มีผลงาน” ระหว่างfetchfail; retry `onClick={()=>setReload(v=>v+1)}`. รอบ2emptyใช้existingemptytextจนsourceมีข้อมูล; card keysใน `paginatedAbstracts.map((item)=>...)` เป็น `${item.round}:${item.id}` กันชนข้ามRound. รักษา `ITEMS_PER_PAGE=10`, card layout, stats ตาม Round, category dropdown, Copy Tracking ID, pagination/scroll และ existing filter-reset behavior ของ `fdf67a2`; ไม่สร้าง grouped sections เดิมกลับมา. Stats เดิมอ่าน `abstracts` อยู่แล้ว ให้ใช้ API state เดียวกันกับ filters/categories/pagination ไม่แยกสำเนาหรือ hardcode119. ทุกexistingPDFmarkupและURLเดิมไม่แตะ. Thai`loading:'กำลังโหลดรายชื่อ'`, `loadError:'โหลดรายชื่อไม่สำเร็จ กรุณาลองใหม่'`, `retry:'ลองใหม่'`; English`Loading announcements`, `Unable to load announcements. Please try again.`, `Try again`
 
-- [ ] **Step 4 — eliminate duplicate source after consumer passes** `rg -n 'approvedRound1Abstracts' src` ต้องไม่พบruntimeimportในPris. ย้ายเฉพาะsourceintegritytestไปAPI เปลี่ยนfiltertestsใช้syntheticrows. PowerShell `Remove-Item -LiteralPath 'D:/confer/confer/conference/Pris2026/src/data/approvedRound1Abstracts.ts'` (ไฟล์เดียว). ตรวจ UIsearch/type/category/Round/PDFด้วยbrowser; APIdown/retry/round2idcollision. `npm test`, `npm run build`; คาดPASSและPDFเปิดURLเดิม
+เพิ่ม effect หลังคำนวณ `totalPages` เพื่อให้ API reload ที่จำนวนผลลัพธ์ลดลงไม่ค้างอยู่หน้าที่ไม่มีข้อมูล; คง existing effect ที่ reset เป็นหน้า1เมื่อ filters เปลี่ยน:
+
+```ts
+useEffect(()=>{setCurrentPage(page=>Math.min(page,totalPages));},[totalPages]);
+```
+
+ตรวจหน้า1มี10รายการ/หน้าถัดไปได้ลำดับต่อเนื่อง; แสดงยอดตามRoundจากdataจริง; filter/Round change resetหน้า1; APIreloadบนหน้าสุดท้ายเมื่อdataลดลงต้องกลับอยู่ในช่วงหน้า; Round2ใช้cardkeysไม่ชนRound1; copied ID เป็นค่าจริงจากAPI. Loading/failureไม่แสดงempty-stateหรือยอด0เป็นผลประกาศที่สำเร็จ
+
+- [ ] **Step 4 — eliminate duplicate source after consumer passes** `rg -n 'approvedRound1Abstracts' src` ต้องไม่พบruntimeimportในPris. ย้ายเฉพาะsourceintegritytestไปAPI เปลี่ยนfiltertestsใช้syntheticrows. PowerShell `Remove-Item -LiteralPath 'D:/confer/confer/conference/Pris2026/src/data/approvedRound1Abstracts.ts'` (ไฟล์เดียว). ตรวจ UIsearch/type/category/Round/PDF, cards/pagination10items/stats/dropdown/Copy Tracking ID ตามbaseline `fdf67a2` ด้วยbrowser; APIdown/retry/round2idcollision/data-shrink reload. `npm test`, `npm run build`; คาดPASSและPDFเปิดURLเดิม
 - [ ] **Step 5 — commit** Pris `git add src/types/posters.ts src/lib/posterApi.ts src/app messages src/data src/lib/acceptedAbstractsFilter.test.ts` เลือกเฉพาะไฟล์taskที่เปลี่ยนจริง; commit `feat(announcements): read the authoritative API roster`
 
 ## T15 — Login return, reload และภาษาไม่ทำ context ของ Poster หาย
@@ -2551,7 +2561,7 @@ npm run build
 | A16 |workerclaim/lease/recovery:unknownneverautoresend;sent=provideraccepted |03,12,19,20|
 | A17 |reconciledeployidempotent/historystays;withdraw/readddoesn'trestoreusedright;readyfalseblocks |03,05,12,13,22|
 | A18 |manualinitial/reminderonly;noemailsfromstartup/sourcechanges;previewstalenonequeued |05–08,12,19|
-| A19 |sourceAPIpublicallowlist/noemail;PDFbuttonunchangedURL/text/position;Round2samecommonclose |05,13,14|
+| A19 |sourceAPIpublicallowlist/noemail;PDFbuttonunchangedURL/text/position;Round2samecommonclose;keepfdf67a2cards/pagination10/stats/dropdown/copy;data-shrinkreloadvalidpage |05,13,14|
 | A20 |bothuploadmodesidenticaltheme;Thai/English;mobile/keyboard/dialog/longtitles |15–17|
 | A21 |mainsettingsversion/audit/noresetondeploy/norevisiondeadlinechange/nousedrightsreset |03,04,07,19|
 | A22 |everyrequest/file/email/auditretained;cancelledlinklateststatus;historysorted |03,08,11,13,20|
