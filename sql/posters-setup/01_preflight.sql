@@ -1,10 +1,25 @@
 -- Read-only preflight before manual migration 0038. Empty duplicate results expected.
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '60s';
+DO $$ BEGIN
+  IF (SELECT count(*) FROM events WHERE event_code='PRIS-2026')<>1 THEN
+    RAISE EXCEPTION 'Expected exactly one PRIS-2026 event';
+  END IF;
+  IF to_regclass('public.abstract_tracking_identifiers') IS NULL OR to_regclass('public.staff_event_assignments') IS NULL THEN
+    RAISE EXCEPTION 'Tracking/Event-assignment prerequisite is missing';
+  END IF;
+  IF to_regclass('public.poster_settings') IS NOT NULL THEN
+    RAISE EXCEPTION 'Poster schema already exists: verify applied migration, do not migrate blindly';
+  END IF;
+END $$;
 SELECT current_database(), current_schema(), current_setting('server_version') AS server_version;
 SELECT id, event_code FROM events WHERE event_code = 'PRIS-2026';
+SELECT a.id,a.tracking_id,a.user_id,(u.id IS NOT NULL) AS owner_exists,
+  (u.email IS NOT NULL AND btrim(u.email)<>'') AS email_present
+FROM abstracts a JOIN events e ON e.id=a.event_id LEFT JOIN users u ON u.id=a.user_id
+WHERE e.event_code='PRIS-2026' ORDER BY a.id;
 SELECT name, to_regclass('public.' || name) AS prerequisite
-FROM unnest(ARRAY['events','abstracts','users','backoffice_users','abstract_tracking_identifiers']) AS name;
+FROM unnest(ARRAY['events','abstracts','users','backoffice_users','abstract_tracking_identifiers','staff_event_assignments']) AS name;
 SELECT conname, pg_get_constraintdef(oid) AS definition
 FROM pg_constraint WHERE conrelid = 'abstracts'::regclass;
 -- Existing tracking migration 0029 must remain intact; never rebuild its history.

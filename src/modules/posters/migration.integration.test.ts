@@ -6,6 +6,8 @@ import postgres from "postgres";
 import { PDFDocument } from "pdf-lib";
 import { validateSessionGrantTestDatabaseUrl } from "../session-grants/test-database.js";
 import { openPosterTestDatabase, resetPosterTestDatabase, seedPosterScenario } from "./test-support.js";
+import { initializePosters } from './startup.js';
+import { drizzle } from 'drizzle-orm/postgres-js';
 
 test("poster database guards reject shared and unapproved targets before connecting", () => {
   assert.throws(() => validateSessionGrantTestDatabaseUrl({
@@ -120,6 +122,7 @@ test("poster migration preserves original data and enforces lifecycle constraint
   const [abstract] = await sql`SELECT status,presentation_type FROM abstracts WHERE id=${f.abstractId}`;
   assert.deepEqual(abstract, { status: "pending", presentation_type: "poster" });
   assert.equal((await sql`SELECT count(*)::integer AS count FROM poster_uploads WHERE target_id=${target.id}`)[0].count, 2);
+  await initializePosters(drizzle(sql));
   await sql.unsafe(await readFile("sql/posters-setup/02_verify.sql", "utf8"));
 });
 
