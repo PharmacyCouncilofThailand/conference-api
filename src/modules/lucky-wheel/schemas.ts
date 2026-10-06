@@ -32,7 +32,7 @@ export const wheelSegmentConfigurationSchema = z.object({
 export const wheelConfigurationSchema = z.object({
   segments: z.array(wheelSegmentConfigurationSchema).min(1).max(64),
   collectionInstructions: bilingualTextSchema.optional(),
-  collectionDeadline: z.string().datetime({ offset: true }).optional(),
+  collectionDeadline: z.string().datetime({ offset: true }).nullable().optional(),
 }).strict().superRefine((value, context) => {
   const ids = new Set<string>();
   const positions = new Set<number>();
@@ -165,8 +165,8 @@ export const redemptionInputSchema = z.object({
   claimGeneration: z.number().int().positive(),
   idempotencyKey: uuidKey,
   identityChecked: z.literal(true),
-  collectionPoint: boundedText(255),
-  deliveredDetails: boundedText(1000).nullable(),
+  collectionPoint: boundedText(255).nullable().optional(),
+  deliveredDetails: boundedText(1000).nullable().optional(),
 }).strict();
 
 export const redemptionCorrectionBodySchema = z.object({

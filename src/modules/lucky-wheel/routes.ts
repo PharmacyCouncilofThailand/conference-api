@@ -52,6 +52,7 @@ import {
   lookupReward,
   readOwnedSpin,
   readOwnedSpins,
+  requireRewardCollector,
   RewardError,
 } from "./rewards.js";
 import {
@@ -94,6 +95,7 @@ export interface LuckyWheelRouteOptions {
   lookupRewardFn?: typeof lookupReward;
   confirmRedemptionFn?: typeof confirmRedemption;
   correctRedemptionFn?: typeof correctRedemption;
+  requireRewardCollectorFn?: typeof requireRewardCollector;
   uploadWheelImageFn?: typeof uploadWheelImage;
   imageContext?: WheelImageContext;
 }
@@ -225,6 +227,7 @@ export async function luckyWheelAdminRoutes(
   const lookupRewardFn = options.lookupRewardFn ?? lookupReward;
   const confirmRedemptionFn = options.confirmRedemptionFn ?? confirmRedemption;
   const correctRedemptionFn = options.correctRedemptionFn ?? correctRedemption;
+  const requireRewardCollectorFn = options.requireRewardCollectorFn ?? requireRewardCollector;
   const uploadWheelImageFn = options.uploadWheelImageFn ?? uploadWheelImage;
   const adminRateLimit = fastify.rateLimit({
     max: 120,
@@ -755,6 +758,19 @@ export async function luckyWheelAdminRoutes(
     },
   );
 
+  fastify.get("/events/:eventId/collection-access",
+    { config: { rateLimit: false }, preHandler: adminRateLimit },
+    async (request, reply) => {
+      const event = eventIdSchema.safeParse((request.params as { eventId?: unknown }).eventId);
+      if (!event.success) return invalid(reply, request.id);
+      try {
+        const collector = await requireRewardCollectorFn(database, claimedActor(request), event.data);
+        return reply.send({ eventId: event.data, role: collector.role, requestId: request.id });
+      } catch (error) {
+        return sendWheelError(reply, error, request.id);
+      }
+    });
+
   fastify.post(
     "/events/:eventId/reward-lookups",
     { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 4 * 1024 },
@@ -763,14 +779,7 @@ export async function luckyWheelAdminRoutes(
       const bodyResult = rewardLookupBodySchema.safeParse(request.body);
       if (!eventResult.success || !bodyResult.success) return invalid(reply, request.id);
       try {
-        const admin = await requireAdminFromRequest(
-          database,
-          request,
-          reply,
-          eventResult.data,
-          validateAdminActorFn,
-        );
-        if (!admin) return;
+        const admin = await requireRewardCollectorFn(database, claimedActor(request), eventResult.data);
         const result = await lookupRewardFn(
           database,
           admin,
@@ -805,14 +814,7 @@ export async function luckyWheelAdminRoutes(
         return invalid(reply, request.id);
       }
       try {
-        const admin = await requireAdminFromRequest(
-          database,
-          request,
-          reply,
-          eventResult.data,
-          validateAdminActorFn,
-        );
-        if (!admin) return;
+        const admin = await requireRewardCollectorFn(database, claimedActor(request), eventResult.data);
         const result = await confirmRedemptionFn(database, admin, bodyResult.data);
         return reply.send({ ...result, requestId: request.id });
       } catch (error) {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { redemptionInputSchema } from "./schemas.js";
 import {
   decryptRewardCode,
   decryptRewardToken,
@@ -14,6 +15,16 @@ import {
 const spinId = "123e4567-e89b-42d3-a456-426614174000";
 const key = Buffer.alloc(32, 11);
 const encodedKey = key.toString("base64");
+
+test("handover requires recipient verification but permits omitted details and older payloads", () => {
+  const input = { eventId: 1, spinId, claimGeneration: 1, idempotencyKey: spinId, identityChecked: true };
+  assert.equal(redemptionInputSchema.safeParse(input).success, true);
+  assert.equal(redemptionInputSchema.safeParse({ ...input, collectionPoint: "Desk", deliveredDetails: "Size M" }).success, true);
+  for (const invalid of [{ ...input, identityChecked: false }, { ...input, identityChecked: undefined },
+    { ...input, collectionPoint: " " }, { ...input, deliveredDetails: "x".repeat(1001) }]) {
+    assert.equal(redemptionInputSchema.safeParse(invalid).success, false);
+  }
+});
 
 test("reward token uses PRIS-REWARD QR prefix, stable digest and award-bound AES-GCM envelope", () => {
   const first = issueRewardToken(spinId, key);

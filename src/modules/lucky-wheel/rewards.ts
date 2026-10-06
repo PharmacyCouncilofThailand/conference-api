@@ -32,6 +32,8 @@ export class RewardError extends Error {
   constructor(
     public readonly statusCode: number,
     public readonly code:
+      | "AUTH_REQUIRED"
+      | "COLLECTION_ACCESS_DENIED"
       | "ADMIN_REQUIRED"
       | "INVALID_REWARD_CREDENTIAL"
       | "REWARD_CONFIG_ERROR"
@@ -287,6 +289,9 @@ type RewardRow = {
   redeemed_by: number | null;
   collection_point: string | null;
   delivered_details: string | null;
+  collection_deadline?: Date | string | null;
+  collection_instructions?: { th: string; en: string } | null;
+  redeemed_by_name?: string | null;
   first_name: string | null;
   last_name: string | null;
   email: string | null;
@@ -310,6 +315,30 @@ async function requireAdmin(database: RewardDatabase, actor: RewardActor, eventI
     throw new RewardError(403, "ADMIN_REQUIRED", "Active admin access is required");
   }
   return { id: row.id, email: row.email };
+}
+
+export async function requireRewardCollector(database: RewardDatabase, actor: RewardActor | null, eventId: number) {
+  if (!actor) throw new RewardError(401, "AUTH_REQUIRED", "Authentication required");
+  if (actor.role === "admin") {
+    return { ...await requireAdmin(database, actor, eventId), role: "admin" as const };
+  }
+  if (!Number.isInteger(actor.id) || actor.id <= 0 || actor.role !== "staff") {
+    throw new RewardError(403, "COLLECTION_ACCESS_DENIED", "Admin or assigned event staff access is required");
+  }
+  const rows = await database.execute(sql`
+    SELECT bo.id, bo.email
+    FROM backoffice_users bo
+    JOIN staff_event_assignments assignment ON assignment.staff_id = bo.id
+    JOIN events e ON e.id = assignment.event_id
+    WHERE bo.id = ${actor.id} AND bo.role = 'staff' AND bo.is_active = true
+      AND e.id = ${eventId}
+    LIMIT 1
+  `);
+  const row = (rows as unknown as Array<{ id: number; email: string }>)[0];
+  if (!row || (actor.email && row.email.toLowerCase() !== actor.email.toLowerCase())) {
+    throw new RewardError(403, "COLLECTION_ACCESS_DENIED", "Admin or assigned event staff access is required");
+  }
+  return { ...row, role: "staff" as const };
 }
 
 async function rewardRowBySpin(
@@ -516,7 +545,7 @@ export async function lookupReward(
   eventId: number,
   rawTokenOrCode: string,
 ) {
-  const admin = await requireAdmin(database, actor, eventId);
+  const admin = await requireRewardCollector(database, actor, eventId);
   let credential: { kind: "token" | "code"; normalized: string };
   try {
     credential = normalizeRewardCredential(rawTokenOrCode);
@@ -536,11 +565,14 @@ export async function lookupReward(
       w.id AS wheel_id,
       r.id AS redemption_id, r.claim_generation, r.status AS redemption_status,
       r.redeemed_at, r.redeemed_by, r.collection_point, r.delivered_details,
-      u.first_name, u.last_name, u.email
+      u.first_name, u.last_name, u.email,
+      w.collection_deadline, w.collection_instructions,
+      NULLIF(btrim(concat_ws(' ', confirmer.first_name, confirmer.last_name)), '') AS redeemed_by_name
     FROM lucky_wheel_spins s
     JOIN lucky_wheels w ON w.id = s.wheel_id AND w.event_id = s.event_id
     JOIN users u ON u.id = s.user_id
     LEFT JOIN lucky_wheel_redemptions r ON r.spin_id = s.id
+    LEFT JOIN backoffice_users confirmer ON confirmer.id = r.redeemed_by
     WHERE s.event_id = ${eventId}
       AND s.outcome_kind = 'prize'
       AND ${digestClause}
@@ -554,6 +586,9 @@ export async function lookupReward(
     ...publicRewardState(row),
     lookedUpBy: credential.kind,
     actorId: admin.id,
+    redeemedByName: row.redeemed_by_name ?? null,
+    collectionDeadline: row.collection_deadline ? asDate(row.collection_deadline).toISOString() : null,
+    collectionInstructions: row.collection_instructions ?? null,
   };
 }
 
@@ -566,7 +601,7 @@ type ConfirmationRow = {
   idempotency_key: string;
   request_hash: string;
   confirmed_at: Date | string;
-  collection_point: string;
+  collection_point: string | null;
   delivered_details: string | null;
 };
 
@@ -591,7 +626,7 @@ export async function confirmRedemption(
   input: RedemptionInput,
 ) {
   const normalizedDetails = input.deliveredDetails?.trim() || null;
-  const normalizedPoint = input.collectionPoint.trim();
+  const normalizedPoint = input.collectionPoint?.trim() || null;
   const hash = requestHash({
     eventId: input.eventId,
     spinId: input.spinId,
@@ -603,7 +638,7 @@ export async function confirmRedemption(
 
   const outcome = await database.transaction(async (tx) => {
     const txDb = tx as unknown as RewardDatabase;
-    const admin = await requireAdmin(txDb, actor, input.eventId);
+    const admin = await requireRewardCollector(txDb, actor, input.eventId);
     const replayRows = await tx.execute(sql`
       SELECT *
       FROM lucky_wheel_redemption_confirmations
@@ -624,7 +659,8 @@ export async function confirmRedemption(
       SELECT
         r.id AS redemption_id, r.claim_generation, r.status,
         s.id AS spin_id, s.outcome_kind,
-        w.id AS wheel_id
+        w.id AS wheel_id, w.collection_deadline,
+        clock_timestamp() AS server_now
       FROM lucky_wheel_redemptions r
       JOIN lucky_wheel_spins s ON s.id = r.spin_id AND s.event_id = r.event_id
       JOIN lucky_wheels w ON w.id = s.wheel_id AND w.event_id = s.event_id
@@ -640,6 +676,8 @@ export async function confirmRedemption(
       spin_id: string;
       outcome_kind: "prize" | "no_prize";
       wheel_id: string;
+      collection_deadline: Date | string | null;
+      server_now: Date | string;
     }>)[0];
     if (!state || state.outcome_kind !== "prize") {
       throw new RewardError(404, "REWARD_NOT_FOUND", "Reward was not found");
@@ -680,8 +718,11 @@ export async function confirmRedemption(
       return { kind: "success" as const, value: confirmationResult(existing, true) };
     }
 
-    if (!input.identityChecked || !normalizedPoint) {
-      throw new RewardError(409, "INVALID_REDEMPTION_REQUEST", "Identity and collection point are required");
+    if (!input.identityChecked) {
+      throw new RewardError(409, "INVALID_REDEMPTION_REQUEST", "Recipient verification is required");
+    }
+    if (state.collection_deadline && asDate(state.server_now) >= asDate(state.collection_deadline)) {
+      throw new RewardError(409, "REWARD_DEADLINE_PASSED", "เลยกำหนดรับของแล้ว กรุณาให้ admin แก้กำหนดรับของก่อนยืนยัน");
     }
 
     const insertedRows = await tx.execute(sql`

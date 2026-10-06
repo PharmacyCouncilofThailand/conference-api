@@ -24,8 +24,8 @@ export type RedemptionInput = {
   claimGeneration: number;
   idempotencyKey: string;
   identityChecked: true;
-  collectionPoint: string;
-  deliveredDetails: string | null;
+  collectionPoint?: string | null;
+  deliveredDetails?: string | null;
 };
 
 export type RedemptionCorrectionInput = {

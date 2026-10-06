@@ -9,6 +9,7 @@ import {
   type LuckyWheelRouteOptions,
 } from "./routes.js";
 import { WheelError, type WheelDatabase } from "./service.js";
+import { RewardError } from "./rewards.js";
 
 const configuration = {
   segments: [{
@@ -48,6 +49,13 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
 
   const options: LuckyWheelRouteOptions = {
     database: {} as WheelDatabase,
+    requireRewardCollectorFn: async (_db, actor) => {
+      if (!actor) throw new RewardError(401, "AUTH_REQUIRED", "Authentication required");
+      if (actor.id !== 7 || actor.role !== "admin" || actor.email !== "admin@example.invalid") {
+        throw new RewardError(403, "COLLECTION_ACCESS_DENIED", "Access denied");
+      }
+      return { id: 7, role: "admin", email: actor.email };
+    },
     validateAdminActorFn: async (_db, actor) =>
       actor.id === 7 && actor.role === "admin" && actor.email === "admin@example.invalid"
         ? { id: 7, role: "admin", email: actor.email }
@@ -313,6 +321,7 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
         collectionDeadline: configuration.collectionDeadline,
         lookedUpBy: "token" as const,
         actorId: actor.id,
+        redeemedByName: null,
       };
     },
     confirmRedemptionFn: async (_db, actor, input) => {
@@ -324,8 +333,8 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
         status: "redeemed" as const,
         redeemedAt: "2026-10-29T05:00:00.000Z",
         redeemedBy: actor.id,
-        collectionPoint: input.collectionPoint,
-        deliveredDetails: input.deliveredDetails,
+        collectionPoint: input.collectionPoint ?? null,
+        deliveredDetails: input.deliveredDetails ?? null,
         idempotencyKey: input.idempotencyKey,
         replayed: false,
       };
@@ -734,8 +743,6 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
     claimGeneration: 1,
     idempotencyKey: randomUUID(),
     identityChecked: true,
-    collectionPoint: "Activity desk",
-    deliveredDetails: null,
   };
   const attendeeCannotRedeem = await app.inject({
     method: "PUT",
@@ -771,6 +778,52 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   assert.equal(corrected.statusCode, 200);
   assert.equal(corrected.json().toGeneration, 2);
   assert.equal(correctionCalls, 1);
+});
+
+test("collection routes allow admins and assigned staff without granting staff wheel configuration or corrections", async (t) => {
+  const app = Fastify();
+  t.after(() => app.close());
+  await app.register(rateLimit, { global: false });
+  app.addHook("preHandler", async (request) => {
+    const role = request.headers["x-test-role"];
+    if (typeof role === "string") (request as any).user = { id: role === "admin" ? 7 : 9, role, email: "test@example.invalid" };
+  });
+  let lookupCalls = 0;
+  let confirmationCalls = 0;
+  await app.register(luckyWheelAdminRoutes, {
+    database: {} as WheelDatabase,
+    requireRewardCollectorFn: async (_db, actor, eventId) => {
+      if (!actor) throw new RewardError(401, "AUTH_REQUIRED", "Authentication required");
+      if (actor.role !== "admin" && !(actor.role === "staff" && eventId === 3)) {
+        throw new RewardError(403, "COLLECTION_ACCESS_DENIED", "Access denied");
+      }
+      return { id: actor.id, role: actor.role as "admin" | "staff", email: "test@example.invalid" };
+    },
+    lookupRewardFn: async () => { lookupCalls++; throw new RewardError(404, "REWARD_NOT_FOUND", "Not found"); },
+    confirmRedemptionFn: async () => { confirmationCalls++; throw new RewardError(409, "REDEMPTION_CLOSED", "Closed"); },
+  } satisfies LuckyWheelRouteOptions);
+  const spinId = randomUUID();
+  for (const [role, eventId, denied] of [["admin", 3, 0], ["staff", 3, 0], ["staff", 4, 403], ["organizer", 3, 403], ["reviewer", 3, 403], ["general", 3, 403], ["", 3, 401]] as const) {
+    const headers = role ? { "x-test-role": role } : {};
+    const access = await app.inject({ method: "GET", url: `/events/${eventId}/collection-access`, headers });
+    assert.equal(access.statusCode, denied || 200);
+    assert.equal(access.headers["cache-control"], "no-store");
+    const lookup = await app.inject({ method: "POST", url: `/events/${eventId}/reward-lookups`, headers,
+      payload: { credential: `PRIS-REWARD:${"a".repeat(64)}` } });
+    assert.equal(lookup.statusCode, denied || 404);
+    const confirm = await app.inject({ method: "PUT", url: `/events/${eventId}/spins/${spinId}/redemption`, headers,
+      payload: { eventId, spinId, claimGeneration: 1, identityChecked: true, collectionPoint: "Desk", deliveredDetails: null, idempotencyKey: randomUUID() } });
+    assert.equal(confirm.statusCode, denied || 409);
+  }
+  assert.equal(lookupCalls, 2);
+  assert.equal(confirmationCalls, 2);
+  for (const request of [
+    { method: "GET" as const, url: "/events/3" },
+    { method: "POST" as const, url: `/events/3/spins/${spinId}/redemption-corrections`, payload: { eventId: 3, spinId, claimGeneration: 1, reason: "Test correction", reopen: true, idempotencyKey: randomUUID() } },
+  ]) {
+    const result = await app.inject({ ...request, headers: { "x-test-role": "staff" } });
+    assert.equal(result.statusCode, 403);
+  }
 });
 
 test("attendee wheel throttling is account-aware instead of venue-IP-wide", async (t) => {

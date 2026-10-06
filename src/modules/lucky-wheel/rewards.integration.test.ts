@@ -23,6 +23,7 @@ import {
   lookupReward,
   readOwnedSpin,
   readOwnedSpins,
+  requireRewardCollector,
   RewardError,
 } from "./rewards.js";
 
@@ -54,7 +55,13 @@ async function bootstrap(sqlClient: ReturnType<typeof postgres>) {
       id serial PRIMARY KEY,
       email varchar(255) NOT NULL UNIQUE,
       role varchar(32) NOT NULL,
-      is_active boolean NOT NULL DEFAULT true
+      is_active boolean NOT NULL DEFAULT true,
+      first_name varchar(100) NOT NULL DEFAULT 'Test',
+      last_name varchar(100) NOT NULL DEFAULT 'Collector'
+    );
+    CREATE TABLE staff_event_assignments (
+      staff_id integer NOT NULL REFERENCES backoffice_users(id),
+      event_id integer NOT NULL REFERENCES events(id)
     );
     CREATE TABLE registrations (
       id serial PRIMARY KEY,
@@ -90,6 +97,8 @@ async function bootstrap(sqlClient: ReturnType<typeof postgres>) {
   const setupMigration = (await readFile(resolve(process.cwd(), "drizzle", "0036_lucky_wheel_setup_simplification.sql"), "utf8"))
     .replaceAll("--> statement-breakpoint", "");
   await sqlClient.unsafe(setupMigration);
+  const handoverMigration = (await readFile(resolve(process.cwd(), "drizzle", "0037_lucky_wheel_optional_handover_details.sql"), "utf8"));
+  await sqlClient.unsafe(handoverMigration);
 }
 
 async function createAttendee(
@@ -165,6 +174,12 @@ test(
     `;
     const actorA = { id: adminA.id, role: "admin", email: adminA.email };
     const actorB = { id: adminB.id, role: "admin", email: adminB.email };
+    const [staff] = await setupSql<Array<{ id: number; email: string }>>`
+      INSERT INTO backoffice_users (email, role, is_active)
+      VALUES ('reward-staff@example.invalid', 'staff', true) RETURNING id, email
+    `;
+    const staffActor = { ...staff, role: "staff" };
+    await setupSql`UPDATE backoffice_users SET first_name='Event', last_name='Staff' WHERE id=${staff.id}`;
 
     const [event] = await setupSql<Array<{ id: number }>>`
       INSERT INTO events (event_code) VALUES ('PRIS-2026') RETURNING id
@@ -172,6 +187,21 @@ test(
     const [otherEvent] = await setupSql<Array<{ id: number }>>`
       INSERT INTO events (event_code) VALUES ('LW-T07-B') RETURNING id
     `;
+    await setupSql`INSERT INTO staff_event_assignments (staff_id, event_id) VALUES (${staff.id}, ${event.id})`;
+    assert.equal((await requireRewardCollector(database, staffActor, event.id)).role, "staff");
+    for (const [actor, targetEvent] of [
+      [staffActor, otherEvent.id],
+      [{ ...staffActor, email: 'wrong@example.invalid' }, event.id],
+      [{ ...staffActor, role: 'organizer' }, event.id],
+      [{ ...staffActor, role: 'admin' }, event.id],
+    ] as const) {
+      await assert.rejects(() => requireRewardCollector(database, actor, targetEvent),
+        (error: unknown) => error instanceof RewardError && error.statusCode === 403);
+    }
+    await setupSql`UPDATE backoffice_users SET is_active=false WHERE id=${staff.id}`;
+    await assert.rejects(() => requireRewardCollector(database, staffActor, event.id),
+      (error: unknown) => error instanceof RewardError && error.statusCode === 403);
+    await setupSql`UPDATE backoffice_users SET is_active=true WHERE id=${staff.id}`;
     const [mainSession] = await setupSql<Array<{ id: number }>>`
       INSERT INTO sessions (event_id, is_main_session, start_time, end_time)
       VALUES (${event.id}, true, '2020-01-01 00:00:00', '2099-12-31 23:59:59')
@@ -291,14 +321,19 @@ test(
     assert.equal(tokenLookup.spinId, spin.spin.id);
     assert.equal(codeLookup.spinId, spin.spin.id);
     assert.equal(tokenLookup.claimGeneration, 1);
+    assert.equal(tokenLookup.redeemedByName, null);
+    assert.equal(tokenLookup.collectionDeadline, futureDeadline);
     assert.equal(codeLookup.claimGeneration, 1);
+    assert.equal((await lookupReward(database, staffActor, event.id, owned.rewardProof!.qrPayload)).spinId, spin.spin.id);
+    await assert.rejects(() => lookupReward(database, staffActor, otherEvent.id, owned.rewardProof!.qrPayload),
+      (error: unknown) => error instanceof RewardError && error.code === "COLLECTION_ACCESS_DENIED");
     await assert.rejects(
       () => lookupReward(database, actorA, otherEvent.id, owned.rewardProof!.qrPayload),
       (error: unknown) => error instanceof RewardError && error.code === "REWARD_NOT_FOUND",
     );
     await assert.rejects(
       () => lookupReward(database, { id: owner.userId, role: "general" }, event.id, owned.rewardProof!.qrPayload),
-      (error: unknown) => error instanceof RewardError && error.code === "ADMIN_REQUIRED",
+      (error: unknown) => error instanceof RewardError && error.code === "COLLECTION_ACCESS_DENIED",
     );
 
     const confirmationA = {
@@ -311,8 +346,12 @@ test(
       deliveredDetails: "size M",
     };
     const confirmationB = { ...confirmationA, idempotencyKey: randomUUID() };
+    await setupSql`DELETE FROM staff_event_assignments WHERE staff_id=${staff.id} AND event_id=${event.id}`;
+    await assert.rejects(() => confirmRedemption(database, staffActor, confirmationA),
+      (error: unknown) => error instanceof RewardError && error.code === "COLLECTION_ACCESS_DENIED");
+    await setupSql`INSERT INTO staff_event_assignments (staff_id,event_id) VALUES (${staff.id},${event.id})`;
     const [confirmedA, confirmedB] = await Promise.all([
-      confirmRedemption(database, actorA, confirmationA),
+      confirmRedemption(database, staffActor, confirmationA),
       confirmRedemption(database, actorB, confirmationB),
     ]);
     assert.equal(confirmedA.redeemedBy, confirmedB.redeemedBy);
@@ -330,6 +369,10 @@ test(
     `;
     assert.deepEqual(afterConcurrentConfirm, { confirmation_count: 1, remaining: 1 });
 
+    await assert.rejects(() => correctRedemption(database, staffActor, {
+      eventId: event.id, spinId: spin.spin.id, claimGeneration: 1,
+      reason: "Staff cannot reopen claims", reopen: true, idempotencyKey: randomUUID(),
+    }), (error: unknown) => error instanceof RewardError && error.code === "ADMIN_REQUIRED");
     const correction = await correctRedemption(database, actorA, {
       eventId: event.id,
       spinId: spin.spin.id,
@@ -343,7 +386,7 @@ test(
       { from: 1, to: 2, reopen: true },
     );
 
-    const winnerActor = confirmedA.redeemedBy === actorA.id ? actorA : actorB;
+    const winnerActor = confirmedA.redeemedBy === staffActor.id ? staffActor : actorB;
     const oldReplay = await confirmRedemption(database, winnerActor, {
       ...confirmationA,
       idempotencyKey: confirmedA.idempotencyKey,
@@ -373,12 +416,9 @@ test(
       claimGeneration: 2,
       idempotencyKey: randomUUID(),
       identityChecked: true as const,
-      collectionPoint: "Activity desk",
-      deliveredDetails: null,
     };
-    const confirmedGenerationTwo = await confirmRedemption(database, actorA, generationTwoPayload);
-    assert.equal(confirmedGenerationTwo.claimGeneration, 2);
-    assert.equal(confirmedGenerationTwo.status, "redeemed");
+    await assert.rejects(() => confirmRedemption(database, actorA, generationTwoPayload),
+      (error: unknown) => error instanceof RewardError && error.code === "REWARD_DEADLINE_PASSED");
     const extended = await publishWheel(
       database,
       actorA,
@@ -388,8 +428,21 @@ test(
       "Extend collection deadline after verified attendee follow-up",
     );
     assert.equal(extended.version, 4);
-    const generationTwoReplay = await confirmRedemption(database, actorA, generationTwoPayload);
+    const confirmedGenerationTwo = await confirmRedemption(database, staffActor, generationTwoPayload);
+    assert.equal(confirmedGenerationTwo.claimGeneration, 2);
+    assert.equal(confirmedGenerationTwo.status, "redeemed");
+    const confirmedLookup = await lookupReward(database, actorA, event.id, owned.rewardProof!.qrPayload);
+    assert.equal(confirmedLookup.redeemedBy, staff.id);
+    assert.equal(confirmedLookup.redeemedByName, "Event Staff");
+    assert.equal(confirmedGenerationTwo.collectionPoint, null);
+    assert.equal(confirmedGenerationTwo.deliveredDetails, null);
+    const generationTwoReplay = await confirmRedemption(database, staffActor, generationTwoPayload);
     assert.equal(generationTwoReplay.replayed, true);
+    const [oldConfirmation] = await setupSql<Array<{ collection_point: string; delivered_details: string }>>`
+      SELECT collection_point, delivered_details FROM lucky_wheel_redemption_confirmations
+      WHERE spin_id = ${spin.spin.id} AND claim_generation = 1
+    `;
+    assert.deepEqual(oldConfirmation, { collection_point: "Activity desk", delivered_details: "size M" });
 
     const correctionNote = await correctRedemption(database, actorA, {
       eventId: event.id,
@@ -534,7 +587,7 @@ test(
     assert.ok(historyPrize);
     assert.equal(historyPrize.status, "redeemed");
     assert.equal(historyPrize.claimGeneration, 2);
-    assert.equal(historyPrize.collectionPoint, "Activity desk");
+    assert.equal(historyPrize.collectionPoint, null);
     for (const historyNoPrize of ownerHistory.filter((item) => item.outcomeKind === "no_prize")) {
       assert.equal(historyNoPrize.status, null);
       assert.equal(historyNoPrize.claimGeneration, null);
@@ -565,6 +618,9 @@ test(
     );
     assert.equal(crossEventHistory.pagination.total, 0);
     assert.deepEqual(crossEventHistory.items, []);
+
+    await publishWheel(database, actorA, event.id, 5, { ...noPrizeConfiguration, collectionDeadline: null });
+    assert.equal((await lookupReward(database, staffActor, event.id, owned.rewardProof!.qrPayload)).collectionDeadline, null);
 
     const invalidOwner = await createAttendee(setupSql, event.id, mainSession.id, day, "c");
     await assert.rejects(

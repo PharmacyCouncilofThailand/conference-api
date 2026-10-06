@@ -1138,8 +1138,7 @@ export const luckyWheelRedemptions = pgTable(
     check(
       "lucky_wheel_redemptions_state_check",
       sql`(${table.status} = 'open' and ${table.redeemedAt} is null and ${table.redeemedBy} is null)
-        or (${table.status} = 'redeemed' and ${table.redeemedAt} is not null and ${table.redeemedBy} is not null
-          and ${table.collectionPoint} is not null and btrim(${table.collectionPoint}) <> '')`,
+        or (${table.status} = 'redeemed' and ${table.redeemedAt} is not null and ${table.redeemedBy} is not null)`,
     ),
     check(
       "lucky_wheel_redemptions_request_hash_check",
@@ -1160,7 +1159,7 @@ export const luckyWheelRedemptionConfirmations = pgTable(
     idempotencyKey: uuid("idempotency_key").notNull(),
     requestHash: char("request_hash", { length: 64 }).notNull(),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }).notNull().defaultNow(),
-    collectionPoint: varchar("collection_point", { length: 255 }).notNull(),
+    collectionPoint: varchar("collection_point", { length: 255 }),
     deliveredDetails: text("delivered_details"),
   },
   (table) => [

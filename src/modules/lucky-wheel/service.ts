@@ -611,6 +611,9 @@ export async function publishWheel(
     await tx.execute(sql`
       UPDATE lucky_wheels
       SET published_configuration = ${JSON.stringify(configuration)}::jsonb,
+          collection_deadline = ${configuration.collectionDeadline === undefined
+            ? (wheel.collection_deadline ? asDate(wheel.collection_deadline).toISOString() : null)
+            : configuration.collectionDeadline}::timestamptz,
           enabled = true,
           version = ${nextVersion},
           pool_revision = ${nextPoolRevision},
