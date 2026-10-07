@@ -4,7 +4,7 @@ import type { FastifyRequest } from 'fastify';
 import { fail, requirePresentationOwner, type PresentationDatabase } from './access.js';
 import { publicAnnouncements, readOwnerPresentation } from './readers.js';
 import { idSchema, operationKeySchema } from './schemas.js';
-import { MAX_POSTER_BYTES } from './policy.js';
+import { maxPresentationBytes, type AbstractPresentationType } from './policy.js';
 import { submitPresentationUpload } from './uploads.js';
 import { createPresentationStorage, type PresentationStorage } from './storage.js';
 export function presentationValidationErrors(app: import('fastify').FastifyInstance) {
@@ -13,9 +13,9 @@ export function presentationValidationErrors(app: import('fastify').FastifyInsta
   throw error;
  });
 }
-async function readPresentationMultipart(request:FastifyRequest){
+async function readPresentationMultipart(request:FastifyRequest,type:AbstractPresentationType){
  let file:{buffer:Buffer;filename:string;mimetype:string}|undefined;let requestId:string|null=null;
- for await(const part of request.parts({limits:{files:1,fields:1,parts:2,fileSize:MAX_POSTER_BYTES}})){
+ for await(const part of request.parts({limits:{files:1,fields:1,parts:2,fileSize:maxPresentationBytes(type)}})){
   if(part.type==='file'){
    if(part.fieldname!=='file'||file)fail('PRESENTATION_ONE_FILE_REQUIRED',422);
    file={buffer:await part.toBuffer(),filename:part.filename,mimetype:part.mimetype};
@@ -45,12 +45,12 @@ export const presentationOwnerRoutes:FastifyPluginAsync<{database:PresentationDa
  });
  app.post('/:abstractId/presentation-uploads',async(request,reply)=>{
   const {abstractId}=z.object({abstractId:idSchema}).strict().parse(request.params);const actor=request.user as PresentationActor;
-  await requirePresentationOwner(database,actor,abstractId);
+  const owner=await requirePresentationOwner(database,actor,abstractId);
   if(process.env.PRESENTATION_SUBMISSIONS_ENABLED!=='true')fail('PRESENTATION_RECEIVING_DISABLED',503);
   z.object({}).strict().parse(request.query);
   const key=operationKeySchema.parse(request.headers['idempotency-key']);
   let input:Awaited<ReturnType<typeof readPresentationMultipart>>;
-  try{input=await readPresentationMultipart(request);}catch(error){
+  try{input=await readPresentationMultipart(request,owner.presentationType);}catch(error){
    if(typeof error==='object'&&error!==null&&'code'in error&&String(error.code).startsWith('FST_')){
     fail(String(error.code)==='FST_REQ_FILE_TOO_LARGE'?'PRESENTATION_FILE_TOO_LARGE':'PRESENTATION_ONE_FILE_REQUIRED',String(error.code)==='FST_REQ_FILE_TOO_LARGE'?413:422);
    }throw error;

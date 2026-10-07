@@ -16,7 +16,7 @@ export const batchInputSchema = z.object({ kind: z.enum(['initial', 'reminder'])
 export const listQuerySchema = z.object({ page: idSchema.default(1), pageSize: idSchema.max(100).default(25),
   received: z.enum(['true']).optional(),
   round: z.enum(['1', '2']).optional(), search: z.string().max(500).optional(),
-  presentationType: z.enum(['poster', 'highlighted-poster']).optional(),
+  presentationType: z.enum(['oral', 'poster', 'highlighted-poster']).optional(),
   matchState: z.enum(['ready','alias_pending','conflict','missing','incomplete','withdrawn']).optional(),
   status: z.enum(['not_submitted','submitted','revision_pending','revised','revision_expired']).optional() }).strict();
 

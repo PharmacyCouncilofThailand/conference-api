@@ -12,7 +12,7 @@ import { presentationAnnouncementRoutes, presentationOwnerRoutes } from './publi
 import { presentationBackofficeRoutes } from './backoffice.routes.js';
 import { preparePresentationScenario } from './test-support.js';
 import { reconcilePresentations } from './reconcile.js';
-import { MAX_POSTER_BYTES } from './policy.js';
+import { MAX_ORAL_BYTES, MAX_POSTER_BYTES } from './policy.js';
 
 function form(buffer:Buffer,filename='poster.pdf',type='application/pdf',extra='',files=1){
  const boundary='poster-test-boundary';
@@ -45,7 +45,7 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  const objects=new Map<string,Buffer>();
  app.register(async protectedApp=>{
   protectedApp.addHook('preHandler',async(r,reply)=>{try{await r.jwtVerify();}catch{return reply.code(401).send({success:false,code:'AUTH_UNAUTHORIZED',error:'Unauthorized'});}});
-  protectedApp.register(presentationOwnerRoutes,{prefix:'/api/abstracts',database:routeDatabase,storage:{publicBaseUrl:'https://test.r2.dev',putObject:async i=>{objects.set(i.key,i.body);},deleteObject:async key=>{objects.delete(key);}}});
+  protectedApp.register(presentationOwnerRoutes,{prefix:'/api/abstracts',database:routeDatabase,storage:{r2:()=>({publicBaseUrl:'https://test.r2.dev',putObject:async i=>{objects.set(i.key,i.body);},deleteObject:async key=>{objects.delete(key);}}),drive:{rootFolderId:()=>{throw Error('Unexpected Drive');},generateId:async()=>{throw Error('Unexpected Drive');},folder:async()=>{throw Error('Unexpected Drive');},write:async()=>{throw Error('Unexpected Drive');},delete:async()=>{throw Error('Unexpected Drive');}}}});
   protectedApp.register(presentationBackofficeRoutes,{prefix:'/api/backoffice',database:routeDatabase});
  });
  await app.ready();
@@ -63,6 +63,8 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
   return r.json().data;
  };
  const publicRows=await get('/api/events/PRIS-2026/approved-abstracts',{});
+ await get(`/api/abstracts/${f.abstractId}/poster`,owner,404);
+ await get(base+'/poster-targets',admin,404);
  assert.deepEqual(Object.keys(publicRows[0]).sort(),['affiliation','categoryId','categoryName','id','presentationType','round','sequence','submitterName','title','trackingId'].sort());
  assert.ok(!JSON.stringify(publicRows).includes(f.owner.email));await get('/api/events/OTHER/approved-abstracts',{},404);
  await get(ownerUrl,{},401);await get(ownerUrl,other,403);await get(ownerUrl,admin,403);
@@ -139,7 +141,8 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  const details='Improve labels';const revisionPreview=await send('POST',base+'/presentation-email-previews',{kind:'revision',abstractId:f.abstractId,details,closesAt:close},200);
  const revision=await send('POST',base+`/presentation-targets/${f.abstractId}/revision-requests`,{requestId:revisionPreview.requestId,details,closesAt:close,previewFingerprint:revisionPreview.fingerprint},201,admin,randomUUID(),true);
  assert.equal((await get(ownerUrl+'?requestId='+revision.request.id.toUpperCase(),owner)).mode,'revision');
- await sql`UPDATE abstracts SET presentation_type='oral' WHERE id=${f.abstractId}`;assert.equal((await get(ownerUrl+'?requestId='+revision.request.id,owner)).canUpload,false);
+ await sql`UPDATE abstracts SET presentation_type='oral' WHERE id=${f.abstractId}`;
+ await upload(pdf,422,{requestId:revision.request.id});
  await sql`UPDATE abstracts SET presentation_type='poster' WHERE id=${f.abstractId}`;
  await send('POST',base+`/presentation-revision-requests/${revision.request.id}/cancellations`,{reason:'Replace request'},201,admin,randomUUID(),true);
  assert.equal((await get(ownerUrl+'?requestId='+revision.request.id,owner)).blockCode,'PRESENTATION_REQUEST_CANCELLED');
@@ -179,4 +182,36 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  assert.equal((await sql`SELECT count(*)::int AS n FROM presentation_uploads`)[0].n,1);
  assert.equal((await sql`SELECT count(*)::int AS n FROM presentation_revision_requests`)[0].n,2);
  assert.equal((await get(base+'/presentation-settings')).history.length,1);
+});
+
+test('Oral route buffers at most 50 MiB, rejects client type/provider and accepts multi-page PDF using Drive', {timeout:30000}, async t=>{
+ const {database,fixture:f}=await preparePresentationScenario(t,{type:'oral'});
+ process.env.PRESENTATION_SUBMISSIONS_ENABLED='true';
+ let writes=0;
+ const app=Fastify({logger:false});t.after(()=>app.close());
+ await app.register(jwt,{secret:'presentation-oral-route-test'});await app.register(multipart);
+ app.setErrorHandler((error,_request,reply)=>error instanceof ApiError
+  ?reply.code(error.statusCode).send(error.toJSON()):reply.code((error as FastifyError).statusCode??500).send({success:false,code:(error as FastifyError).code??'INTERNAL_ERROR'}));
+ app.addHook('preHandler',async request=>{await request.jwtVerify();});
+ app.register(presentationOwnerRoutes,{prefix:'/api/abstracts',database,storage:{r2:()=>assert.fail('Oral used R2'),drive:{
+  rootFolderId:()=> 'root',generateId:async()=>randomUUID(),folder:async(_parent,name)=>name,
+  write:async input=>{writes++;return {fileId:input.fileId,fileUrl:`https://drive.google.com/file/d/${input.fileId}/view`,storedFileName:input.fileName};},delete:async()=>{},
+ }}});await app.ready();
+ const headers={authorization:`Bearer ${app.jwt.sign(f.owner)}`,'idempotency-key':randomUUID()};
+ const url=`/api/abstracts/${f.abstractId}/presentation-uploads`;
+ const send=async(buffer:Buffer,status:number,extraField?:string)=>{
+  const body=form(buffer,'slides.pdf');
+  if(extraField){const last=Buffer.from('--poster-test-boundary--\r\n');body.payload=Buffer.concat([body.payload.subarray(0,body.payload.length-last.length),
+   Buffer.from(`--poster-test-boundary\r\nContent-Disposition: form-data; name="${extraField}"\r\n\r\noral\r\n`),last]);}
+  const response=await app.inject({method:'POST',url,...body,headers:{...headers,...body.headers}});
+  assert.equal(response.statusCode,status,response.body);return response.json();
+ };
+ await send(Buffer.alloc(MAX_ORAL_BYTES+1),413);
+ const document=await PDFDocument.create();document.addPage();
+ await send(Buffer.from(await document.save()),422);
+ document.addPage();const bytes=Buffer.from(await document.save());
+ await send(bytes,422,'presentationType');await send(bytes,422,'storageProvider');assert.equal(writes,0);
+ const ceiling=Buffer.concat([bytes,Buffer.alloc(MAX_ORAL_BYTES-bytes.length,32)]);
+ const accepted=await send(ceiling,201);assert.equal(accepted.data.upload.storageProvider,'drive');assert.equal(accepted.data.upload.sizeBytes,MAX_ORAL_BYTES);
+ assert.equal(writes,1);
 });
