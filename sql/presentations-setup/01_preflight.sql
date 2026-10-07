@@ -1,25 +1,27 @@
--- Read-only preflight before manual migration 0038. Empty duplicate results expected.
+-- Read-only preflight before replacement migration 0039. Empty duplicate results expected.
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '60s';
 DO $$ BEGIN
   IF (SELECT count(*) FROM events WHERE event_code='PRIS-2026')<>1 THEN
     RAISE EXCEPTION 'Expected exactly one PRIS-2026 event';
   END IF;
-  IF to_regclass('public.abstract_tracking_identifiers') IS NULL OR to_regclass('public.staff_event_assignments') IS NULL THEN
+  IF to_regclass('public.abstract_tracking_identifiers') IS NULL OR to_regclass('public.staff_event_assignments') IS NULL
+    OR to_regclass('public.abstract_categories') IS NULL THEN
     RAISE EXCEPTION 'Tracking/Event-assignment prerequisite is missing';
   END IF;
   IF to_regclass('public.presentation_settings') IS NOT NULL THEN
-    RAISE EXCEPTION 'Poster schema already exists: verify applied migration, do not migrate blindly';
+    RAISE EXCEPTION 'Presentation schema already exists: verify applied migration, do not migrate blindly';
   END IF;
 END $$;
 SELECT current_database(), current_schema(), current_setting('server_version') AS server_version;
 SELECT id, event_code FROM events WHERE event_code = 'PRIS-2026';
-SELECT a.id,a.tracking_id,a.user_id,(u.id IS NOT NULL) AS owner_exists,
+SELECT a.id,a.tracking_id,a.presentation_type,a.user_id,c.name AS category_name,(u.id IS NOT NULL) AS owner_exists,
   (u.email IS NOT NULL AND btrim(u.email)<>'') AS email_present
 FROM abstracts a JOIN events e ON e.id=a.event_id LEFT JOIN users u ON u.id=a.user_id
+LEFT JOIN abstract_categories c ON c.id=a.category_id AND c.event_id=a.event_id
 WHERE e.event_code='PRIS-2026' ORDER BY a.id;
 SELECT name, to_regclass('public.' || name) AS prerequisite
-FROM unnest(ARRAY['events','abstracts','users','backoffice_users','abstract_tracking_identifiers','staff_event_assignments']) AS name;
+FROM unnest(ARRAY['events','abstracts','users','backoffice_users','abstract_categories','abstract_tracking_identifiers','staff_event_assignments']) AS name;
 SELECT conname, pg_get_constraintdef(oid) AS definition
 FROM pg_constraint WHERE conrelid = 'abstracts'::regclass;
 -- Existing tracking migration 0029 must remain intact; never rebuild its history.
@@ -43,4 +45,12 @@ GROUP BY event_id,tracking_id HAVING count(DISTINCT abstract_id)>1;
 SELECT name,to_regclass('public.' || name) AS existing_presentation_table
 FROM unnest(ARRAY['presentation_settings','presentation_targets','presentation_announcements','presentation_revision_requests',
   'presentation_upload_attempts','presentation_uploads','presentation_operations','presentation_email_jobs','presentation_email_attempts','presentation_audit_events']) AS name;
+-- Legacy test data is replaced only by the ten explicitly named tables in 0039.
+SELECT name,to_regclass('public.' || name) AS legacy_table
+FROM unnest(ARRAY['poster_settings','poster_targets','poster_announcements','poster_revision_requests',
+  'poster_upload_attempts','poster_uploads','poster_operations','poster_email_jobs','poster_email_attempts','poster_audit_events']) AS name;
+-- Review unexpected dependencies before running a migration that deliberately uses no CASCADE.
+SELECT conrelid::regclass AS referencing_table,confrelid::regclass AS referenced_table,conname
+FROM pg_constraint WHERE contype='f' AND confrelid::regclass::text LIKE 'poster_%';
+SELECT id,role,is_active,assigned_presentation_types FROM backoffice_users WHERE role IN ('organizer','reviewer');
 COMMIT;

@@ -1,17 +1,20 @@
--- Read-only verification after migration 0038 and after reconciliation.
+-- Read-only verification after migration 0039 and reconciliation.
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '60s';
 DO $$ BEGIN
   IF (SELECT count(*) FROM presentation_settings s JOIN events e ON e.id=s.event_id WHERE e.event_code='PRIS-2026')<>1 THEN
-    RAISE EXCEPTION 'Expected exactly one PRIS-2026 poster settings row';
+    RAISE EXCEPTION 'Expected exactly one PRIS-2026 presentation settings row';
   END IF;
   IF EXISTS(SELECT 1 FROM presentation_settings s JOIN events e ON e.id=s.event_id WHERE e.event_code='PRIS-2026' AND NOT s.reconcile_ready) THEN
-    RAISE EXCEPTION 'Poster reconciliation is not ready';
+    RAISE EXCEPTION 'Presentation reconciliation is not ready';
   END IF;
   IF EXISTS(SELECT 1 FROM presentation_targets GROUP BY event_id,abstract_id HAVING count(*)>1) THEN RAISE EXCEPTION 'Duplicate target'; END IF;
   IF EXISTS(SELECT 1 FROM presentation_revision_requests WHERE status='open' GROUP BY target_id HAVING count(*)>1) THEN RAISE EXCEPTION 'Duplicate open request'; END IF;
   IF EXISTS(SELECT 1 FROM presentation_uploads WHERE request_id IS NULL GROUP BY target_id HAVING count(*)>1) THEN RAISE EXCEPTION 'Duplicate initial upload'; END IF;
   IF EXISTS(SELECT 1 FROM presentation_targets t LEFT JOIN presentation_uploads u ON u.id=t.current_upload_id AND u.target_id=t.id WHERE t.current_upload_id IS NOT NULL AND u.id IS NULL) THEN RAISE EXCEPTION 'Current file target mismatch'; END IF;
+  IF EXISTS(SELECT 1 FROM unnest(ARRAY['poster_settings','poster_targets','poster_announcements','poster_revision_requests',
+    'poster_upload_attempts','poster_uploads','poster_operations','poster_email_jobs','poster_email_attempts','poster_audit_events']) AS name
+    WHERE to_regclass('public.' || name) IS NOT NULL) THEN RAISE EXCEPTION 'Legacy poster tables remain'; END IF;
 END $$;
 SELECT name,to_regclass('public.' || name) AS presentation_table
 FROM unnest(ARRAY['presentation_settings','presentation_targets','presentation_announcements','presentation_revision_requests',
@@ -36,4 +39,12 @@ SELECT target_id,count(*) FROM presentation_revision_requests WHERE status='open
 SELECT t.id,t.current_upload_id FROM presentation_targets t
 LEFT JOIN presentation_uploads u ON u.target_id=t.id AND u.id=t.current_upload_id
 WHERE t.current_upload_id IS NOT NULL AND u.id IS NULL;
+-- Empty results required; the schema additionally enforces these provider identities.
+SELECT id,storage_provider,size_bytes,drive_file_id,object_key FROM presentation_uploads
+WHERE (storage_provider='drive' AND (size_bytes>52428800 OR drive_file_id IS NULL OR object_key IS NOT NULL))
+   OR (storage_provider='r2' AND (size_bytes>31457280 OR object_key IS NULL OR drive_file_id IS NOT NULL));
+SELECT pu.id,pu.user_id,a.user_id AS current_owner,a.presentation_type,pu.storage_provider
+FROM presentation_uploads pu JOIN presentation_targets t ON t.id=pu.target_id JOIN abstracts a ON a.id=t.abstract_id
+WHERE pu.user_id IS DISTINCT FROM a.user_id
+  OR pu.storage_provider IS DISTINCT FROM CASE WHEN a.presentation_type='oral' THEN 'drive' ELSE 'r2' END;
 COMMIT;
