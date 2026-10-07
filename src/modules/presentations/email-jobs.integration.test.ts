@@ -24,11 +24,41 @@ type Scenario = Awaited<ReturnType<typeof preparePresentationScenario>>;
 const sent: { recipient: string; subject: string; html: string }[] = [];
 const transport: PresentationMailTransport = { async send(input) { sent.push(input); return { providerMessageId: 'synthetic-accepted' }; } };
 const deleted: string[] = [];
-const storage: PresentationStorage = { publicBaseUrl: 'https://synthetic.r2.dev', async putObject() {},
-  async deleteObject(key) { deleted.push(key); } };
+const storage: PresentationStorage = {r2:()=>({ publicBaseUrl: 'https://synthetic.r2.dev', async putObject() {},
+  async deleteObject(key) { deleted.push(key); } }),drive:{rootFolderId:()=>{throw Error('Unexpected Drive');},generateId:async()=>{throw Error('Unexpected Drive');},folder:async()=>{throw Error('Unexpected Drive');},write:async()=>{throw Error('Unexpected Drive');},delete:async()=>{throw Error('Unexpected Drive');}}};
 
 test.beforeEach(() => { sent.length = 0; deleted.length = 0; process.env.PRESENTATION_EMAILS_ENABLED = 'true'; process.env.PRESENTATION_SUBMISSIONS_ENABLED = 'true'; });
 test.afterEach(() => { process.env.PRESENTATION_EMAILS_ENABLED = 'false'; process.env.PRESENTATION_SUBMISSIONS_ENABLED = 'false'; });
+
+test('Oral round 1 and 2 use all four previewed mails and the fresh worker owner gate', async t => {
+  for (const round of [1, 2] as const) {
+    const s = await preparePresentationScenario(t, { type: 'oral', round });
+    for (const kind of ['initial', 'reminder'] as const) {
+      const id = await notice(s, kind);
+      await runPresentationMailOnce(s.database, transport);
+      assert.equal((await s.client`SELECT state FROM presentation_email_jobs WHERE id=${id}`)[0].state, 'sent');
+      assert.match(sent.at(-1)!.subject, /Oral/); assert.match(sent.at(-1)!.html, /50 MiB/);
+      assert.match(sent.at(-1)!.html, /Presentation%20Oral%20Template.zip/);
+    }
+    const drive: PresentationStorage = { ...storage, drive: { rootFolderId: () => 'root', generateId: async () => randomUUID(),
+      folder: async (parent, name) => parent + '/' + name,
+      write: async input => ({ fileId: input.fileId, fileUrl: `https://drive.google.com/file/d/${input.fileId}/view`, storedFileName: input.fileName }),
+      delete: async () => {} } };
+    const pdf = await PDFDocument.create(); pdf.addPage(); pdf.addPage();
+    const input = { buffer: Buffer.from(await pdf.save()), filename: 'slides.pdf', mimetype: 'application/pdf' };
+    const initial = await submitPresentationUpload(s.database, s.fixture.owner, s.fixture.abstractId, randomUUID(), null, input, drive);
+    await runPresentationMailOnce(s.database, transport);
+    assert.match(sent.at(-1)!.subject, /ได้รับไฟล์นำเสนอ Oral/); assert.match(sent.at(-1)!.html, /slides.pdf/);
+    const request = await revision(s);
+    await runPresentationMailOnce(s.database, transport);
+    assert.match(sent.at(-1)!.subject, /ขอแก้ไข.*Oral/); assert.match(sent.at(-1)!.html, /Presentation%20Oral%20Template.zip/);
+    const updated = await submitPresentationUpload(s.database, s.fixture.owner, s.fixture.abstractId, randomUUID(), request.request.id, input, drive);
+    assert.notEqual(updated.upload.driveFileId, initial.upload.driveFileId);
+    await runPresentationMailOnce(s.database, transport);
+    assert.match(sent.at(-1)!.html, /ฉบับที่:<\/strong> 2/);
+    assert.equal((await s.client`SELECT count(*)::int AS n FROM presentation_email_jobs WHERE state='sent'`)[0].n, 5);
+  }
+});
 
 async function notice(s: Scenario, kind: 'initial' | 'reminder' = 'initial') {
   const selection = { kind, abstractIds: [s.fixture.abstractId] };
@@ -188,8 +218,8 @@ test('receipt config failure remains accepted and can be refreshed/resubmitted; 
   await s.client`UPDATE presentation_targets SET initial_enabled=true`;
   await s.client`UPDATE presentation_settings SET closes_at=clock_timestamp()+interval '1 hour'`;
   const orphanId = randomUUID();
-  await s.client`INSERT INTO presentation_upload_attempts(id,target_id,user_id,operation_key,fingerprint,object_key,filename,mime_type,size_bytes,digest,lease_until,claim_token)
-    SELECT ${orphanId},id,${s.fixture.ownerId},${randomUUID()},${'a'.repeat(64)},'synthetic/orphan.pdf','orphan.pdf','application/pdf',1,${'a'.repeat(64)},
+  await s.client`INSERT INTO presentation_upload_attempts(id,target_id,user_id,operation_key,fingerprint,storage_provider,object_key,original_filename,stored_filename,mime_type,size_bytes,digest,lease_until,claim_token)
+    SELECT ${orphanId},id,${s.fixture.ownerId},${randomUUID()},${'a'.repeat(64)},'r2','synthetic/orphan.pdf','orphan.pdf','orphan.pdf','application/pdf',1,${'a'.repeat(64)},
       clock_timestamp()-interval '1 second',${randomUUID()} FROM presentation_targets`;
   process.env.PRESENTATION_EMAILS_ENABLED = 'false'; await runPresentationWorkerIteration(s.database, transport, storage);
   assert.deepEqual(deleted, ['synthetic/orphan.pdf']);
@@ -317,10 +347,10 @@ test('revision and receipt previews are read-only, scoped and immutable; resend 
   const { client: sql, database, fixture: f } = await preparePresentationScenario(t);
   const [target] = await sql`SELECT id FROM presentation_targets`;
   const uploadId = randomUUID(), attemptId = randomUUID();
-  await sql`INSERT INTO presentation_upload_attempts(id,target_id,user_id,operation_key,fingerprint,object_key,filename,mime_type,size_bytes,digest,lease_until,claim_token)
-    VALUES (${attemptId},${target.id},${f.ownerId},${randomUUID()},${'a'.repeat(64)},'synthetic/poster.png','poster.png','image/png',1,${'a'.repeat(64)},clock_timestamp()+interval '1 hour',${randomUUID()})`;
-  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,version,user_id,object_key,public_url,filename,mime_type,size_bytes,digest,received_at)
-    VALUES (${uploadId},${target.id},${attemptId},1,${f.ownerId},'synthetic/poster.png','https://example.invalid/poster.png','poster.png','image/png',1,${'a'.repeat(64)},clock_timestamp())`;
+  await sql`INSERT INTO presentation_upload_attempts(id,target_id,user_id,operation_key,fingerprint,storage_provider,object_key,original_filename,stored_filename,mime_type,size_bytes,digest,lease_until,claim_token)
+    VALUES (${attemptId},${target.id},${f.ownerId},${randomUUID()},${'a'.repeat(64)},'r2','synthetic/poster.pdf','poster.pdf','poster.pdf','application/pdf',1,${'a'.repeat(64)},clock_timestamp()+interval '1 hour',${randomUUID()})`;
+  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,version,user_id,storage_provider,object_key,file_url,original_filename,stored_filename,mime_type,size_bytes,digest,received_at)
+    VALUES (${uploadId},${target.id},${attemptId},1,${f.ownerId},'r2','synthetic/poster.pdf','https://example.invalid/poster.pdf','poster.pdf','poster.pdf','application/pdf',1,${'a'.repeat(64)},clock_timestamp())`;
   await sql`UPDATE presentation_targets SET current_upload_id=${uploadId},initial_enabled=false`;
   const closesAt = new Date(Date.now()+3600000).toISOString();
   const draft = { kind: 'revision' as const, abstractId: f.abstractId, details: 'Please update caption', closesAt };

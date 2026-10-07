@@ -1,4 +1,3 @@
-import { PRESENTATION_TEXT_TEMPLATE_VERSION } from './email-template.js';
 import { loadPresentationAnnouncements } from './data/index.js';
 import type { Announcement } from './types.js';
 
@@ -136,7 +135,7 @@ export async function readPresentationDetail(database:PresentationDatabase,actor
   WHERE j.target_id=${target.id}::uuid ORDER BY a.started_at DESC,a.id DESC`):[];
  const audit=await rows<{created_at:string;action:string;after_state:Record<string,unknown>|null}>(database,sql`SELECT * FROM presentation_audit_events WHERE event_id=${eventId} AND abstract_id=${abstractId}
   ${actor.role==='admin'?sql``:sql`AND action IN ('revision_created','revision_cancelled')`} ORDER BY created_at DESC,id DESC`);
- return {row:actor.role==='admin'?row!:presentationViewerRow(row!),uploads,requests:requests.map(r=>revisionDto(r,now)),emailJobs:jobs.map(j=>({...j,...(j.templateVersion===PRESENTATION_TEXT_TEMPLATE_VERSION?{text:j.html}:{}),createdAt:iso(j.createdAt),finishedAt:maybeIso(j.finishedAt),
+ return {row:actor.role==='admin'?row!:presentationViewerRow(row!),uploads,requests:requests.map(r=>revisionDto(r,now)),emailJobs:jobs.map(j=>({...j,createdAt:iso(j.createdAt),finishedAt:maybeIso(j.finishedAt),
   attempts:attempts.filter(a=>a.job_id===j.id).map(a=>({...a,started_at:iso(a.started_at),request_started_at:maybeIso(a.request_started_at),finished_at:maybeIso(a.finished_at)}))})),audit:audit.map(a=>({...a,created_at:iso(a.created_at),
    ...(actor.role!=='admin'&&a.action==='revision_created'?{after_state:{request:a.after_state?.request}}:{})})),capabilities:{read:true,manage:actor.role==='admin'}};
 }

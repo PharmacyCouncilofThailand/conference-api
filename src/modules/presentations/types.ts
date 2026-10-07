@@ -30,6 +30,7 @@ export type OwnerPresentationDto = { abstractId: number; trackingId: string; tit
   mainClosesAt: string; canUpload: boolean; blockCode: string | null; mode: 'initial' | 'revision' | 'locked';
   selectedRequest: RevisionDto | null; currentUpload: UploadDto | null; uploads: UploadDto[] };
 export type MailPayload = { kind: MailKind; abstractId: number; trackingId: string; title: string;
+  presentationType: AnnouncementType;
   submitterName: string; recipient: string; websiteOrigin: string; closesAt: string | null;
   revisionRequestId: string | null; revisionDetails: string | null; upload: UploadDto | null };
 
@@ -44,7 +45,7 @@ export type PresentationReconciliationDto={eventId:number;digest:string;counts:R
 export type PresentationListDto={items:PresentationListRow[];total:number;page:number;pageSize:number;settings:PresentationSettingsDto;
  capabilities:{read:true;manage:boolean};counts:Record<PresentationProgress,number>};
 export type PresentationDetailDto={row:PresentationListRow;uploads:UploadDto[];requests:RevisionDto[];
- emailJobs:Array<{id:string;kind:MailKind;state:MailState;recipient:string;subject:string;html:string;text?:string;templateVersion?:string;createdAt:string;finishedAt:string|null;
+ emailJobs:Array<{id:string;kind:MailKind;state:MailState;recipient:string;subject:string;html:string;templateVersion?:string;createdAt:string;finishedAt:string|null;
   triggeredBy:number|null;parentJobId:string|null;requestId:string|null;uploadId:string|null;errorCode:string|null;attempts:unknown[]}>;
  audit:unknown[];capabilities:{read:true;manage:boolean}};
 
@@ -52,4 +53,4 @@ export type PresentationBatchDto={batchId:string;jobs:Array<{id:string;abstractI
 
 
 export type PresentationPreviewInput = import('zod').z.infer<typeof import('./schemas.js').mailPreviewInputSchema>;
-export type PresentationPreviewDto = {fingerprint:string;messages:Array<{abstractId:number;recipient:string;subject:string;html:string;text?:string;templateVersion:string}>;requestId?:string;closesAt?:string};
+export type PresentationPreviewDto = {fingerprint:string;messages:Array<{abstractId:number;recipient:string;subject:string;html:string;templateVersion:string}>;requestId?:string;closesAt?:string};

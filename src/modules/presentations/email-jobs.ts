@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { rows, fail, dbNow, requirePresentationStaff, type PresentationDatabase, type PresentationTx } from './access.js';
 import { sendNipaMailHtml, sendNipaMailText } from '../../services/emailService.js';
-import { renderPresentationEmail, PRESENTATION_TEXT_TEMPLATE_VERSION } from './email-template.js';
+import { renderPresentationEmail } from './email-template.js';
 import type { MailKind, MailPayload, MailState, PresentationActor, UploadDto } from './types.js';
 import { adminOperation, audit } from './operations.js';
 import { digest, isBeforeClose } from './policy.js';
@@ -13,10 +13,14 @@ import { operationKeySchema, resendInputSchema } from './schemas.js';
 export async function buildMailPayload(tx: Pick<PresentationDatabase, 'execute'>, targetId: string,
   kind: MailKind, requestId?: string, uploadId?: string): Promise<MailPayload> {
   const [work] = await rows<{ abstractId: number; userId: number; trackingId: string; title: string; submitterName: string;
-    recipient: string; websiteOrigin: string; closesAt: string | Date }>(tx, sql`
+    recipient: string; websiteOrigin: string; closesAt: string | Date; presentationType: MailPayload['presentationType'] }>(tx, sql`
     SELECT a.id AS "abstractId",a.user_id AS "userId",a.tracking_id AS "trackingId",a.title,
       concat_ws(' ',u.first_name,u.last_name) AS "submitterName",u.email AS recipient,
-      e.website_url AS "websiteOrigin",s.closes_at AS "closesAt"
+      e.website_url AS "websiteOrigin",s.closes_at AS "closesAt",
+      CASE WHEN a.presentation_type='oral' THEN 'oral'
+        WHEN EXISTS(SELECT 1 FROM presentation_announcements pa WHERE pa.target_id=t.id AND pa.present
+          AND pa.source_row->>'presentationType'='highlighted-poster') THEN 'highlighted-poster'
+        ELSE a.presentation_type END AS "presentationType"
     FROM presentation_targets t JOIN abstracts a ON a.id=t.abstract_id JOIN users u ON u.id=a.user_id
     JOIN events e ON e.id=t.event_id JOIN presentation_settings s ON s.event_id=t.event_id
     WHERE t.id=${targetId}::uuid
@@ -104,7 +108,7 @@ export async function runPresentationMailOnce(database: PresentationDatabase, tr
         await requirePresentationStaff(tx, { id: job.triggered_by!, role: 'admin', email: staff.email }, target.event_id, true);
         const owner = await rows(tx, sql`SELECT u.id FROM presentation_targets t JOIN abstracts a ON a.id=t.abstract_id
           JOIN users u ON u.id=a.user_id WHERE t.id=${job.target_id}::uuid AND u.status='active'
-          AND a.presentation_type='poster'`);
+          AND a.presentation_type IN ('oral','poster')`);
         if (!owner.length) fail('PRESENTATION_OWNER_MISSING');
       }
       if (job.kind === 'initial' || job.kind === 'reminder') {
@@ -134,8 +138,7 @@ export async function runPresentationMailOnce(database: PresentationDatabase, tr
   } catch (error) { code = errorCode(error, 'PRESENTATION_MAIL_PRECHECK_FAILED'); }
   if (!code) {
     try {
-      const result = await transport.send({ recipient: job.payload.recipient, subject: job.subject, html: job.html,
-        ...(job.template_version === PRESENTATION_TEXT_TEMPLATE_VERSION ? { text: job.html } : {}) });
+      const result = await transport.send({ recipient: job.payload.recipient, subject: job.subject, html: job.html });
       state = 'sent'; providerId = result.providerMessageId ?? null;
     } catch (error) {
       state = typeof error === 'object' && error !== null && 'deliveryState' in error && error.deliveryState === 'failed'

@@ -4,7 +4,6 @@ import type { MailPayload } from './types.js';
 
 const escape = (text: string) => text.replace(/[&<>"']/g, char =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
-export const PRESENTATION_TEXT_TEMPLATE_VERSION = 'presentation-text-v2';
 
 export function buildSubmissionUrl(origin: string, abstractId: number, requestId?: string,
   nodeEnv = process.env.NODE_ENV): string {
@@ -31,6 +30,10 @@ function dateTime(instant: string, locale: 'th' | 'en', offset = 0): string {
 
 export function renderPresentationEmail(p: MailPayload): { subject: string; html: string; text?: string; templateVersion: string } {
   if (!z.string().email().safeParse(p.recipient).success) throw Error('PRESENTATION_EMAIL_INVALID');
+  if (!['oral', 'poster', 'highlighted-poster'].includes(p.presentationType)) throw Error('PRESENTATION_TYPE_INVALID');
+  const oral = p.presentationType === 'oral';
+  const type = oral ? 'Oral' : p.presentationType === 'highlighted-poster' ? 'Highlighted Poster' : 'Poster';
+  const template = oral ? 'Oral' : 'Poster';
   if (p.kind !== 'receipt') {
     if (!p.closesAt) throw Error('PRESENTATION_MAIL_DEADLINE_MISSING');
     const href = escape(buildSubmissionUrl(p.websiteOrigin, p.abstractId, p.kind === 'revision' ? p.revisionRequestId ?? undefined : undefined));
@@ -38,7 +41,7 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
 <html lang="th">
   <body>
     <p>เรียน คุณ${escape(p.submitterName)}</p>
-    <p>สภาเภสัชกรรมขอเรียน${p.kind === 'reminder' ? 'เตือน' : 'แจ้ง'}ให้ท่านดำเนินการ${p.kind === 'revision' ? 'แก้ไขและ' : ''}ส่งไฟล์โปสเตอร์สำหรับผลงานดังต่อไปนี้</p>
+    <p>สภาเภสัชกรรมขอเรียน${p.kind === 'reminder' ? 'เตือน' : 'แจ้ง'}ให้ท่านดำเนินการ${p.kind === 'revision' ? 'แก้ไขและ' : ''}ส่งไฟล์นำเสนอ ${type} สำหรับผลงานดังต่อไปนี้</p>
     <ul>
       <li><strong>รหัสผลงาน:</strong> ${escape(p.trackingId)}</li>
       <li><strong>ชื่อผลงาน:</strong> ${escape(p.title)}</li>${p.kind === 'revision' ? `\n      <li><strong>รายละเอียดการแก้ไข:</strong> ${escape(p.revisionDetails ?? '').replace(/\r?\n/g, '<br>')}</li>` : ''}
@@ -46,17 +49,17 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
     </ul>
     <p><strong>ข้อกำหนดของไฟล์</strong></p>
     <ul>
-      <li>ไฟล์ PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MB</li>
+      <li>ไฟล์ PDF จำนวนหนึ่งไฟล์ ${oral ? 'อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MiB' : 'หนึ่งหน้า ขนาดไม่เกิน 30 MiB'}</li>
       <li>ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน</li>
     </ul>
-    <p><a href="https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20Poster%20Template.zip">ดาวน์โหลด Template สำหรับ Poster (.ZIP)</a></p>
+    <p><a href="https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20${template}%20Template.zip">ดาวน์โหลด Template สำหรับ ${template} (.ZIP)</a></p>
     <p><strong>ขั้นตอนและเงื่อนไขการส่ง</strong></p>
     <ol>
       <li>กรุณาเข้าสู่ระบบด้วยบัญชีที่ใช้ส่งบทคัดย่อของผลงานนี้</li>
       <li>ระบบจะถือว่าการส่งสำเร็จเมื่อได้รับ ตรวจสอบ และบันทึกไฟล์เรียบร้อยแล้ว</li>
       <li>สิทธิ์นี้สามารถส่งไฟล์ได้สำเร็จเพียงหนึ่งครั้ง หากต้องการแก้ไขภายหลังการส่ง กรุณาติดต่อเจ้าหน้าที่</li>
     </ol>
-    <p><a href="${href}">ส่งโปสเตอร์ที่นี่</a></p>
+    <p><a href="${href}">ส่งไฟล์นำเสนอที่นี่</a></p>
     <p>หากมีข้อสงสัยเพิ่มเติม สามารถติดต่อได้ที่ <a href="mailto:pr@pharmacycouncil.org">pr@pharmacycouncil.org</a></p>
     <p>จึงเรียนมาเพื่อโปรดดำเนินการ</p>
     <p>ขอแสดงความนับถือ</p>
@@ -65,7 +68,7 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
     <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
   </body>
 </html>`;
-    return { subject: `${p.kind === 'revision' ? 'แจ้งขอแก้ไข' : p.kind === 'reminder' ? 'เตือนส่ง' : 'แจ้งส่ง'}ไฟล์โปสเตอร์ผลงาน รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion: `poster-${p.kind}-v4` };
+    return { subject: `${p.kind === 'revision' ? 'แจ้งขอแก้ไข' : p.kind === 'reminder' ? 'เตือนส่ง' : 'แจ้งส่ง'}ไฟล์นำเสนอ ${type} รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion: `presentation-${p.kind}-v1` };
   }
   if (!p.upload) throw Error('PRESENTATION_RECEIPT_UPLOAD_MISSING');
   const href = escape(buildSubmissionUrl(p.websiteOrigin, p.abstractId, p.revisionRequestId ?? p.upload.revisionRequestId ?? undefined));
@@ -73,7 +76,7 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
 <html lang="th">
   <body>
     <p>เรียน คุณ${escape(p.submitterName)}</p>
-    <p>สภาเภสัชกรรมขอเรียนแจ้งว่า ระบบได้รับไฟล์โปสเตอร์สำหรับผลงานของท่านเรียบร้อยแล้ว โดยมีรายละเอียดดังนี้</p>
+    <p>สภาเภสัชกรรมขอเรียนแจ้งว่า ระบบได้รับไฟล์นำเสนอ ${type} สำหรับผลงานของท่านเรียบร้อยแล้ว โดยมีรายละเอียดดังนี้</p>
     <ul>
       <li><strong>รหัสผลงาน:</strong> ${escape(p.trackingId)}</li>
       <li><strong>ชื่อผลงาน:</strong> ${escape(p.title)}</li>
@@ -91,5 +94,5 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
     <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
   </body>
 </html>`;
-  return { subject: `แจ้งการได้รับไฟล์โปสเตอร์ผลงาน รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion: 'presentation-receipt-v4' };
+  return { subject: `แจ้งการได้รับไฟล์นำเสนอ ${type} รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion: 'presentation-receipt-v1' };
 }

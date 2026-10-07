@@ -7,7 +7,7 @@ import { readPresentationList, readPresentationDetail, readPresentationSettings,
 import { listQuerySchema } from './schemas.js';
 
 // Isolated reader fixtures: no runtime database, storage or email providers.
-function fixture(role:string,templateVersion='presentation-text-v2') {
+function fixture(role:string,templateVersion='presentation-initial-v1') {
  const now='2026-10-07T00:00:00.000Z';
  const upload={id:'file-1',targetId:'target-1',version:1,fileName:'poster.pdf',mimeType:'application/pdf',sizeBytes:100,
   storedFileName:'poster.pdf',fileUrl:'https://example.invalid/poster.pdf',storageProvider:'r2',driveFileId:null,receivedAt:now,revisionRequestId:null};
@@ -74,9 +74,7 @@ test('admin retains complete roster, verification, email and audit reads with op
  assert.equal((await readPresentationList(database,actor,42,listQuerySchema.parse({received:'true'}))).total,2);
  const detail=await readPresentationDetail(database,actor,42,1);
  assert.equal(detail.emailJobs.length,1);assert.equal(detail.audit.length,6);assert.equal(detail.capabilities.manage,true);
- assert.equal(detail.emailJobs[0].text,detail.emailJobs[0].html);
- const legacy=fixture('admin','presentation-v1');
- assert.equal((await readPresentationDetail(legacy.database,legacy.actor,42,1)).emailJobs[0].text,undefined);
+ assert.equal(detail.emailJobs[0].html,'private-html');
  assert.ok((await readPresentationDetail(database,actor,42,2)).row);
  assert.equal((await readPresentationSettings(database,actor,42)).capabilities.manage,true);
  assert.equal((await readPresentationBatch(database,actor,42,'batch')).jobs.length,1);

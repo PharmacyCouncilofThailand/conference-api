@@ -8,16 +8,43 @@ import { buildMailPayload, enqueuePresentationMail } from './email-jobs.js';
 import type { PresentationDatabase, PresentationTx } from './access.js';
 
 const payload: MailPayload = {
-  kind: 'initial', abstractId: 501, trackingId: 'PRIS-2026-P001', title: '<script>x</script>',
+  presentationType: 'poster', kind: 'initial', abstractId: 501, trackingId: 'PRIS-2026-P001', title: '<script>x</script>',
   submitterName: 'ชื่อ & "นามสกุล"', recipient: 'owner@example.invalid', websiteOrigin: 'https://example.invalid',
   closesAt: '2026-10-15T17:00:00Z', revisionRequestId: null, revisionDetails: null, upload: null,
 };
 const requestId = '11111111-1111-4111-8111-111111111111';
 
+test('all four emails select trusted type wording, requirements and Template for all three types', () => {
+  for (const type of ['oral', 'poster', 'highlighted-poster'] as const) {
+    const label = type === 'oral' ? 'Oral' : type === 'highlighted-poster' ? 'Highlighted Poster' : 'Poster';
+    for (const kind of ['initial', 'reminder', 'revision', 'receipt'] as const) {
+      const result = renderPresentationEmail({ ...payload, presentationType: type, kind,
+        closesAt: '2026-10-20T17:00:00Z', revisionRequestId: kind === 'revision' ? requestId : null,
+        revisionDetails: '<script>change</script>\nKeep originals', upload: kind === 'receipt' ? {
+          id: requestId, version: 2, fileName: '<slides>.pdf', storedFileName: 'PRIS_<slides>.pdf', mimeType: 'application/pdf',
+          sizeBytes: 100, fileUrl: 'https://drive.google.com/file/d/test/view', storageProvider: 'drive', driveFileId: 'test',
+          receivedAt: '2026-10-09T07:12:34Z', revisionRequestId: requestId,
+        } : null });
+      assert.ok(result.subject.includes(label)); assert.ok(result.html.includes(label));
+      assert.ok(result.html.includes('/th/presentation-submission?abstractId=501'));
+      assert.equal(result.templateVersion, `presentation-${kind}-v1`);
+      if (kind === 'receipt') {
+        assert.ok(result.html.includes('&lt;slides&gt;.pdf')); assert.ok(result.html.includes('14.12.34'));
+        assert.equal(result.html.includes('Template'), false); assert.equal(result.html.includes('PRIS_'), false);
+      } else {
+        assert.ok(result.html.includes(type === 'oral' ? 'อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MiB' : 'หนึ่งหน้า ขนาดไม่เกิน 30 MiB'));
+        assert.ok(result.html.includes(`Presentation%20${type === 'oral' ? 'Oral' : 'Poster'}%20Template.zip`));
+        assert.ok(result.html.includes('20 ตุลาคม 2569 เวลา 23.59.59'));
+        if (kind === 'revision') assert.ok(result.html.includes('&lt;script&gt;change&lt;/script&gt;<br>Keep originals'));
+      }
+    }
+  }
+});
+
 test('initial notification uses invitation-style paragraphs, actual lists, bold labels and italic note', () => {
   const result = renderPresentationEmail(payload);
-  assert.equal(result.subject, `แจ้งส่งไฟล์โปสเตอร์ผลงาน รหัส ${payload.trackingId} ในงาน PRIS 2026`);
-  assert.equal(result.templateVersion, 'poster-initial-v4');
+  assert.equal(result.subject, `แจ้งส่งไฟล์นำเสนอ Poster รหัส ${payload.trackingId} ในงาน PRIS 2026`);
+  assert.equal(result.templateVersion, 'presentation-initial-v1');
   assert.equal(result.text, undefined, 'formatted mail must follow the HTML transport');
   assert.ok(result.html.startsWith('<!doctype html>'));
   assert.equal((result.html.match(/<ul>/g) || []).length, 2);
@@ -28,7 +55,7 @@ test('initial notification uses invitation-style paragraphs, actual lists, bold 
   assert.ok(result.html.includes('<p>สภาเภสัชกรรม</p>\n    <p>(The Pharmacy Council of Thailand)</p>'));
   assert.ok(result.html.includes('&lt;script&gt;x&lt;/script&gt;')); assert.equal(result.html.includes('<script>'), false);
   assert.ok(result.html.includes('ชื่อ &amp; &quot;นามสกุล&quot;'));
-  for (const text of ['30 MB', 'ไม่ตั้งรหัสผ่าน', 'abstractId=501', 'pr@pharmacycouncil.org', '15 ตุลาคม 2569 เวลา 23.59.59']) assert.ok(result.html.includes(text));
+  for (const text of ['30 MiB', 'ไม่ตั้งรหัสผ่าน', 'abstractId=501', 'pr@pharmacycouncil.org', '15 ตุลาคม 2569 เวลา 23.59.59']) assert.ok(result.html.includes(text));
   assert.equal(result.html.includes('pharmactcouncil'), false);
   assert.equal(result.html.includes('PNG'), false);
   const changed = renderPresentationEmail({ ...payload, closesAt: '2026-10-21T05:30:00Z' });
@@ -38,11 +65,11 @@ test('initial notification uses invitation-style paragraphs, actual lists, bold 
 test('reminder shares initial notification formatting with reminder wording and a labeled submission link', () => {
   const initial = renderPresentationEmail(payload);
   const result = renderPresentationEmail({ ...payload, kind: 'reminder' });
-  assert.equal(result.subject, `เตือนส่งไฟล์โปสเตอร์ผลงาน รหัส ${payload.trackingId} ในงาน PRIS 2026`);
-  assert.ok(result.html.includes('ขอเรียนเตือนให้ท่านดำเนินการส่งไฟล์โปสเตอร์'));
-  assert.equal(result.text, undefined); assert.equal(result.templateVersion, 'poster-reminder-v4');
+  assert.equal(result.subject, `เตือนส่งไฟล์นำเสนอ Poster รหัส ${payload.trackingId} ในงาน PRIS 2026`);
+  assert.ok(result.html.includes('ขอเรียนเตือนให้ท่านดำเนินการส่งไฟล์นำเสนอ Poster'));
+  assert.equal(result.text, undefined); assert.equal(result.templateVersion, 'presentation-reminder-v1');
   const url = buildSubmissionUrl(payload.websiteOrigin, payload.abstractId);
-  const link = `<p><a href="${url}">ส่งโปสเตอร์ที่นี่</a></p>`;
+  const link = `<p><a href="${url}">ส่งไฟล์นำเสนอที่นี่</a></p>`;
   assert.ok(initial.html.includes(link));
   assert.ok(result.html.includes(link));
   const templateLink = '<a href="https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20Poster%20Template.zip">ดาวน์โหลด Template สำหรับ Poster (.ZIP)</a>';
@@ -57,38 +84,38 @@ test('revision drafts preserve details and bind their link and deadline to the r
     revisionDetails: '<img src=x onerror=x>\nFix & retain \'quote\'', closesAt: '2026-10-20T17:00:00Z' });
   assert.ok(result.html.includes(`requestId=${requestId}`));
   assert.ok(result.html.includes('&lt;img src=x onerror=x&gt;<br>Fix &amp; retain &#39;quote&#39;'));
-  assert.equal(result.subject, `แจ้งขอแก้ไขไฟล์โปสเตอร์ผลงาน รหัส ${payload.trackingId} ในงาน PRIS 2026`);
-  assert.equal(result.templateVersion, 'poster-revision-v4');
+  assert.equal(result.subject, `แจ้งขอแก้ไขไฟล์นำเสนอ Poster รหัส ${payload.trackingId} ในงาน PRIS 2026`);
+  assert.equal(result.templateVersion, 'presentation-revision-v1');
   assert.ok(result.html.startsWith('<!doctype html>'));
-  assert.ok(result.html.includes('สภาเภสัชกรรมขอเรียนแจ้งให้ท่านดำเนินการแก้ไขและส่งไฟล์โปสเตอร์'));
+  assert.ok(result.html.includes('สภาเภสัชกรรมขอเรียนแจ้งให้ท่านดำเนินการแก้ไขและส่งไฟล์นำเสนอ Poster'));
   assert.ok(result.html.includes('<li><strong>รายละเอียดการแก้ไข:</strong>'));
   assert.ok(result.html.includes('20 ตุลาคม 2569 เวลา 23.59.59'));
   assert.equal((result.html.match(/<li>/g) || []).length, 9);
   assert.equal((result.html.match(/<ul>/g) || []).length, 2);
   assert.equal((result.html.match(/<ol>/g) || []).length, 1);
   const href = buildSubmissionUrl(payload.websiteOrigin, payload.abstractId, requestId).replace(/&/g, '&amp;');
-  assert.ok(result.html.includes(`<p><a href="${href}">ส่งโปสเตอร์ที่นี่</a></p>`));
+  assert.ok(result.html.includes(`<p><a href="${href}">ส่งไฟล์นำเสนอที่นี่</a></p>`));
   assert.ok(result.html.includes('ดาวน์โหลด Template สำหรับ Poster (.ZIP)'));
   assert.ok(result.html.includes('mailto:pr@pharmacycouncil.org'));
   assert.ok(result.html.includes('<p>สภาเภสัชกรรม</p>\n    <p>(The Pharmacy Council of Thailand)</p>'));
   assert.ok(result.html.includes('<p><em>หมายเหตุ:'));
   assert.ok(!result.html.includes('<img'));
   assert.equal(result.html.includes('PNG'), false);
-  assert.ok(result.html.includes('ไฟล์ PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MB'));
+  assert.ok(result.html.includes('ไฟล์ PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MiB'));
   assert.throws(() => renderPresentationEmail({ ...payload, kind: 'revision', revisionRequestId: requestId, closesAt: null }), /PRESENTATION_MAIL_DEADLINE_MISSING/);
 });
 
 test('receipt uses persisted file, version and server receivedAt without approval claims', () => {
   const receiptPayload: MailPayload = { ...payload, kind: 'receipt', closesAt: null, upload: {
-    id: requestId, version: 3, fileName: '<poster>.pdf', mimeType: 'application/pdf', sizeBytes: 100,
-    publicUrl: 'https://files.example.invalid/poster.pdf', receivedAt: '2026-10-09T07:12:34Z', revisionRequestId: null,
+    id: requestId, version: 3, fileName: '<poster>.pdf', mimeType: 'application/pdf', sizeBytes: 100, storedFileName: 'poster.pdf', storageProvider: 'r2', driveFileId: null,
+    fileUrl: 'https://files.example.invalid/poster.pdf', receivedAt: '2026-10-09T07:12:34Z', revisionRequestId: null,
   } };
   const result = renderPresentationEmail(receiptPayload);
-  assert.equal(result.subject, `แจ้งการได้รับไฟล์โปสเตอร์ผลงาน รหัส ${payload.trackingId} ในงาน PRIS 2026`);
-  assert.equal(result.templateVersion, 'presentation-receipt-v4');
+  assert.equal(result.subject, `แจ้งการได้รับไฟล์นำเสนอ Poster รหัส ${payload.trackingId} ในงาน PRIS 2026`);
+  assert.equal(result.templateVersion, 'presentation-receipt-v1');
   assert.ok(result.html.startsWith('<!doctype html>'));
   assert.equal((result.html.match(/<li>/g) || []).length, 5);
-  for (const text of ['ระบบได้รับไฟล์โปสเตอร์สำหรับผลงานของท่านเรียบร้อยแล้ว',
+  for (const text of ['ระบบได้รับไฟล์นำเสนอ Poster สำหรับผลงานของท่านเรียบร้อยแล้ว',
     '&lt;poster&gt;.pdf', '<strong>ฉบับที่:</strong> 3', '9 ตุลาคม 2569 เวลา 14.12.34 น. (เวลาประเทศไทย)',
     '<strong>รหัสผลงาน:</strong>', '<strong>ชื่อผลงาน:</strong>', '<strong>ชื่อไฟล์:</strong>', '<strong>วันและเวลาที่ระบบได้รับ:</strong>',
     '<p>จึงเรียนมาเพื่อโปรดทราบ</p>', 'mailto:pr@pharmacycouncil.org',
@@ -139,7 +166,7 @@ test('payload reads the database owner and target-scoped request/upload, keeping
   const statements: ReturnType<typeof dialect.sqlToQuery>[] = [];
   const work = { ...payload, closesAt: new Date(payload.closesAt!) };
   const upload = { id: requestId, version: 2, fileName: 'poster.pdf', mimeType: 'application/pdf',
-    sizeBytes: 100, publicUrl: 'https://files.example.invalid/poster.pdf',
+    sizeBytes: 100, fileUrl: 'https://files.example.invalid/poster.pdf',
     receivedAt: new Date('2026-10-09T07:12:34Z'), revisionRequestId: requestId };
   const results: unknown[][] = [[work], [{ details: 'Fix legend', closes_at: '2026-10-20T17:00:00Z' }], [upload]];
   const tx = { execute: async (statement: SQL) => {
@@ -183,7 +210,7 @@ test('enqueue stores immutable rendered content and resource links with only a t
   assert.ok(statements[0].sql.includes('INSERT INTO presentation_email_jobs'));
   assert.ok(statements[0].params.includes(JSON.stringify(payload)));
   assert.ok(statements[0].params.includes(renderPresentationEmail(payload).html));
-  assert.ok(statements[0].params.includes('poster-initial-v4'));
+  assert.ok(statements[0].params.includes('presentation-initial-v1'));
   await assert.rejects(enqueuePresentationMail(tx, requestId, { ...payload, recipient: 'broken' }, 7), /PRESENTATION_EMAIL_INVALID/);
   assert.equal(statements.length, 1);
 });
