@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import axios from "axios";
 import { sendNipaMailText } from "./emailService.js";
-import { createPosterMailTransport } from "../modules/posters/email-jobs.js";
+import { createPresentationMailTransport } from "../modules/presentations/email-jobs.js";
 
 test("preserves plain-text line breaks through NipaMail's provider-compatible body field", async () => {
   const originalPost = axios.post;
@@ -22,7 +22,7 @@ test("preserves plain-text line breaks through NipaMail's provider-compatible bo
 
   try {
     await sendNipaMailText("recipient@example.com", "Test subject", "บรรทัดที่หนึ่ง\n\nบรรทัดที่สอง <script>alert(1)</script> &", true, { timeoutMs: 15000 });
-    const transport = createPosterMailTransport();
+    const transport = createPresentationMailTransport();
     await transport.send({ recipient: "recipient@example.com", subject: "Plain", html: "ignored", text: "Hello <world>\n- File" });
     await transport.send({ recipient: "recipient@example.com", subject: "Legacy", html: "<p>Old job</p>" });
     assert.equal(calls[2].timeout, 15000);

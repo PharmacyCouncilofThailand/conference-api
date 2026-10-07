@@ -7,9 +7,9 @@ import jwt from "@fastify/jwt";
 import rateLimit from "@fastify/rate-limit";
 import { ApiError } from "./errors/ApiError.js";
 import { db } from "./database/index.js";
-import { initializePosters, posterReadiness } from "./modules/posters/startup.js";
-import { posterAnnouncementRoutes, posterOwnerRoutes } from "./modules/posters/public.routes.js";
-import { posterBackofficeRoutes } from "./modules/posters/backoffice.routes.js";
+import { initializePresentations, presentationReadiness } from "./modules/presentations/startup.js";
+import { presentationAnnouncementRoutes, presentationOwnerRoutes } from "./modules/presentations/public.routes.js";
+import { presentationBackofficeRoutes } from "./modules/presentations/backoffice.routes.js";
 import { abstractTrackingRuntime } from "./database/schema.js";
 import { eq } from "drizzle-orm";
 import fastifyStatic from "@fastify/static";
@@ -277,10 +277,10 @@ fastify.register(backofficeLoginRoutes, { prefix: "/backoffice" });
 
 // Public API routes
 fastify.register(publicEventsRoutes, { prefix: "/api/events" });
-fastify.register(posterAnnouncementRoutes, { prefix: "/api/events" });
+fastify.register(presentationAnnouncementRoutes, { prefix: "/api/events" });
 fastify.register(async app => {
   app.addHook('preHandler', fastify.authenticate);
-  app.register(posterOwnerRoutes, { database: db });
+  app.register(presentationOwnerRoutes, { database: db });
 }, { prefix: '/api/abstracts' });
 fastify.register(publicSponsorRoutes, { prefix: "/api/events" });
 fastify.register(publicStudentEligibilityRoutes, { prefix: "/api/events" });
@@ -315,7 +315,7 @@ fastify.register(async (protectedLuckyWheelRoutes) => {
 fastify.register(async (protectedRoutes) => {
   // Add authentication hook to all routes in this plugin
   protectedRoutes.addHook("preHandler", fastify.authenticate);
-  protectedRoutes.register(posterBackofficeRoutes, { database: db });
+  protectedRoutes.register(presentationBackofficeRoutes, { database: db });
 
   // Register all backoffice routes
   protectedRoutes.register(backofficeUsersRoutes, { prefix: "/users" });
@@ -370,7 +370,7 @@ fastify.get("/health/live", async (request) => ({
 }));
 
 fastify.get("/health/ready", async (request, reply) => {
-  const posters = await posterReadiness(db);
+  const presentations = await presentationReadiness(db);
   try {
     const [runtime] = await db
       .select()
@@ -378,11 +378,11 @@ fastify.get("/health/ready", async (request, reply) => {
       .where(eq(abstractTrackingRuntime.singleton, true))
       .limit(1);
 
-    if (!runtime || !runtime.allocatorEnabled || !runtime.historyReady || posters === 'unavailable') {
+    if (!runtime || !runtime.allocatorEnabled || !runtime.historyReady || presentations === 'unavailable') {
       return reply.status(503).send({
         status: "not_ready",
         components: {
-          posters,
+          presentations,
           database: "ok",
           trackingAllocator: runtime?.allocatorEnabled ? "initializing" : runtime ? "uninitialized" : "unavailable",
           abstractWrites: runtime?.abstractWritesPaused ? "paused" : "enabled",
@@ -394,7 +394,7 @@ fastify.get("/health/ready", async (request, reply) => {
     return reply.send({
       status: "ready",
       components: {
-        posters,
+        presentations,
         database: "ok",
         trackingAllocator: "ok",
         abstractWrites: runtime.abstractWritesPaused ? "paused" : "enabled",
@@ -405,7 +405,7 @@ fastify.get("/health/ready", async (request, reply) => {
     return reply.status(503).send({
       status: "not_ready",
       components: {
-        posters,
+        presentations,
         database: "unavailable",
         trackingAllocator: "unavailable",
         abstractWrites: "enabled",
@@ -451,8 +451,8 @@ const start = async () => {
   try {
     const port = parseInt(process.env.PORT || "3002", 10);
     await warmAbstractWordCountWorker();
-    try { await initializePosters(db); }
-    catch (error) { fastify.log.error(error, 'Poster startup reconciliation failed'); }
+    try { await initializePresentations(db); }
+    catch (error) { fastify.log.error(error, 'Presentation startup reconciliation failed'); }
     await fastify.listen({ port, host: "0.0.0.0" });
     fastify.log.info(`🚀 API running on port ${port}`);
   } catch (err) {
