@@ -74,7 +74,7 @@ All module paths below are `conference-api/src/modules/presentations/` after Tas
 
 **Interfaces:** Produces the existing function contracts with Presentation names: `PresentationDatabase`, `PresentationTx`, `PresentationActor`, `OwnerPresentationDto`, `requirePresentationOwner`, `requirePresentationStaff`, `reconcilePresentations`, `readOwnerPresentation`, `submitPresentationUpload`, `readPresentationList`, `readPresentationDetail`, `createPresentationRevision`, `renderPresentationEmail`. Existing DTO fields are changed explicitly in Task 3, not by global replacement.
 
-- [ ] Record `git status --short` and HEAD in each repository. Snapshot only the user-changed Round 2 file bytes/hash to a local artifact outside tracked paths, and note its local rows independently of the official Round 1 source.
+- [x] Record `git status --short` and HEAD in each repository. Snapshot only the user-changed Round 2 file bytes/hash to a local artifact outside tracked paths, and note its local rows independently of the official Round 1 source.
 
 ```powershell
 # CWD common workspace; reversible backup, no user file reset
@@ -85,14 +85,14 @@ Copy-Item -LiteralPath $taskSource -Destination (Join-Path $taskBackupDir 'appro
 Get-FileHash -Algorithm SHA256 -LiteralPath $taskSource
 ```
 
-- [ ] Run pre-change safe unit checks only: API policy/file-validation/storage/email-template/readers/emailService and Pris four Poster tests + redirect tests. Record the known `data.test.ts` source119/Round2empty mismatch without running provider or runtime DB operations. API command:
+- [x] Run pre-change safe unit checks only: API policy/file-validation/storage/email-template/readers/emailService and Pris four Poster tests + redirect tests. Record the known `data.test.ts` source119/Round2empty mismatch without running provider or runtime DB operations. API command:
 
 ```powershell
 # CWD conference-api; expected exit 0 or a documented pre-existing failure
 ./node_modules/.bin/tsx.cmd --test src/modules/posters/policy.test.ts src/modules/posters/file-validation.test.ts src/modules/posters/storage.test.ts src/modules/posters/email-template.test.ts src/modules/posters/readers.test.ts src/services/emailService.test.ts
 ```
 
-- [ ] Move exact files from the manifest. For each computed path resolve it under the common workspace, reject destination collisions, create only its parent, then `Move-Item -LiteralPath`. Use these target substitutions, including test names; do not move a directory containing unrelated files:
+- [x] Move exact files from the manifest. For each computed path resolve it under the common workspace, reject destination collisions, create only its parent, then `Move-Item -LiteralPath`. Use these target substitutions, including test names; do not move a directory containing unrelated files:
 
 ```powershell
 function Get-PresentationTarget([string]$taskPath) {
@@ -121,7 +121,7 @@ foreach ($taskEntry in $taskInventory | Where-Object { -not $_.new }) {
 }
 ```
 
-- [ ] Update imports and workflow identifiers only in inventoried targets. Replace active `POSTER_*` errors/flags, compound `*Poster*` / `*poster*` identifiers, `/posters`, `/poster-submission`, `modules/posters`, `types/posters`, `components/posters`, `poster-settings/targets/...` route tokens. Do not replace standalone type values, displayed type names, source titles, tracking IDs, Abstract helpers/ENV or historical docs/migrations. Exact namespace changes:
+- [x] Update imports and workflow identifiers only in inventoried targets. Replace active `POSTER_*` errors/flags, compound `*Poster*` / `*poster*` identifiers, `/posters`, `/poster-submission`, `modules/posters`, `types/posters`, `components/posters`, `poster-settings/targets/...` route tokens. Do not replace standalone type values, displayed type names, source titles, tracking IDs, Abstract helpers/ENV or historical docs/migrations. Exact namespace changes:
 
 ```ts
 // API/BO namespace and translation usage after moves
@@ -131,8 +131,8 @@ useTranslations('presentation');
 // Nested keys poster/highlighted/ oral continue describing actual types.
 ```
 
-- [ ] Update package command paths and Docker compiled paths immediately, while retaining guards on the existing approved physical test DB. Verify old source routes no longer have page.tsx. Re-run baseline safe tests under new paths and compile all three repositories. Expected: no rename-caused import/type errors; baseline failures recorded separately.
-- [ ] Commit only mechanical scope in each repo with `refactor(presentations): rename submission workflow`; stage explicit paths/hunks. If staging moved source data, restore the pre-change content in the staged blob and keep user changes unstaged at the new path. Do not commit those local rows.
+- [x] Update package command paths and Docker compiled paths immediately, while retaining guards on the existing approved physical test DB. Verify old source routes no longer have page.tsx. Re-run baseline safe tests under new paths and compile all three repositories. Expected: no rename-caused import/type errors; baseline failures recorded separately.
+- [x] Commit only mechanical scope in each repo with `refactor(presentations): rename submission workflow`; stage explicit paths/hunks. If staging moved source data, restore the pre-change content in the staged blob and keep user changes unstaged at the new path. Do not commit those local rows.
 
 ```powershell
 # CWD conference-api; preserve HEAD's source blob in the rename commit, not the local test rows.
@@ -153,7 +153,7 @@ git diff -- $taskNewSource
 
 The full test function signature is `preparePresentationScenario(t:TestContext,options:{type?:'oral'|'poster';round?:1|2}={})`. Keep resource cleanup in t.after and preserve the existing pool/DB whitelist.
 
-- [ ] Add a migration test that applies old 0038 to a synthetic legacy fixture, inserts test rows into all ten tables, then applies new SQL. Before/after compare `users`, `events`, `abstracts`, `abstract_categories`, `abstract_tracking_identifiers`, `staff_event_assignments`, and an unrelated sentinel table with rows/indexes. Assert every old table is absent and every new table exists, new deadline correct, no old test rows copied, all preserved rows unchanged. Fresh-schema and reapply checks use the same guard.
+- [x] Add a migration test that applies old 0038 to a synthetic legacy fixture, inserts test rows into all ten tables, then applies new SQL. Before/after compare `users`, `events`, `abstracts`, `abstract_categories`, `abstract_tracking_identifiers`, `staff_event_assignments`, and an unrelated sentinel table with rows/indexes. Assert every old table is absent and every new table exists, new deadline correct, no old test rows copied, all preserved rows unchanged. Fresh-schema and reapply checks use the same guard.
 
 ```ts
 // Add inside migration.integration.test.ts; these assertions follow actual fixture setup.
@@ -168,8 +168,8 @@ const [setting] = await client`INSERT INTO presentation_settings(event_id) VALUE
 assert.equal(new Date(setting.closes_at).toISOString(), '2026-10-20T17:00:00.000Z');
 ```
 
-- [ ] Run only migration.integration.test.ts on the approved integration target, concurrency 1. Before SQL exists the expected failure is missing new migration, not a changed runtime database.
-- [ ] Create this complete transaction SQL. It deliberately drops the legacy FK cycle before children, refuses an existing new schema, avoids CASCADE and does not delete external storage:
+- [x] Run only migration.integration.test.ts on the approved integration target, concurrency 1. Before SQL exists the expected failure is missing new migration, not a changed runtime database.
+- [x] Create this complete transaction SQL. It deliberately drops the legacy FK cycle before children, refuses an existing new schema, avoids CASCADE and does not delete external storage:
 
 ```sql
 BEGIN;
@@ -333,7 +333,7 @@ CREATE TRIGGER presentation_request_immutable_guard BEFORE UPDATE ON presentatio
 COMMIT;
 ```
 
-- [ ] Extend isolated fixture schema with `abstract_categories(id,event_id,name)`, `abstracts.category_id`, and `backoffice_users.assigned_presentation_types jsonb DEFAULT '[]'`. Seed one category and link the Abstract. Parameterize the existing fixture rather than adding a new fixture framework:
+- [x] Extend isolated fixture schema with `abstract_categories(id,event_id,name)`, `abstracts.category_id`, and `backoffice_users.assigned_presentation_types jsonb DEFAULT '[]'`. Seed one category and link the Abstract. Parameterize the existing fixture rather than adding a new fixture framework:
 
 ```ts
 // In preparePresentationScenario after seedPresentationScenario and before reconcile.
@@ -349,8 +349,8 @@ await reconcilePresentations(database, [announcement]);
 await client`UPDATE presentation_settings SET closes_at=clock_timestamp()+interval '1 hour' WHERE event_id=${fixture.eventId}`;
 ```
 
-- [ ] Apply migration tests for current-upload FK consistency, one initial file, one successful revision/request, request immutability/terminal states, provider identities and exact provider byte limits. Inject a late SQL failure to prove the transaction restores old tables/rows. Assert reapply fails before deleting any new rows.
-- [ ] Keep resetPresentationTestDatabase responsible for base fixture tables only. preparePresentationScenario applies new 0039 after reset and before seed/reconcile; legacy migration rehearsal explicitly applies old 0038 itself. This prevents double application and makes fresh/legacy tests independent. No schema push and no journal rewrite. Run migration checks to PASS, then commit `feat(presentations): replace poster test schema safely`.
+- [x] Apply migration tests for current-upload FK consistency, one initial file, one successful revision/request, request immutability/terminal states, provider identities and exact provider byte limits. Inject a late SQL failure to prove the transaction restores old tables/rows. Assert reapply fails before deleting any new rows.
+- [x] Keep resetPresentationTestDatabase responsible for base fixture tables only. preparePresentationScenario applies new 0039 after reset and before seed/reconcile; legacy migration rehearsal explicitly applies old 0038 itself. This prevents double application and makes fresh/legacy tests independent. No schema push and no journal rewrite. Run migration checks to PASS, then commit `feat(presentations): replace poster test schema safely`.
 
 ## Task 3: Shared policy, authoritative location and PDF validation
 
@@ -1227,3 +1227,12 @@ Plan work ends after this document and approved spec are saved/reviewed. Choose 
 2. Inline execution in this chat with checkpoints, using `vendor/superpowers/skills/executing-plans/SKILL.md`.
 
 Both skills exist locally. Read the chosen skill when execution is requested, not during this planning-only turn. Do not spawn agents, create a worktree, start implementation, execute migration, or deploy as part of producing the plan.
+
+## Execution checkpoints — 8 October 2026
+
+- User chose inline execution in the existing checkouts on feat/pris2026-presentation-submission.
+- Task 1 complete: API a8258b4, Pris ee170da, Backoffice 2a94c9a. Safe baseline and renamed baseline both passed 74 tests. API and Backoffice typechecks passed; Pris retains pre-existing TS2349 at approvedAnnouncementsPage.test.ts:55. Next route types regenerated; stale generated dev validators preserved outside source.
+- Round 2 original bytes backed up; SHA256 930259132212DF4983D9AE5119369CB37A67DAED585D50BE56696A63762DF0DA. User rows remain unstaged at the renamed path.
+- User explicitly authorized creating one Docker database for the entire implementation. Created pris2026-presentation-test-20261008 using installed postgres:16-alpine, bound only to 127.0.0.1:55073, database confer_posters_integration_test. Existing guard unchanged. Credentials stay in local untracked .test-artifacts/presentations ENV files.
+- Task 2 migration checks passed 6 tests, including legacy-table replacement, fresh schema, preservation, transaction rollback, reapply rejection, provider constraints and database guard. No runtime migration or external provider call.
+- Integration command (API CWD): node --env-file='../.test-artifacts/presentations/integration.env' --import tsx --test --test-concurrency=1 src/modules/presentations/migration.integration.test.ts
