@@ -27,7 +27,7 @@ export function createPresentationStorage(): PresentationStorage {
   } catch { return fail('PRESENTATION_STORAGE_CONFIG', 503); } },
   drive: {
     rootFolderId: () => { const id = process.env.GOOGLE_DRIVE_FOLDER_ABSTRACTS?.trim();
-      if (!id) fail('PRESENTATION_STORAGE_CONFIG', 503); return id; },
+      if (!id) return fail('PRESENTATION_STORAGE_CONFIG', 503); return id; },
     generateId: () => generatePresentationDriveFileId(), folder: (parent, name) => getOrCreatePresentationDriveFolder(parent, name),
     write: input => writePresentationDriveFile(input), delete: async id => {
       try { await deleteFromGoogleDrive(id); }
@@ -63,7 +63,7 @@ export async function storePresentationAttempt(database: PresentationDatabase, a
   if (!claim) fail('PRESENTATION_UPLOAD_RETRY_REQUIRED');
   try {
     if (attempt.identity.storageProvider === 'drive') {
-      if (!attempt.location) fail('PRESENTATION_STORAGE_CONTEXT_INVALID');
+      if (!attempt.location) return fail('PRESENTATION_STORAGE_CONTEXT_INVALID');
       if (!attempt.identity.driveFileId) {
         const folderId = await resolveOralFolder(database, attempt.location, storage);
         const fileId = await storage.drive.generateId();
@@ -76,7 +76,7 @@ export async function storePresentationAttempt(database: PresentationDatabase, a
         attempt.identity.driveFileId = identity.driveFileId;
         attempt.identity.driveFolderId = identity.driveFolderId;
       }
-      if (!attempt.identity.driveFolderId) fail('PRESENTATION_UPLOAD_RETRY_REQUIRED');
+      if (!attempt.identity.driveFolderId) return fail('PRESENTATION_UPLOAD_RETRY_REQUIRED');
       const written = await storage.drive.write({ fileId: attempt.identity.driveFileId!, parentId: attempt.identity.driveFolderId,
         fileName: attempt.identity.storedFileName, buffer: file.buffer, digest: file.digest, md5Checksum: file.md5Checksum, attemptId: attempt.attemptId });
       attempt.identity.fileUrl = written.fileUrl;

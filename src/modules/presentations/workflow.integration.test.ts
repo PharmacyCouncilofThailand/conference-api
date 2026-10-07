@@ -15,6 +15,12 @@ import { runPresentationMailOnce } from './email-jobs.js';
 import type { OwnerPresentationDto, PresentationDetailDto, PresentationListDto, PresentationPreviewDto, RevisionDto, UploadDto } from './types.js';
 
 test('synthetic full HTTP workflow: reconcile alias, two works/mail, rejected PNG, initial/revision PDF, cancel, replay and retained history', { timeout: 30000 }, async t => {
+  const previousReceiving = process.env.PRESENTATION_SUBMISSIONS_ENABLED, previousMail = process.env.PRESENTATION_EMAILS_ENABLED;
+  process.env.PRESENTATION_SUBMISSIONS_ENABLED = 'true'; process.env.PRESENTATION_EMAILS_ENABLED = 'true';
+  t.after(() => {
+    if (previousReceiving === undefined) delete process.env.PRESENTATION_SUBMISSIONS_ENABLED; else process.env.PRESENTATION_SUBMISSIONS_ENABLED = previousReceiving;
+    if (previousMail === undefined) delete process.env.PRESENTATION_EMAILS_ENABLED; else process.env.PRESENTATION_EMAILS_ENABLED = previousMail;
+  });
   const { client: sql, database, fixture: f, announcement } = await preparePresentationScenario(t);
   const [second] = await sql`INSERT INTO abstracts(event_id,user_id,tracking_id,title,presentation_type)
     VALUES(${f.eventId},${f.ownerId},'PRIS-2026-P002','Second synthetic work','poster') RETURNING id`;
@@ -23,7 +29,7 @@ test('synthetic full HTTP workflow: reconcile alias, two works/mail, rejected PN
   await reconcilePresentations(database, [announcement, alias]);
   assert.equal((await sql`SELECT count(*)::int AS n FROM presentation_email_jobs`)[0].n, 0, 'source reconciliation sends no email');
   const objects = new Map<string, Buffer>(), deletes: string[] = [], mail: Array<{ recipient: string; subject: string; html: string }> = [];
-  const storage = { publicBaseUrl: 'https://test.r2.dev', putObject: async (input: { key: string; body: Buffer }) => { objects.set(input.key, Buffer.from(input.body)); }, deleteObject: async (key: string) => { deletes.push(key); objects.delete(key); } };
+  const storage = {r2:()=>({ publicBaseUrl: 'https://test.r2.dev', putObject: async (input: { key: string; body: Buffer }) => { objects.set(input.key, Buffer.from(input.body)); }, deleteObject: async (key: string) => { deletes.push(key); objects.delete(key); } }),drive:{rootFolderId:()=>{throw Error('Unexpected Drive');},generateId:async()=>{throw Error('Unexpected Drive');},folder:async()=>{throw Error('Unexpected Drive');},write:async()=>{throw Error('Unexpected Drive');},delete:async()=>{throw Error('Unexpected Drive');}}};
   const app = Fastify({ logger: false }); t.after(() => app.close());
   await app.register(jwt, { secret: 'synthetic-poster-workflow-secret' }); await app.register(multipart);
   app.setErrorHandler((error, _request, reply) => {
