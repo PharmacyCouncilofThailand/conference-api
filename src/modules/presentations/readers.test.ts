@@ -10,7 +10,7 @@ import { listQuerySchema } from './schemas.js';
 function fixture(role:string,templateVersion='presentation-text-v2') {
  const now='2026-10-07T00:00:00.000Z';
  const upload={id:'file-1',targetId:'target-1',version:1,fileName:'poster.pdf',mimeType:'application/pdf',sizeBytes:100,
-  publicUrl:'https://example.invalid/poster.pdf',receivedAt:now,revisionRequestId:null};
+  storedFileName:'poster.pdf',fileUrl:'https://example.invalid/poster.pdf',storageProvider:'r2',driveFileId:null,receivedAt:now,revisionRequestId:null};
  const announcement={round:1,categoryId:1,trackingId:'P001',title:'Poster',presentationType:'poster',submitterName:'Owner'};
  const roster=[1,2,3].map(id=>({source_key:`1:${id}`,source_row:{...announcement,id},abstract_id:id,target_id:`target-${id}`,
   current_upload_id:id===2?null:upload.id,submitter_email:'owner@example.invalid',present:true,match_state:'conflict',
@@ -22,7 +22,7 @@ function fixture(role:string,templateVersion='presentation-text-v2') {
  const dialect=new PgDialect();
  const database={execute:async(statement:SQL)=>{
   const {sql,params}=dialect.sqlToQuery(statement); queries.push(sql);
-  if(sql.includes('FROM backoffice_users'))return [{role}];
+  if(sql.includes('FROM backoffice_users'))return [{role,assignedPresentationTypes:['poster']}];
   if(sql.includes('FROM events'))return [{id:42}];
   if(sql.includes('FROM staff_event_assignments'))return [{ok:1}];
   if(sql.includes('clock_timestamp() AS now'))return [{now}];

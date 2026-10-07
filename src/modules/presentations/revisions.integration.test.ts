@@ -12,10 +12,10 @@ async function uploaded(t: Parameters<typeof preparePresentationScenario>[0]) {
   const scenario = await preparePresentationScenario(t), { client: sql, fixture: f } = scenario;
   const [target] = await sql`SELECT id FROM presentation_targets`;
   const uploadId = randomUUID(), attemptId = randomUUID();
-  await sql`INSERT INTO presentation_upload_attempts(id,target_id,user_id,operation_key,fingerprint,object_key,filename,mime_type,size_bytes,digest,lease_until,claim_token,state)
-    VALUES (${attemptId},${target.id},${f.ownerId},${randomUUID()},${'a'.repeat(64)},'synthetic/poster.png','poster.png','image/png',1,${'a'.repeat(64)},clock_timestamp()+interval '1 hour',${randomUUID()},'accepted')`;
-  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,version,user_id,object_key,public_url,filename,mime_type,size_bytes,digest,received_at)
-    VALUES (${uploadId},${target.id},${attemptId},1,${f.ownerId},'synthetic/poster.png','https://example.invalid/poster.png','poster.png','image/png',1,${'a'.repeat(64)},clock_timestamp())`;
+  await sql`INSERT INTO presentation_upload_attempts(id,target_id,user_id,operation_key,fingerprint,storage_provider,object_key,original_filename,stored_filename,mime_type,size_bytes,digest,lease_until,claim_token,state)
+    VALUES (${attemptId},${target.id},${f.ownerId},${randomUUID()},${'a'.repeat(64)},'r2','synthetic/poster.pdf','poster.pdf','poster.pdf','application/pdf',1,${'a'.repeat(64)},clock_timestamp()+interval '1 hour',${randomUUID()},'accepted')`;
+  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,version,user_id,storage_provider,object_key,file_url,original_filename,stored_filename,mime_type,size_bytes,digest,received_at)
+    VALUES (${uploadId},${target.id},${attemptId},1,${f.ownerId},'r2','synthetic/poster.pdf','https://example.invalid/poster.pdf','poster.pdf','poster.pdf','application/pdf',1,${'a'.repeat(64)},clock_timestamp())`;
   await sql`UPDATE presentation_targets SET current_upload_id=${uploadId},initial_enabled=false`;
   return { ...scenario, targetId: target.id as string, uploadId };
 }
@@ -169,10 +169,10 @@ test('historical receipt resend preserves upload link and does not mint rights; 
   await assert.rejects(resendPresentationMail(database, f.admin, f.eventId, initial, randomUUID(), '0'.repeat(64)), { statusCode: 409 });
   const input = await draft(s), created = await createPresentationRevision(database, f.admin, f.eventId, f.abstractId, randomUUID(), input);
   const secondId = randomUUID(), secondAttempt = randomUUID();
-  await sql`INSERT INTO presentation_upload_attempts(id,target_id,user_id,request_id,operation_key,fingerprint,object_key,filename,mime_type,size_bytes,digest,lease_until,claim_token,state)
-    VALUES (${secondAttempt},${s.targetId},${f.ownerId},${input.requestId},${randomUUID()},${'b'.repeat(64)},'synthetic/v2.png','v2.png','image/png',1,${'b'.repeat(64)},clock_timestamp()+interval '1 hour',${randomUUID()},'accepted')`;
-  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,request_id,version,user_id,object_key,public_url,filename,mime_type,size_bytes,digest,received_at)
-    VALUES (${secondId},${s.targetId},${secondAttempt},${input.requestId},2,${f.ownerId},'synthetic/v2.png','https://example.invalid/v2.png','v2.png','image/png',1,${'b'.repeat(64)},clock_timestamp())`;
+  await sql`INSERT INTO presentation_upload_attempts(id,target_id,user_id,request_id,operation_key,fingerprint,storage_provider,object_key,original_filename,stored_filename,mime_type,size_bytes,digest,lease_until,claim_token,state)
+    VALUES (${secondAttempt},${s.targetId},${f.ownerId},${input.requestId},${randomUUID()},${'b'.repeat(64)},'r2','synthetic/v2.pdf','v2.pdf','v2.pdf','application/pdf',1,${'b'.repeat(64)},clock_timestamp()+interval '1 hour',${randomUUID()},'accepted')`;
+  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,request_id,version,user_id,storage_provider,object_key,file_url,original_filename,stored_filename,mime_type,size_bytes,digest,received_at)
+    VALUES (${secondId},${s.targetId},${secondAttempt},${input.requestId},2,${f.ownerId},'r2','synthetic/v2.pdf','https://example.invalid/v2.pdf','v2.pdf','v2.pdf','application/pdf',1,${'b'.repeat(64)},clock_timestamp())`;
   await sql`UPDATE presentation_targets SET current_upload_id=${secondId}`;
   await sql`UPDATE presentation_revision_requests SET status='submitted',submitted_at=clock_timestamp() WHERE id=${created.request.id}`;
   const receipt = await database.transaction(async tx => enqueuePresentationMail(tx, s.targetId,

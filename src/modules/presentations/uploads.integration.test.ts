@@ -19,11 +19,85 @@ async function validFile(filename = 'synthetic-owner.pdf') {
 }
 function memoryStorage() {
   const objects = new Map<string, Buffer>(), deleted: string[] = [];
-  const storage: PresentationStorage = { publicBaseUrl: 'https://synthetic.r2.dev',
+  const storage: PresentationStorage = {r2:()=>({ publicBaseUrl: 'https://synthetic.r2.dev',
     async putObject(input) { objects.set(input.key, input.body); },
-    async deleteObject(key) { deleted.push(key); objects.delete(key); } };
+    async deleteObject(key) { deleted.push(key); objects.delete(key); } }),drive:{rootFolderId:()=>{throw Error('Unexpected Drive');},generateId:async()=>{throw Error('Unexpected Drive');},folder:async()=>{throw Error('Unexpected Drive');},write:async()=>{throw Error('Unexpected Drive');},delete:async()=>{throw Error('Unexpected Drive');}}};
   return { storage, objects, deleted };
 }
+function oralStorage() {
+  const files = new Map<string, Buffer>(), deleted: string[] = [], folders: string[] = [];
+  const storage: PresentationStorage = {r2: () => assert.fail('Oral must never initialize R2'), drive: {
+    rootFolderId: () => 'abstract-root', generateId: async () => randomUUID(),
+    folder: async (parent, name) => {folders.push(name); return `${parent}/${name}`;},
+    write: async input => {files.set(input.fileId, input.buffer);
+      assert.ok(input.parentId.endsWith('/Oral/Presentation Oral/สาขาตัวอย่าง/PRIS-2026-O001'));
+      return {fileId: input.fileId, fileUrl: `https://drive.google.com/file/d/${input.fileId}/view`, storedFileName: input.fileName};},
+    delete: async id => {deleted.push(id); files.delete(id);},
+  }};
+  return {storage, files, deleted, folders};
+}
+async function oralFile() {
+  const pdf = await PDFDocument.create(); pdf.addPage(); pdf.addPage();
+  return {buffer: Buffer.from(await pdf.save()), filename: 'ชื่อ slides.PDF', mimetype: 'application/pdf'};
+}
+
+test('Oral rounds 1 and 2 accept initial/revision files, retain same names with distinct IDs and replay accepted rights', async t => {
+  for (const round of [1, 2] as const) await t.test(`round ${round}`, async child => {
+    const {client, database, fixture: f} = await preparePresentationScenario(child, {type: 'oral', round});
+    const {storage, files, deleted, folders} = oralStorage(), file = await oralFile(), key = randomUUID();
+    const first = await submitPresentationUpload(database, f.owner, f.abstractId, key, null, file, storage);
+    assert.equal(first.upload.version, 1); assert.equal(first.upload.storageProvider, 'drive');
+    assert.equal(first.upload.fileName, file.filename); assert.equal(first.upload.storedFileName, `PRIS-2026-O001_${file.filename}`);
+    assert.equal(first.upload.fileUrl, `https://drive.google.com/file/d/${first.upload.driveFileId}/view`);
+    const requestId = await revision(client, f.adminId);
+    const second = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), requestId, file, storage);
+    assert.equal(second.upload.version, 2); assert.notEqual(first.upload.driveFileId, second.upload.driveFileId);
+    assert.equal(first.upload.storedFileName, second.upload.storedFileName);
+    assert.equal((await client`SELECT current_upload_id FROM presentation_targets`)[0].current_upload_id, second.upload.id);
+    assert.equal((await client`SELECT status FROM presentation_revision_requests`)[0].status, 'submitted');
+    await client`UPDATE presentation_settings SET closes_at=clock_timestamp()-interval '1 hour'`;
+    assert.equal((await submitPresentationUpload(database, f.owner, f.abstractId, key, null, file, storage)).replayed, true);
+    assert.equal(files.size, 2); assert.equal(deleted.length, 0);
+    assert.deepEqual(folders.slice(0, 5), ['PRIS-2026','Oral','Presentation Oral','สาขาตัวอย่าง','PRIS-2026-O001']);
+    await assertCounts(client, 2);
+  });
+});
+
+test('Oral identity is committed before provider bytes; unknown provider outcome defers cleanup until lease recovery', async t => {
+  const {client, database, fixture: f} = await preparePresentationScenario(t, {type: 'oral'});
+  const {storage, files, deleted} = oralStorage(), file = await oralFile();
+  const write = storage.drive.write;
+  storage.drive.write = async input => {
+    const [saved] = await client`SELECT drive_file_id,drive_folder_id,state FROM presentation_upload_attempts WHERE id=${input.attemptId}`;
+    assert.equal(saved.drive_file_id, input.fileId); assert.equal(saved.drive_folder_id, input.parentId); assert.equal(saved.state, 'reserved');
+    await write(input);
+    throw Object.assign(Error('lost create/read outcome'), {storageOutcome: 'unknown'});
+  };
+  await assert.rejects(submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file, storage), {storageOutcome: 'unknown'});
+  const [attempt] = await client`SELECT * FROM presentation_upload_attempts`;
+  assert.equal(attempt.state, 'reserved'); assert.equal(attempt.error_code, null); assert.equal(files.size, 1); assert.equal(deleted.length, 0);
+  await assertCounts(client, 0);
+  await cleanupFailedAttempt(database, attempt.id, storage); assert.equal(deleted.length, 0);
+  await client`UPDATE presentation_upload_attempts SET lease_until=clock_timestamp()-interval '1 second' WHERE id=${attempt.id}`;
+  await cleanupFailedAttempt(database, attempt.id, storage);
+  assert.deepEqual(deleted, [attempt.drive_file_id]); assert.equal(files.size, 0);
+});
+
+test('Oral permission failure never accepts a file; cleanup retains all accepted versions and rejects missing location', async t => {
+  const {client, database, fixture: f} = await preparePresentationScenario(t, {type: 'oral'});
+  const {storage, files, deleted} = oralStorage(), file = await oralFile(), write = storage.drive.write;
+  storage.drive.write = async input => {await write(input); throw Error('public sharing failed');};
+  await assert.rejects(submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file, storage), {code: 'PRESENTATION_STORAGE_FAILED'});
+  await assertCounts(client, 0); assert.equal(files.size, 0); assert.equal(deleted.length, 1);
+  storage.drive.write = write;
+  const accepted = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file, storage);
+  await client`UPDATE presentation_upload_attempts SET lease_until=clock_timestamp()-interval '1 second' WHERE id=${accepted.upload.id}`;
+  await cleanupFailedAttempt(database, accepted.upload.id, storage); assert.equal(files.size, 1); assert.equal(deleted.length, 1);
+  const requestId = await revision(client, f.adminId);
+  await client`UPDATE abstracts SET category_id=NULL WHERE id=${f.abstractId}`;
+  await assert.rejects(submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), requestId, file, storage), {code: 'PRESENTATION_STORAGE_CONTEXT_INVALID'});
+  assert.equal(files.size, 1); await assertCounts(client, 1);
+});
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>(done => { resolve = done; });
@@ -44,10 +118,10 @@ async function assertCounts(sql: TestSql, uploads: number, receipts = uploads) {
 }
 // Foundation fixtures only: T11 must prove actual atomic acceptance and receipt creation.
 async function acceptedFixture(sql: TestSql, attempt: AttemptReservation, version: number) {
-  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,request_id,version,user_id,object_key,public_url,
-    filename,mime_type,size_bytes,digest,received_at)
-    SELECT id,target_id,id,request_id,${version},user_id,object_key,${`https://synthetic.r2.dev/${attempt.objectKey}`},
-      filename,mime_type,size_bytes,digest,clock_timestamp() FROM presentation_upload_attempts WHERE id=${attempt.attemptId}`;
+  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,request_id,version,user_id,storage_provider,object_key,file_url,
+    original_filename,stored_filename,mime_type,size_bytes,digest,received_at)
+    SELECT id,target_id,id,request_id,${version},user_id,storage_provider,object_key,${`https://synthetic.r2.dev/${attempt.identity.objectKey!}`},
+      original_filename,stored_filename,mime_type,size_bytes,digest,clock_timestamp() FROM presentation_upload_attempts WHERE id=${attempt.attemptId}`;
   await sql`UPDATE presentation_targets SET current_upload_id=${attempt.attemptId} WHERE id=(SELECT target_id FROM presentation_upload_attempts WHERE id=${attempt.attemptId})`;
   await sql`UPDATE presentation_upload_attempts SET state='accepted' WHERE id=${attempt.attemptId}`;
 }
@@ -57,8 +131,8 @@ test('reservation does not consume rights; failures, fingerprints and claims rem
   const file = await validFile(), key = randomUUID();
   const attempt = await reserveUploadAttempt(database, f.owner, f.abstractId, key, null, file);
   assert.equal(attempt.kind, 'reserved');
-  assert.match(attempt.objectKey, new RegExp(`^events/${f.eventId}/presentations/${f.abstractId}/[0-9a-f-]+\\.pdf$`));
-  assert.equal(attempt.objectKey.includes(file.filename), false);
+  assert.match(attempt.identity.objectKey!, new RegExp(`^events/${f.eventId}/presentations/${f.abstractId}/[0-9a-f-]+\\.pdf$`));
+  assert.equal(attempt.identity.objectKey!.includes(file.filename), false);
   assert.equal((await sql`SELECT current_upload_id FROM presentation_targets`)[0].current_upload_id, null);
   assert.equal((await sql`SELECT count(*)::int AS n FROM presentation_uploads`)[0].n, 0);
   await assert.rejects(reserveUploadAttempt(database, { ...f.owner, id: f.ownerId + 100 }, f.abstractId, key, null, file),
@@ -69,20 +143,20 @@ test('reservation does not consume rights; failures, fingerprints and claims rem
   await assert.rejects(reserveUploadAttempt(database, f.owner, f.abstractId, key, null, { ...file, filename: 'other.pdf' }),
     { code: 'PRESENTATION_IDEMPOTENCY_CONFLICT' });
   const { storage, objects } = memoryStorage();
-  await assert.rejects(storePresentationAttempt(database, attempt, file, { ...storage, async putObject() { throw new Error('R2 failure'); } }),
+  await assert.rejects(storePresentationAttempt(database, attempt, file, {...storage,r2:()=>({ ...storage.r2(), async putObject() { throw new Error('R2 failure'); } })}),
     { code: 'PRESENTATION_STORAGE_FAILED' });
   assert.equal((await sql`SELECT state FROM presentation_upload_attempts WHERE id=${attempt.attemptId}`)[0].state, 'reserved');
   await assert.rejects(storePresentationAttempt(database, { ...attempt, claimToken: randomUUID() }, file, storage),
     { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
   assert.equal((await sql`SELECT state FROM presentation_upload_attempts WHERE id=${attempt.attemptId}`)[0].state, 'reserved');
   await storePresentationAttempt(database, attempt, file, storage);
-  assert.strictEqual(objects.get(attempt.objectKey), file.buffer);
+  assert.strictEqual(objects.get(attempt.identity.objectKey!), file.buffer);
   const retry = await reserveUploadAttempt(database, f.owner, f.abstractId, key, null, file);
   assert.equal(retry.kind, 'stored'); assert.equal(retry.attemptId, attempt.attemptId);
   await sql`UPDATE presentation_upload_attempts SET lease_until=clock_timestamp() WHERE id=${attempt.attemptId}`;
   await assert.rejects(reserveUploadAttempt(database, f.owner, f.abstractId, key, null, file), { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
   const fresh = await reserveUploadAttempt(database, f.owner, f.abstractId, randomUUID(), null, file);
-  assert.notEqual(fresh.objectKey, attempt.objectKey);
+  assert.notEqual(fresh.identity.objectKey!, attempt.identity.objectKey!);
   assert.equal((await sql`SELECT current_upload_id FROM presentation_targets`)[0].current_upload_id, null);
 });
 
@@ -147,12 +221,12 @@ test('cleanup waits for live lease; terminal claim blocks stale Put mark and ret
   await storePresentationAttempt(database, attempt, file, storage);
   await cleanupFailedAttempt(database, attempt.attemptId, storage); assert.equal(deleted.length, 0);
   await sql`UPDATE presentation_upload_attempts SET lease_until=clock_timestamp()-interval '1 second' WHERE id=${attempt.attemptId}`;
-  await cleanupFailedAttempt(database, attempt.attemptId, { ...storage, async deleteObject() { throw new Error('synthetic delete failure'); } });
+  await cleanupFailedAttempt(database, attempt.attemptId, {...storage,r2:()=>({ ...storage.r2(), async deleteObject() { throw new Error('synthetic delete failure'); } })});
   const [failed] = await sql`SELECT state,error_code FROM presentation_upload_attempts WHERE id=${attempt.attemptId}`;
   assert.equal(failed.state, 'cleanup_pending'); assert.equal(failed.error_code, 'PRESENTATION_CLEANUP_FAILED');
   await assert.rejects(storePresentationAttempt(database, attempt, file, storage), { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
   await cleanupFailedAttempt(database, attempt.attemptId, storage);
-  assert.deepEqual(deleted, [attempt.objectKey]);
+  assert.deepEqual(deleted, [attempt.identity.objectKey!]);
   assert.equal((await sql`SELECT state FROM presentation_upload_attempts WHERE id=${attempt.attemptId}`)[0].state, 'cleaned');
   await cleanupFailedAttempt(database, attempt.attemptId, storage); assert.equal(deleted.length, 1);
   await cleanupFailedAttempt(database, randomUUID(), storage); assert.equal(deleted.length, 1);
@@ -221,9 +295,9 @@ test('two independent clients and different initial keys accept exactly one vers
   const secondDb = drizzle(secondClient) as PresentationDatabase, entered = deferred(), release = deferred();
   const { storage } = memoryStorage(), file = await inputFile();
   let puts = 0;
-  const blocked: PresentationStorage = { ...storage, async putObject(input) {
-    await storage.putObject(input); if (++puts === 2) entered.resolve(); await release.promise;
-  } };
+  const blocked: PresentationStorage = {...storage,r2:()=>({ ...storage.r2(), async putObject(input) {
+    await storage.r2().putObject(input); if (++puts === 2) entered.resolve(); await release.promise;
+  } })};
   const submissions = [database, secondDb].map(db => submitPresentationUpload(db, f.owner, f.abstractId, randomUUID(), null, file, blocked));
   const resultsPromise = Promise.allSettled(submissions);
   await entered.promise; release.resolve();
@@ -238,9 +312,9 @@ test('same key in flight rejects, then replays on an independent client without 
   const client = openPresentationTestDatabase(); t.after(() => client.end({ timeout: 2 }));
   const otherDb = drizzle(client) as PresentationDatabase, entered = deferred(), release = deferred();
   const file = await inputFile(), key = randomUUID(), { storage } = memoryStorage(); let puts = 0;
-  const blocked = { ...storage, async putObject(input: Parameters<PresentationStorage['putObject']>[0]) {
-    ++puts; entered.resolve(); await release.promise; await storage.putObject(input);
-  } };
+  const blocked = {...storage,r2:()=>({ ...storage.r2(), async putObject(input: Parameters<ReturnType<PresentationStorage['r2']>['putObject']>[0]) {
+    ++puts; entered.resolve(); await release.promise; await storage.r2().putObject(input);
+  } })};
   const first = submitPresentationUpload(database, f.owner, f.abstractId, key, null, file, blocked);
   await entered.promise;
   await assert.rejects(submitPresentationUpload(otherDb, f.owner, f.abstractId, key, null, file, blocked), { code: 'PRESENTATION_UPLOAD_IN_PROGRESS' });
@@ -256,9 +330,9 @@ test('two independent revision uploads use one request once and retain the origi
   const file = await inputFile(), { storage, objects } = memoryStorage();
   const original = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file, storage);
   const requestId = await revision(sql, f.adminId); let puts = 0;
-  const blocked: PresentationStorage = { ...storage, async putObject(input) {
-    await storage.putObject(input); if (++puts === 2) entered.resolve(); await release.promise;
-  } };
+  const blocked: PresentationStorage = {...storage,r2:()=>({ ...storage.r2(), async putObject(input) {
+    await storage.r2().putObject(input); if (++puts === 2) entered.resolve(); await release.promise;
+  } })};
   const resultsPromise = Promise.allSettled([database, otherDb].map(db =>
     submitPresentationUpload(db, f.owner, f.abstractId, randomUUID(), requestId, file, blocked)));
   await entered.promise; release.resolve(); const results = await resultsPromise;
@@ -275,7 +349,7 @@ test('R2 and SQL outbox failures never consume rights; fresh key succeeds', asyn
   const { client: sql, database, fixture: f } = await preparePresentationScenario(t);
   const file = await inputFile(), { storage, deleted } = memoryStorage();
   await assert.rejects(submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file,
-    { ...storage, async putObject() { throw Error('synthetic R2 failure'); } }), { code: 'PRESENTATION_STORAGE_FAILED' });
+    {...storage,r2:()=>({ ...storage.r2(), async putObject() { throw Error('synthetic R2 failure'); } })}), { code: 'PRESENTATION_STORAGE_FAILED' });
   await assertCounts(sql, 0);
   await sql.unsafe(`CREATE FUNCTION fail_receipt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic receipt SQL failure'; END $$;
     CREATE TRIGGER fail_receipt_insert BEFORE INSERT ON presentation_email_jobs FOR EACH ROW EXECUTE FUNCTION fail_receipt();`);
@@ -324,7 +398,7 @@ test('post-R2 cancellation rejects and preserves current/history and automatic r
   const original = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file, storage);
   const requestId = await revision(sql, f.adminId), entered = deferred(), release = deferred();
   const submission = submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), requestId, file,
-    { ...storage, async putObject(input) { entered.resolve(); await release.promise; await storage.putObject(input); } });
+    {...storage,r2:()=>({ ...storage.r2(), async putObject(input) { entered.resolve(); await release.promise; await storage.r2().putObject(input); } })});
   const rejection = assert.rejects(submission, { code: 'PRESENTATION_REQUEST_CANCELLED' });
   await entered.promise;
   await cancelPresentationRevision(database, f.admin, f.eventId, requestId, randomUUID(), { reason: 'Synthetic cancellation during R2' });
@@ -333,7 +407,7 @@ test('post-R2 cancellation rejects and preserves current/history and automatic r
   assert.equal((await sql`SELECT current_upload_id FROM presentation_targets`)[0].current_upload_id, original.upload.id);
 });
 
-test('post-storage revision still requires Poster presentation type', async t => {
+test('post-storage revision rechecks the current presentation type and file policy', async t => {
   const { client: sql, database, fixture: f } = await preparePresentationScenario(t);
   const file = await inputFile(), { storage } = memoryStorage();
   const original = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file, storage);
@@ -341,7 +415,7 @@ test('post-storage revision still requires Poster presentation type', async t =>
   const attempt = await reserveUploadAttempt(database, f.owner, f.abstractId, randomUUID(), requestId, validated);
   await storePresentationAttempt(database, attempt, validated, storage);
   await sql`UPDATE abstracts SET presentation_type='oral' WHERE id=${f.abstractId}`;
-  await assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, requestId, attempt, storage), { code: 'PRESENTATION_NOT_ELIGIBLE' });
+  await assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, requestId, attempt, validated, storage), { code: 'PRESENTATION_ROSTER_CONFLICT' });
   await assertCounts(sql, 1);
   assert.equal((await sql`SELECT current_upload_id FROM presentation_targets`)[0].current_upload_id, original.upload.id);
   assert.equal((await sql`SELECT status FROM presentation_revision_requests WHERE id=${requestId}`)[0].status, 'open');
@@ -353,7 +427,7 @@ test('post-R2 expiry uses database clock and keeps revision right unconsumed', {
   const original = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file, storage);
   const requestId = await revision(sql, f.adminId, '1 second'), entered = deferred(), release = deferred();
   const submission = submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), requestId, file,
-    { ...storage, async putObject(input) { entered.resolve(); await release.promise; await storage.putObject(input); } });
+    {...storage,r2:()=>({ ...storage.r2(), async putObject(input) { entered.resolve(); await release.promise; await storage.r2().putObject(input); } })});
   const rejection = assert.rejects(submission, { code: 'PRESENTATION_REQUEST_EXPIRED' });
   await entered.promise;
   try { for (;;) {
@@ -368,7 +442,7 @@ test('post-R2 owner and readiness changes reject; accepted replay binds actual a
   const { client: sql, database, fixture: f } = await preparePresentationScenario(t);
   const file = await inputFile(), { storage } = memoryStorage(), entered = deferred(), release = deferred();
   const submission = submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file,
-    { ...storage, async putObject(input) { entered.resolve(); await release.promise; await storage.putObject(input); } });
+    {...storage,r2:()=>({ ...storage.r2(), async putObject(input) { entered.resolve(); await release.promise; await storage.r2().putObject(input); } })});
   const rejection = assert.rejects(submission, { code: 'PRESENTATION_OWNER_REQUIRED' });
   await entered.promise;
   const [newOwner] = await sql`INSERT INTO users(email,first_name,last_name) VALUES('other@example.invalid','Other','Owner') RETURNING id`;
@@ -377,21 +451,21 @@ test('post-R2 owner and readiness changes reject; accepted replay binds actual a
   await sql`UPDATE abstracts SET user_id=${f.ownerId} WHERE id=${f.abstractId}`;
   const entered2 = deferred(), release2 = deferred();
   const stale = submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file,
-    { ...storage, async putObject(input) { entered2.resolve(); await release2.promise; await storage.putObject(input); } });
+    {...storage,r2:()=>({ ...storage.r2(), async putObject(input) { entered2.resolve(); await release2.promise; await storage.r2().putObject(input); } })});
   const staleRejection = assert.rejects(stale, { code: 'PRESENTATION_ROSTER_CONFLICT' });
   await entered2.promise; await sql`UPDATE abstracts SET title='Changed title' WHERE id=${f.abstractId}`;
   release2.resolve(); await staleRejection; await assertCounts(sql, 0);
   await sql`UPDATE abstracts SET title='ตัวอย่างผลงาน' WHERE id=${f.abstractId}`;
   const validated = await validatePresentationFile(file, 'poster'), attempt = await reserveUploadAttempt(database, f.owner, f.abstractId, randomUUID(), null, validated);
   await storePresentationAttempt(database, attempt, validated, storage);
-  const accepted = await finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, storage);
+  const accepted = await finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, validated, storage);
   const [other] = await sql`INSERT INTO abstracts(event_id,user_id,tracking_id,title,presentation_type)
     VALUES(${f.eventId},${f.ownerId},'PRIS-2026-P002','Same owner other work','poster') RETURNING id`;
   await sql`INSERT INTO presentation_targets(event_id,abstract_id) VALUES(${f.eventId},${other.id})`;
-  await assert.rejects(finalizePresentationAttempt(database, f.owner, other.id, null, attempt, storage), { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
-  await assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, randomUUID(), attempt, storage), { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
+  await assert.rejects(finalizePresentationAttempt(database, f.owner, other.id, null, attempt, validated, storage), { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
+  await assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, randomUUID(), attempt, validated, storage), { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
   await sql`UPDATE presentation_settings SET closes_at=clock_timestamp()-interval '1 second'`;
-  assert.deepEqual(await finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, storage), accepted);
+  assert.deepEqual(await finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, validated, storage), accepted);
   await assertCounts(sql, 1);
 });
 
@@ -420,7 +494,7 @@ test('finalizer checks database clock after target lock wait, rejects expired le
   const file = await validFile(), { storage } = memoryStorage();
   const attempt = await reserveUploadAttempt(database, f.owner, f.abstractId, randomUUID(), null, file);
   await storePresentationAttempt(database, attempt, file, storage);
-  await assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, null, { ...attempt, claimToken: randomUUID() }, storage),
+  await assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, null, { ...attempt, claimToken: randomUUID() }, file, storage),
     { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
   const locker = openPresentationTestDatabase(), clockReader = openPresentationTestDatabase();
   t.after(async () => { await locker.end({ timeout: 2 }); await clockReader.end({ timeout: 2 }); });
@@ -430,7 +504,7 @@ test('finalizer checks database clock after target lock wait, rejects expired le
   const held = locker.begin(async tx => { await (tx as unknown as TestSql)`SELECT id FROM presentation_targets FOR UPDATE`;
     entered.resolve(); await release.promise; });
   await entered.promise;
-  const rejection = assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, storage), { code: 'PRESENTATION_DEADLINE_PASSED' });
+  const rejection = assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, file, storage), { code: 'PRESENTATION_DEADLINE_PASSED' });
   try {
     while (!(await clockReader`SELECT cardinality(pg_blocking_pids(${session.pid}))>0 AS blocked`)[0].blocked) { /* wait for actual PostgreSQL lock contention */ }
     for (;;) {
@@ -440,7 +514,7 @@ test('finalizer checks database clock after target lock wait, rejects expired le
   await held; await rejection; await assertCounts(sql, 0);
   await sql`UPDATE presentation_settings SET closes_at=clock_timestamp()+interval '1 hour'`;
   await sql`UPDATE presentation_upload_attempts SET lease_until=clock_timestamp() WHERE id=${attempt.attemptId}`;
-  await assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, storage), { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
+  await assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, file, storage), { code: 'PRESENTATION_UPLOAD_RETRY_REQUIRED' });
   await assertCounts(sql, 0);
 });
 
@@ -471,7 +545,7 @@ test('revision finalization reads clock after actual target lock wait across req
   const held = locker.begin(async tx => { await (tx as unknown as TestSql)`SELECT id FROM presentation_targets FOR UPDATE`;
     entered.resolve(); await release.promise; });
   await entered.promise;
-  const rejection = assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, requestId, attempt, storage), { code: 'PRESENTATION_REQUEST_EXPIRED' });
+  const rejection = assert.rejects(finalizePresentationAttempt(database, f.owner, f.abstractId, requestId, attempt, validated, storage), { code: 'PRESENTATION_REQUEST_EXPIRED' });
   try {
     while (!(await clockReader`SELECT cardinality(pg_blocking_pids(${session.pid}))>0 AS blocked`)[0].blocked) { /* observe actual lock wait */ }
     while (!(await clockReader`SELECT clock_timestamp()>=closes_at AS closed FROM presentation_revision_requests WHERE id=${requestId}`)[0].closed) { /* database clock only */ }

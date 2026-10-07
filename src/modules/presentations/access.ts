@@ -19,10 +19,10 @@ export async function dbNow(q: Executor): Promise<Date> {
   return new Date(row.now);
 }
 
-export async function requirePresentationStaff(q: Executor, actor: PresentationActor, eventId: number, manage: boolean): Promise<void> {
+export async function requirePresentationStaff(q: Executor, actor: PresentationActor, eventId: number, manage: boolean): Promise<{manage: boolean; types: Array<'oral' | 'poster'>}> {
   if (!["admin", "organizer", "reviewer"].includes(actor.role)) fail("PRESENTATION_ACCESS_DENIED", 403);
-  const [staff] = await rows<{ role: string }>(q, sql`
-    SELECT role FROM backoffice_users
+  const [staff] = await rows<{ role: string; assignedPresentationTypes: unknown }>(q, sql`
+    SELECT role,assigned_presentation_types AS "assignedPresentationTypes" FROM backoffice_users
     WHERE id=${actor.id} AND is_active=true AND role=${actor.role} AND email=${actor.email}
   `);
   if (!staff || (manage && staff.role !== "admin")) fail("PRESENTATION_ACCESS_DENIED", 403);
@@ -36,6 +36,9 @@ export async function requirePresentationStaff(q: Executor, actor: PresentationA
     `);
     if (!assignment) fail("PRESENTATION_ACCESS_DENIED", 403);
   }
+  const types = staff.role === 'admin' ? ['oral','poster'] as const : Array.isArray(staff.assignedPresentationTypes)
+    ? staff.assignedPresentationTypes.filter((type: unknown): type is 'oral' | 'poster' => type === 'oral' || type === 'poster') : [];
+  return {manage: staff.role === 'admin', types: [...new Set(types)]};
 }
 
 export async function requirePresentationOwner(q: Executor, actor: PresentationActor, abstractId: number, lock = false): Promise<DbCandidate> {

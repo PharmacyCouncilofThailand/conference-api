@@ -39,12 +39,11 @@ export async function readOwnerPresentation(database:PresentationDatabase,actor:
  else if(uploads.length)blockCode='PRESENTATION_ALREADY_SUBMITTED';
  else {try{await assertInitialReady(database,target.id);}catch(error){if(!(error instanceof ApiError))throw error;blockCode=error.code;}
   if(!blockCode&&!isBeforeClose(now,new Date(target.closes_at)))blockCode='PRESENTATION_DEADLINE_PASSED';}
- if(owner.presentationType!=='poster')blockCode='PRESENTATION_NOT_ELIGIBLE';
  const [announcement]=await rows<{source_row:Announcement}>(database,sql`SELECT source_row FROM presentation_announcements
   WHERE target_id=${target.id}::uuid ORDER BY present DESC,source_key LIMIT 1`);
  const row=announcement?.source_row;
  return {abstractId,trackingId:owner.canonicalTrackingId??row?.trackingId??'',title:owner.title,
-  submitterName:normalizeSubmitterName(`${owner.firstName??''} ${owner.lastName??''}`),presentationType:row?.presentationType??'poster',
+  submitterName:normalizeSubmitterName(`${owner.firstName??''} ${owner.lastName??''}`),presentationType:row?.presentationType??owner.presentationType,
   categoryName:row?.categoryName??'',round:row?.round??1,serverNow:now.toISOString(),mainClosesAt:iso(target.closes_at),
   canUpload:!blockCode,blockCode,mode:selected?.status==='open'?'revision':blockCode?'locked':'initial',
   selectedRequest:selected??null,currentUpload:uploads.find(u=>u.id===target.current_upload_id)??null,uploads};
@@ -65,13 +64,15 @@ function revisionDto(r:RevisionDto,now:Date):RevisionDto{
  return {...dto,status:effectiveRevisionStatus(dto,now)};
 }
 // ponytail: bounded conference roster; switch to SQL filtering/pagination if events grow to thousands of works.
-async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:number,now:Date):Promise<PresentationListRow[]>{
+async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:number,now:Date,allowedTypes:Array<'oral'|'poster'>|null=null):Promise<PresentationListRow[]>{
+ if(allowedTypes!==null&&allowedTypes.length===0)return [];
+ const typeScope=allowedTypes===null?sql`true`:sql`ab.presentation_type IN (SELECT jsonb_array_elements_text(${JSON.stringify(allowedTypes)}::jsonb))`;
  const announcements=await rows<RosterRecord>(q,sql`SELECT a.*,t.id AS target_id,t.abstract_id,t.current_upload_id,u.email AS submitter_email
   FROM presentation_announcements a LEFT JOIN presentation_targets t ON t.id=a.target_id LEFT JOIN abstracts ab ON ab.id=t.abstract_id AND ab.event_id=a.event_id
-  LEFT JOIN users u ON u.id=ab.user_id WHERE a.event_id=${eventId} AND (a.source_row->>'presentationType' IN ('poster','highlighted-poster'))
+  LEFT JOIN users u ON u.id=ab.user_id WHERE a.event_id=${eventId} AND (a.source_row->>'presentationType' IN ('oral','poster','highlighted-poster')) AND ${typeScope}
   ORDER BY (a.source_row->>'round')::int,(a.source_row->>'categoryId')::int,(a.source_row->>'sequence')::int NULLS LAST,a.source_key`);
- const files=await rows<UploadDto&{targetId:string}>(q,sql`SELECT u.id,u.target_id AS "targetId",u.version,u.filename AS "fileName",u.mime_type AS "mimeType",
-  u.size_bytes AS "sizeBytes",u.public_url AS "publicUrl",u.received_at AS "receivedAt",u.request_id AS "revisionRequestId"
+ const files=await rows<UploadDto&{targetId:string}>(q,sql`SELECT u.id,u.target_id AS "targetId",u.version,u.original_filename AS "fileName",u.stored_filename AS "storedFileName",u.mime_type AS "mimeType",
+  u.size_bytes AS "sizeBytes",u.file_url AS "fileUrl",u.storage_provider AS "storageProvider",u.drive_file_id AS "driveFileId",u.received_at AS "receivedAt",u.request_id AS "revisionRequestId"
   FROM presentation_uploads u JOIN presentation_targets t ON t.id=u.target_id WHERE t.event_id=${eventId} ORDER BY u.version DESC`);
  const requests=await rows<RevisionDto&{targetId:string}>(q,sql`SELECT r.id,r.target_id AS "targetId",r.details,r.closes_at AS "closesAt",r.status,
   r.created_at AS "createdAt",r.requested_by AS "requestedBy",r.submitted_at AS "submittedAt",r.cancelled_at AS "cancelledAt",
@@ -93,7 +94,7 @@ async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:num
    verifiedAt:verified?maybeIso(a.verified_at):null,verificationReason:verified?a.verification_reason:null,submitterEmail:a.submitter_email,
    progress:presentationProgress(file,request,now),currentUpload:file,activeRequest:request?.status==='open'?request:null,
    lastEmail:a.target_id?lastEmail.get(a.target_id)??null:null,
-   canNotify:a.present&&a.source_row.presentationType!=='oral'&&matchState==='ready'&&!!a.abstract_id&&z.string().email().safeParse(a.submitter_email).success&&!file&&!!setting?.reconcile_ready&&isBeforeClose(now,new Date(setting.closes_at))};
+   canNotify:a.present&&matchState==='ready'&&!!a.abstract_id&&z.string().email().safeParse(a.submitter_email).success&&!file&&!!setting?.reconcile_ready&&isBeforeClose(now,new Date(setting.closes_at))};
  });
 }
 function presentationViewerRow(row:PresentationListRow):PresentationListRow{
@@ -101,12 +102,12 @@ function presentationViewerRow(row:PresentationListRow):PresentationListRow{
   verificationReason:null,lastEmail:null,canNotify:false};
 }
 export async function readPresentationList(database:PresentationDatabase,actor:PresentationActor,eventId:number,query:z.infer<typeof listQuerySchema>):Promise<PresentationListDto>{
- await requirePresentationStaff(database,actor,eventId,false);const now=await dbNow(database);
+ const grants=await requirePresentationStaff(database,actor,eventId,false);const now=await dbNow(database);
  const [setting]=await rows<{eventId:number;closesAt:string;version:number;reconcileReady:boolean;reconciledAt:string|null}>(database,
   sql`SELECT event_id AS "eventId",closes_at AS "closesAt",version,reconcile_ready AS "reconcileReady",last_reconciled_at AS "reconciledAt"
    FROM presentation_settings WHERE event_id=${eventId}`);
  if(!setting)fail('PRESENTATION_RECONCILE_REQUIRED',503);
- const all=await readRosterRows(database,eventId,now);const term=normalizeSubmitterName(query.search??'').toLowerCase();
+ const all=await readRosterRows(database,eventId,now,grants.manage?null:grants.types);const term=normalizeSubmitterName(query.search??'').toLowerCase();
  const filtered=all.filter(r=>((actor.role==='admin'&&!query.received)||!!r.currentUpload)
   &&(!query.round||String(r.announcement.round)===query.round)&&(!query.presentationType||r.announcement.presentationType===query.presentationType)
   &&(actor.role!=='admin'||!query.matchState||r.matchState===query.matchState)&&(!query.status||r.progress===query.status)
@@ -118,10 +119,10 @@ export async function readPresentationList(database:PresentationDatabase,actor:P
   settings:{...setting,closesAt:iso(setting.closesAt),reconciledAt:maybeIso(setting.reconciledAt)},capabilities:{read:true,manage:actor.role==='admin'},counts};
 }
 export async function readPresentationDetail(database:PresentationDatabase,actor:PresentationActor,eventId:number,abstractId:number):Promise<PresentationDetailDto>{
- await requirePresentationStaff(database,actor,eventId,false);const now=await dbNow(database);
+ const grants=await requirePresentationStaff(database,actor,eventId,false);const now=await dbNow(database);
  const [target]=await rows<{id:string}>(database,sql`SELECT id FROM presentation_targets WHERE event_id=${eventId} AND abstract_id=${abstractId}`);
  if(!target)fail('PRESENTATION_NOT_FOUND',404);
- const row=(await readRosterRows(database,eventId,now)).find(r=>r.abstractId===abstractId);
+ const row=(await readRosterRows(database,eventId,now,grants.manage?null:grants.types)).find(r=>r.abstractId===abstractId);
  if(!row||(actor.role!=='admin'&&!row.currentUpload))fail('PRESENTATION_NOT_FOUND',404);
  const ids=await rows<{id:string}>(database,sql`SELECT id FROM presentation_uploads WHERE target_id=${target.id}::uuid ORDER BY version DESC`);
  const uploads:UploadDto[]=[];for(const file of ids)uploads.push((await readUploadDto(database,file.id))!);

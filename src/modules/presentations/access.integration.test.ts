@@ -60,7 +60,7 @@ test("poster Admin operations serialize replay, conflict and audit rollback", as
   t.after(() => sql.end({ timeout: 2 }));
   await resetPresentationTestDatabase(sql);
   const f = await seedPresentationScenario(sql);
-  await sql.unsafe(await readFile("drizzle/0038_pris2026_posters.sql", "utf8"));
+  await sql.unsafe(await readFile("drizzle/0039_pris2026_presentations.sql", "utf8"));
   const db = drizzle(sql, { schema });
   let calls = 0;
   const peers = [openPresentationTestDatabase(), openPresentationTestDatabase()];
@@ -101,7 +101,7 @@ test("poster operation rechecks Admin permission after waiting for its key lock"
   t.after(() => peer.end({ timeout: 2 }));
   await resetPresentationTestDatabase(sql);
   const f = await seedPresentationScenario(sql);
-  await sql.unsafe(await readFile("drizzle/0038_pris2026_posters.sql", "utf8"));
+  await sql.unsafe(await readFile("drizzle/0039_pris2026_presentations.sql", "utf8"));
   const db = drizzle(peer, { schema });
   let calls = 0;
   let operation: Promise<unknown>;

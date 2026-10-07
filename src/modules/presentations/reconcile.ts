@@ -66,7 +66,7 @@ export async function reconcilePresentations(database: PresentationDatabase | Pr
           if (duplicate || remap) match = { ...match, state: 'conflict', problems: [...match.problems,
             ...(duplicate ? ['SOURCE_DUPLICATE_ABSTRACT'] : []), ...(remap ? ['SOURCE_REMAP'] : [])] };
           let targetId = old?.target_id ?? null;
-          if (!targetId && match.abstractId !== null && row.presentationType !== 'oral') {
+          if (!targetId && match.abstractId !== null) {
             const [target] = await rows<{ id: string }>(work, sql`INSERT INTO presentation_targets(event_id,abstract_id)
               VALUES(${event.id},${match.abstractId}) ON CONFLICT(event_id,abstract_id)
               DO UPDATE SET abstract_id=EXCLUDED.abstract_id RETURNING id`);
@@ -95,7 +95,7 @@ export async function reconcilePresentations(database: PresentationDatabase | Pr
         await work.execute(sql`UPDATE presentation_announcements SET present=false WHERE event_id=${event.id}
           AND NOT(source_key IN (SELECT jsonb_array_elements_text(${JSON.stringify(keys)}::jsonb)))`);
         await work.execute(sql`UPDATE presentation_targets t SET initial_enabled=(EXISTS(SELECT 1 FROM presentation_announcements a
-          WHERE a.target_id=t.id AND a.present AND a.match_state='ready' AND a.source_row->>'presentationType'<>'oral')
+          WHERE a.target_id=t.id AND a.present AND a.match_state='ready')
           AND NOT EXISTS(SELECT 1 FROM presentation_announcements a WHERE a.target_id=t.id AND a.present AND a.match_state<>'ready')
           AND NOT EXISTS(SELECT 1 FROM presentation_uploads u WHERE u.target_id=t.id AND u.request_id IS NULL)) WHERE t.event_id=${event.id}`);
         const manifestDigest = digest(source);
@@ -126,6 +126,6 @@ export async function assertInitialReady(tx: Executor, targetId: string): Promis
   if (announced.length !== 1) fail('PRESENTATION_ROSTER_CONFLICT');
   const raw = matchAnnouncement(announced[0].source_row, await readCandidates(tx, target.event_id), false);
   const fresh = raw.state === 'alias_pending' && raw.fingerprint === announced[0].verified_fingerprint;
-  if (raw.abstractId !== target.abstract_id || (raw.state !== 'ready' && !fresh) || announced[0].source_row.presentationType === 'oral')
+  if (raw.abstractId !== target.abstract_id || (raw.state !== 'ready' && !fresh))
     fail('PRESENTATION_ROSTER_CONFLICT');
 }

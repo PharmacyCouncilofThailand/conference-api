@@ -72,7 +72,7 @@ test('duplicate abstracts/tracking and remaps conflict without moving a bound ta
   assert.equal((await sql`SELECT target_id FROM presentation_announcements WHERE source_key='1:1'`)[0].target_id, target.id);
 });
 
-test('aliases require a matching verification fingerprint; fresh changes invalidate approval; Oral cannot upload', async t => {
+test('aliases require a matching verification fingerprint; fresh changes invalidate approval; Oral receives matching rights', async t => {
   const { client: sql, database, fixture: f, announcement: row } = await preparePresentationScenario(t);
   await sql`UPDATE abstracts SET tracking_id='canonical-new' WHERE id=${f.abstractId}`;
   await sql`INSERT INTO abstract_tracking_identifiers(tracking_id,abstract_id,event_id) VALUES(${row.trackingId},${f.abstractId},${f.eventId})`;
@@ -88,19 +88,19 @@ test('aliases require a matching verification fingerprint; fresh changes invalid
   assert.equal((await reconcilePresentations(database, [row])).counts.alias_pending, 1);
   await sql`UPDATE abstracts SET presentation_type='oral',tracking_id=${row.trackingId} WHERE id=${f.abstractId}`;
   assert.equal((await reconcilePresentations(database, [{ ...row, presentationType: 'oral' }])).counts.ready, 1);
-  assert.equal((await sql`SELECT initial_enabled FROM presentation_targets`)[0].initial_enabled, false);
-  await assert.rejects(assertInitialReady(database, target.id), { code: 'PRESENTATION_NOT_ELIGIBLE' });
+  assert.equal((await sql`SELECT initial_enabled FROM presentation_targets`)[0].initial_enabled, true);
+  await assertInitialReady(database, target.id);
 });
 
 test('withdraw/re-add preserves used initial right, current file, requests, mail and history', async t => {
   const { client: sql, database, fixture: f, announcement: row } = await preparePresentationScenario(t);
   const [target] = await sql`SELECT id FROM presentation_targets`;
   const uploadId = randomUUID();
-  await sql`INSERT INTO presentation_upload_attempts(id,target_id,user_id,operation_key,fingerprint,object_key,filename,mime_type,
-    size_bytes,digest,lease_until,claim_token,state) VALUES(${uploadId},${target.id},${f.ownerId},${randomUUID()},${'a'.repeat(64)},
-    'synthetic/key','test.png','image/png',1,${'b'.repeat(64)},clock_timestamp(),${randomUUID()},'accepted')`;
-  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,version,user_id,object_key,public_url,filename,mime_type,size_bytes,digest,received_at)
-    VALUES(${uploadId},${target.id},${uploadId},1,${f.ownerId},'synthetic/key','https://example.invalid/test','test.png','image/png',1,${'b'.repeat(64)},clock_timestamp())`;
+  await sql`INSERT INTO presentation_upload_attempts(id,target_id,user_id,operation_key,fingerprint,storage_provider,object_key,original_filename,stored_filename,mime_type,
+    size_bytes,digest,lease_until,claim_token,state) VALUES(${uploadId},${target.id},${f.ownerId},${randomUUID()},${'a'.repeat(64)},'r2',
+    'synthetic/key','test.pdf','test.pdf','application/pdf',1,${'b'.repeat(64)},clock_timestamp(),${randomUUID()},'accepted')`;
+  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,version,user_id,storage_provider,object_key,file_url,original_filename,stored_filename,mime_type,size_bytes,digest,received_at)
+    VALUES(${uploadId},${target.id},${uploadId},1,${f.ownerId},'r2','synthetic/key','https://example.invalid/test','test.pdf','test.pdf','application/pdf',1,${'b'.repeat(64)},clock_timestamp())`;
   await sql`UPDATE presentation_targets SET current_upload_id=${uploadId} WHERE id=${target.id}`;
   await sql`INSERT INTO presentation_revision_requests(target_id,details,closes_at,requested_by)
     VALUES(${target.id},'test request',clock_timestamp()+interval '1 hour',${f.adminId})`;

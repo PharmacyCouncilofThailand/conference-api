@@ -37,8 +37,9 @@ export async function buildMailPayload(tx: Pick<PresentationDatabase, 'execute'>
   let upload: UploadDto | null = null;
   if (uploadId) {
     const [file] = await rows<UploadDto>(tx, sql`
-      SELECT id,version,filename AS "fileName",mime_type AS "mimeType",size_bytes AS "sizeBytes",
-        public_url AS "publicUrl",received_at AS "receivedAt",request_id AS "revisionRequestId"
+      SELECT id,version,original_filename AS "fileName",stored_filename AS "storedFileName",mime_type AS "mimeType",size_bytes AS "sizeBytes",
+        file_url AS "fileUrl",storage_provider AS "storageProvider",drive_file_id AS "driveFileId",
+        received_at AS "receivedAt",request_id AS "revisionRequestId"
       FROM presentation_uploads WHERE id=${uploadId}::uuid AND target_id=${targetId}::uuid
     `);
     if (!file) fail('PRESENTATION_UPLOAD_NOT_FOUND', 404);
