@@ -9,9 +9,12 @@ export async function readCandidates(q: Executor, eventId: number): Promise<DbCa
   return rows<DbCandidate>(q, sql`SELECT a.id AS "abstractId",a.event_id AS "eventId",
     a.tracking_id AS "canonicalTrackingId",a.title,a.presentation_type AS "presentationType",
     u.id AS "userId",u.first_name AS "firstName",u.last_name AS "lastName",u.email,
+    e.event_code AS "eventCode",c.name AS "categoryName",
     COALESCE((SELECT array_agg(i.tracking_id ORDER BY i.tracking_id) FROM abstract_tracking_identifiers i
       WHERE i.abstract_id=a.id AND i.event_id=a.event_id),ARRAY[]::text[]) AS aliases
-    FROM abstracts a LEFT JOIN users u ON u.id=a.user_id WHERE a.event_id=${eventId} ORDER BY a.id`);
+    FROM abstracts a JOIN events e ON e.id=a.event_id LEFT JOIN users u ON u.id=a.user_id
+    LEFT JOIN abstract_categories c ON c.id=a.category_id AND c.event_id=a.event_id
+    WHERE a.event_id=${eventId} ORDER BY a.id`);
 }
 
 export async function reconcilePresentations(database: PresentationDatabase | PresentationTx, manifest: Announcement[] = loadPresentationAnnouncements())

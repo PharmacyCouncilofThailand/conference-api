@@ -146,8 +146,8 @@ export async function submitPresentationUpload(database: PresentationDatabase, a
   key: string, requestId: string | null, file: { buffer: Buffer; filename: string; mimetype: string },
   storage: PresentationStorage): Promise<{ upload: UploadDto; replayed: boolean }> {
   requestId = requestId?.toLowerCase() ?? null;
-  await requirePresentationOwner(database, actor, abstractId);
-  const validated = await validatePresentationFile(file);
+  const owner = await requirePresentationOwner(database, actor, abstractId);
+  const validated = await validatePresentationFile(file, owner.presentationType);
   const attempt = await reserveUploadAttempt(database, actor, abstractId, key, requestId, validated);
   if (attempt.kind === 'replay') return { upload: attempt.upload!, replayed: true };
   try {

@@ -2,8 +2,12 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { Announcement, DbCandidate, MatchResult, RevisionDto, RevisionStatus } from './types.js';
-export const MAX_POSTER_BYTES = 30 * 1024 * 1024;
-export const DEFAULT_PRESENTATION_CLOSE = '2026-10-15T17:00:00.000Z';
+export type AbstractPresentationType = 'oral' | 'poster';
+export const MAX_ORAL_BYTES = 52_428_800;
+export const MAX_POSTER_BYTES = 31_457_280;
+export const DEFAULT_PRESENTATION_CLOSE = '2026-10-20T17:00:00.000Z';
+export const maxPresentationBytes = (type: AbstractPresentationType) => type === 'oral' ? MAX_ORAL_BYTES : MAX_POSTER_BYTES;
+export const presentationStorageProvider = (type: AbstractPresentationType) => type === 'oral' ? 'drive' as const : 'r2' as const;
 export const normalizeSubmitterName = (value: string) => value.normalize('NFC').trim().replace(/\s+/gu, ' ');
 export const isBeforeClose = (now: Date, close: Date) => now.getTime() < close.getTime();
 export const sourceKey = (row: Announcement) => `${row.round}:${row.id}`;

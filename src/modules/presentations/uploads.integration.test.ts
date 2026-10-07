@@ -15,7 +15,7 @@ import { openPresentationTestDatabase, preparePresentationScenario, type TestSql
 
 async function validFile(filename = 'synthetic-owner.pdf') {
   const pdf = await PDFDocument.create(); pdf.addPage([120, 160]);
-  return validatePresentationFile({ buffer: Buffer.from(await pdf.save()), filename, mimetype: 'application/pdf' });
+  return validatePresentationFile({ buffer: Buffer.from(await pdf.save()), filename, mimetype: 'application/pdf' }, 'poster');
 }
 function memoryStorage() {
   const objects = new Map<string, Buffer>(), deleted: string[] = [];
@@ -337,7 +337,7 @@ test('post-storage revision still requires Poster presentation type', async t =>
   const { client: sql, database, fixture: f } = await preparePresentationScenario(t);
   const file = await inputFile(), { storage } = memoryStorage();
   const original = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file, storage);
-  const requestId = await revision(sql, f.adminId), validated = await validatePresentationFile(file);
+  const requestId = await revision(sql, f.adminId), validated = await validatePresentationFile(file, 'poster');
   const attempt = await reserveUploadAttempt(database, f.owner, f.abstractId, randomUUID(), requestId, validated);
   await storePresentationAttempt(database, attempt, validated, storage);
   await sql`UPDATE abstracts SET presentation_type='oral' WHERE id=${f.abstractId}`;
@@ -382,7 +382,7 @@ test('post-R2 owner and readiness changes reject; accepted replay binds actual a
   await entered2.promise; await sql`UPDATE abstracts SET title='Changed title' WHERE id=${f.abstractId}`;
   release2.resolve(); await staleRejection; await assertCounts(sql, 0);
   await sql`UPDATE abstracts SET title='ตัวอย่างผลงาน' WHERE id=${f.abstractId}`;
-  const validated = await validatePresentationFile(file), attempt = await reserveUploadAttempt(database, f.owner, f.abstractId, randomUUID(), null, validated);
+  const validated = await validatePresentationFile(file, 'poster'), attempt = await reserveUploadAttempt(database, f.owner, f.abstractId, randomUUID(), null, validated);
   await storePresentationAttempt(database, attempt, validated, storage);
   const accepted = await finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, storage);
   const [other] = await sql`INSERT INTO abstracts(event_id,user_id,tracking_id,title,presentation_type)
@@ -462,7 +462,7 @@ test('revision finalization reads clock after actual target lock wait across req
   const { client: sql, database, fixture: f } = await preparePresentationScenario(t);
   const file = await inputFile(), { storage } = memoryStorage();
   const original = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file, storage);
-  const requestId = await revision(sql, f.adminId, '2 seconds'), validated = await validatePresentationFile(file);
+  const requestId = await revision(sql, f.adminId, '2 seconds'), validated = await validatePresentationFile(file, 'poster');
   const attempt = await reserveUploadAttempt(database, f.owner, f.abstractId, randomUUID(), requestId, validated);
   await storePresentationAttempt(database, attempt, validated, storage);
   const locker = openPresentationTestDatabase(), clockReader = openPresentationTestDatabase();

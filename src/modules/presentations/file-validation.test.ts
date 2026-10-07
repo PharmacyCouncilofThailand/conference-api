@@ -4,11 +4,11 @@ import test from 'node:test';
 import { PDFDocument, PDFHexString, PDFName } from 'pdf-lib';
 import sharp from 'sharp';
 import { validatePresentationFile } from './file-validation.js';
-import { MAX_POSTER_BYTES } from './policy.js';
+import { MAX_ORAL_BYTES, MAX_POSTER_BYTES } from './policy.js';
 
 const png = () => sharp({ create: { width: 8, height: 8, channels: 3, background: 'white' } }).png().toBuffer();
 const validate = (buffer: Buffer, filename = 'poster.pdf', mimetype = 'application/pdf') =>
-  validatePresentationFile({ buffer, filename, mimetype });
+  validatePresentationFile({ buffer, filename, mimetype }, 'poster');
 const reject = (buffer: Buffer, code: string, statusCode = 422, filename = 'poster.pdf', mimetype = 'application/pdf') =>
   assert.rejects(validate(buffer, filename, mimetype), { code, statusCode });
 
@@ -42,6 +42,31 @@ test('either PDF orientation is accepted', async () => {
     const buffer = await pdf(1, size);
     assert.equal((await validate(buffer)).buffer, buffer);
   }
+});
+
+test('Oral requires at least two PDF pages with no maximum and retains byte identity', async () => {
+  for (const count of [0, 1]) {
+    await assert.rejects(validatePresentationFile({buffer: await pdf(count), filename: 'slides.pdf', mimetype: 'application/pdf'}, 'oral'),
+      {code: 'PRESENTATION_PDF_PAGE_COUNT'});
+  }
+  for (const count of [2, 100]) {
+    const buffer = await pdf(count);
+    const input = {buffer, filename: 'slides.PDF', mimetype: 'application/pdf'};
+    const result = await validatePresentationFile(input, 'oral');
+    assert.equal(result.buffer, buffer); assert.equal(result.pageCount, count); assert.equal(result.presentationType, 'oral');
+    assert.equal(result.md5Checksum, createHash('md5').update(buffer).digest('hex'));
+    await assert.rejects(validatePresentationFile(input, 'poster'), {code: 'PRESENTATION_PDF_PAGE_COUNT'});
+  }
+});
+
+test('Oral accepts exactly 50 MiB and rejects one byte more; Poster keeps its 30 MiB cap', async () => {
+  const original = await pdf(2);
+  const buffer = Buffer.concat([original, Buffer.alloc(MAX_ORAL_BYTES - original.length, 32)]);
+  const input = {buffer, filename: 'slides.pdf', mimetype: 'application/pdf'};
+  assert.equal((await validatePresentationFile(input, 'oral')).sizeBytes, 52_428_800);
+  await assert.rejects(validatePresentationFile({...input, buffer: Buffer.concat([buffer, Buffer.from(' ')])}, 'oral'),
+    {code: 'PRESENTATION_FILE_TOO_LARGE', statusCode: 413});
+  await assert.rejects(validatePresentationFile(input, 'poster'), {code: 'PRESENTATION_FILE_TOO_LARGE', statusCode: 413});
 });
 
 test('one-page PDF also accepts the exact byte ceiling and rejects one byte more', async () => {

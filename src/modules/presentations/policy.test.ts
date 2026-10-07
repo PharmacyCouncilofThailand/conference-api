@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_PRESENTATION_CLOSE, MAX_POSTER_BYTES, digest, effectiveRevisionStatus, isBeforeClose, matchAnnouncement, normalizeSubmitterName, sourceKey } from './policy.js';
+import { DEFAULT_PRESENTATION_CLOSE, MAX_ORAL_BYTES, MAX_POSTER_BYTES, maxPresentationBytes, presentationStorageProvider, digest, effectiveRevisionStatus, isBeforeClose, matchAnnouncement, normalizeSubmitterName, sourceKey } from './policy.js';
 import { batchInputSchema, closeSchema, revisionInputSchema, settingsInputSchema } from './schemas.js';
 import type { Announcement, DbCandidate, RevisionDto } from './types.js';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -8,7 +8,14 @@ import { readPresentationDetail } from './readers.js';
 import type { PresentationDatabase } from './access.js';
 
 const row: Announcement = { id: 1, sequence: 1, trackingId: 'PRIS-2026-P001', title: 'ตัวอย่างผลงาน', presentationType: 'highlighted-poster', categoryId: 1, categoryName: 'สาขาตัวอย่าง', submitterName: 'ชื่อ นามสกุล', affiliation: null, round: 1 };
-const candidate: DbCandidate = { abstractId: 501, eventId: 2, canonicalTrackingId: row.trackingId, aliases: [], title: row.title, presentationType: 'poster', userId: 9, firstName: 'ชื่อ', lastName: 'นามสกุล', email: 'author@example.invalid' };
+const candidate: DbCandidate = { abstractId: 501, eventId: 2, eventCode: 'PRIS-2026', categoryName: 'สาขาตัวอย่าง', canonicalTrackingId: row.trackingId, aliases: [], title: row.title, presentationType: 'poster', userId: 9, firstName: 'ชื่อ', lastName: 'นามสกุล', email: 'author@example.invalid' };
+
+test('file policy uses authoritative Abstract type; Highlighted maps to the existing poster type', () => {
+  assert.equal(maxPresentationBytes('oral'), MAX_ORAL_BYTES);
+  assert.equal(maxPresentationBytes('poster'), MAX_POSTER_BYTES);
+  assert.equal(presentationStorageProvider('oral'), 'drive');
+  assert.equal(presentationStorageProvider('poster'), 'r2');
+});
 
 test('detail audit query excludes unrelated event-wide and other-work histories without a database', async () => {
   const audits = [
@@ -113,7 +120,7 @@ test('fingerprint captures source and matched candidate changes, stable row key 
 test('exclusive deadline and open revision expire at the exact server instant', () => {
   const close = new Date(DEFAULT_PRESENTATION_CLOSE);
   assert.equal(MAX_POSTER_BYTES, 31_457_280);
-  assert.equal(DEFAULT_PRESENTATION_CLOSE, '2026-10-15T17:00:00.000Z');
+  assert.equal(DEFAULT_PRESENTATION_CLOSE, '2026-10-20T17:00:00.000Z');
   assert.equal(isBeforeClose(new Date(close.getTime() - 1), close), true);
   assert.equal(isBeforeClose(close, close), false);
   assert.equal(isBeforeClose(new Date(close.getTime() + 1), close), false);

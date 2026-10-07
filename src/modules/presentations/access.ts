@@ -43,8 +43,10 @@ export async function requirePresentationOwner(q: Executor, actor: PresentationA
   const [candidate] = await rows<DbCandidate>(q, sql`
     SELECT a.id AS "abstractId",a.event_id AS "eventId",a.tracking_id AS "canonicalTrackingId",
       ARRAY[]::text[] AS aliases,a.title,a.presentation_type AS "presentationType",
-      u.id AS "userId",u.first_name AS "firstName",u.last_name AS "lastName",u.email
+      u.id AS "userId",u.first_name AS "firstName",u.last_name AS "lastName",u.email,
+      e.event_code AS "eventCode",c.name AS "categoryName"
     FROM abstracts a JOIN users u ON u.id=a.user_id JOIN events e ON e.id=a.event_id
+    LEFT JOIN abstract_categories c ON c.id=a.category_id AND c.event_id=a.event_id
     WHERE a.id=${abstractId} AND u.id=${actor.id} AND u.role=${actor.role} AND u.status='active'
       AND e.event_code='PRIS-2026' ${lock ? sql`FOR SHARE OF a,u` : sql``}
   `);
