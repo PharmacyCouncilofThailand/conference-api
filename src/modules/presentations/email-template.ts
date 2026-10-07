@@ -36,6 +36,7 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
   const maxMB = maxPresentationBytes(oral ? 'oral' : 'poster') / (1024 * 1024);
   const type = oral ? 'Oral' : p.presentationType === 'highlighted-poster' ? 'Highlighted Poster' : 'Poster';
   const template = oral ? 'Oral' : 'Poster';
+  const preparationNotice = p.kind === 'initial' || p.kind === 'reminder';
   if (p.kind !== 'receipt') {
     if (!p.closesAt) throw Error('PRESENTATION_MAIL_DEADLINE_MISSING');
     const href = escape(buildSubmissionUrl(p.websiteOrigin, p.abstractId, p.kind === 'revision' ? p.revisionRequestId ?? undefined : undefined));
@@ -49,10 +50,13 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
       <li><strong>ชื่อผลงาน:</strong> ${escape(p.title)}</li>${p.kind === 'revision' ? `\n      <li><strong>รายละเอียดการแก้ไข:</strong> ${escape(p.revisionDetails ?? '').replace(/\r?\n/g, '<br>')}</li>` : ''}
       <li><strong>กำหนดส่ง:</strong> วันที่ ${escape(dateTime(p.closesAt, 'th', -1000).replace(/:/g, '.'))} น. (เวลาประเทศไทย)</li>
     </ul>
-    <p><strong>ข้อกำหนดของไฟล์</strong></p>
+    <p><strong>${preparationNotice ? oral ? 'ข้อกำหนดการจัดทำไฟล์นำเสนอ Oral' : 'ข้อกำหนดการจัดทำโปสเตอร์' : 'ข้อกำหนดของไฟล์'}</strong></p>
     <ul>
       <li>ไฟล์ PDF จำนวนหนึ่งไฟล์ ${oral ? '' : 'หนึ่งหน้า '}ขนาดไม่เกิน ${maxMB} MB</li>
       <li>ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน</li>
+      ${preparationNotice && !oral ? `<li>โปสเตอร์ต้องมีอัตราส่วน 9:16 (แนวตั้ง) หรือขนาด 18 × 32 เซนติเมตร และไม่เว้นขอบกระดาษ (ไม่มีขอบขาว)</li>
+      <li>สามารถใช้รูปภาพประกอบได้ไม่เกิน 3 รูป</li>
+      <li>ให้จัดทำตามรูปแบบและส่วนหัวกระดาษ (Header) ที่กำหนดในไฟล์แม่แบบ (Template) โดยสามารถดูตัวอย่างได้จากไฟล์ดังกล่าว</li>` : ''}
     </ul>
     <p><a href="https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20${template}%20Template.zip">ดาวน์โหลด Template สำหรับ ${template} (.ZIP)</a></p>
     <p><strong>ขั้นตอนและเงื่อนไขการส่ง</strong></p>

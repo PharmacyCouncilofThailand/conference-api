@@ -28,6 +28,11 @@ test('all four emails select trusted type wording, requirements and Template for
       assert.ok(result.subject.includes(label)); assert.ok(result.html.includes(label));
       assert.ok(result.html.includes('/th/presentation-submission?abstractId=501'));
       assert.equal(result.templateVersion, `presentation-${kind}-v1`);
+      const posterPreparation = type !== 'oral' && (kind === 'initial' || kind === 'reminder');
+      for (const requirement of ['9:16 (แนวตั้ง)', '18 × 32 เซนติเมตร', 'ไม่มีขอบขาว', 'ไม่เกิน 3 รูป', 'ส่วนหัวกระดาษ (Header)']) {
+        assert.equal(result.html.includes(requirement), posterPreparation);
+      }
+      if (kind === 'initial' || kind === 'reminder') assert.ok(result.html.includes(type === 'oral' ? 'ข้อกำหนดการจัดทำไฟล์นำเสนอ Oral' : 'ข้อกำหนดการจัดทำโปสเตอร์'));
       if (kind === 'receipt') {
         assert.ok(result.html.includes('&lt;slides&gt;.pdf')); assert.ok(result.html.includes('14.12.34'));
         assert.equal(result.html.includes('Template'), false); assert.equal(result.html.includes('PRIS_'), false);
@@ -50,8 +55,8 @@ test('initial notification uses invitation-style paragraphs, actual lists, bold 
   assert.ok(result.html.startsWith('<!doctype html>'));
   assert.equal((result.html.match(/<ul>/g) || []).length, 2);
   assert.equal((result.html.match(/<ol>/g) || []).length, 1);
-  assert.equal((result.html.match(/<li>/g) || []).length, 8);
-  for (const label of ['รหัสผลงาน:', 'ชื่อผลงาน:', 'กำหนดส่ง:', 'ข้อกำหนดของไฟล์', 'ขั้นตอนและเงื่อนไขการส่ง']) assert.ok(result.html.includes(`<strong>${label}</strong>`));
+  assert.equal((result.html.match(/<li>/g) || []).length, 11);
+  for (const label of ['รหัสผลงาน:', 'ชื่อผลงาน:', 'กำหนดส่ง:', 'ข้อกำหนดการจัดทำโปสเตอร์', 'ขั้นตอนและเงื่อนไขการส่ง']) assert.ok(result.html.includes(`<strong>${label}</strong>`));
   assert.ok(result.html.includes('<p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>'));
   assert.ok(result.html.includes('<p>สภาเภสัชกรรม</p>\n    <p>(The Pharmacy Council of Thailand)</p>'));
   assert.ok(result.html.includes('&lt;script&gt;x&lt;/script&gt;')); assert.equal(result.html.includes('<script>'), false);
