@@ -358,7 +358,7 @@ await client`UPDATE presentation_settings SET closes_at=clock_timestamp()+interv
 
 **Interfaces:** `AbstractPresentationType = 'oral'|'poster'`; `StorageProvider = 'drive'|'r2'`; `DriveLocation = { eventCode:string; trackingId:string; categoryName:string }`; `PresentationFileInput = {buffer:Buffer;filename:string;mimetype:string}`. `validatePresentationFile(file, type)` returns original buffer/name, canonical PDF MIME/extension, sizeBytes, SHA-256 digest, MD5 checksum, pageCount and presentationType. `DbCandidate` gains authoritative eventCode/categoryName for Drive lookup. All owners are still read from users/Abstract/event in DB.
 
-- [ ] Add tests for Oral 1/2/100 pages, Poster/Highlighted page policy, malformed/encrypted/EOF/MIME/filename cases and exact byte ceilings/+1. Use PDFDocument.create; no real uploaded document needed:
+- [x] Add tests for Oral 1/2/100 pages, Poster/Highlighted page policy, malformed/encrypted/EOF/MIME/filename cases and exact byte ceilings/+1. Use PDFDocument.create; no real uploaded document needed:
 
 ```ts
 test('Oral accepts two pages while Poster rejects the identical bytes', async () => {
@@ -372,7 +372,7 @@ test('Oral accepts two pages while Poster rejects the identical bytes', async ()
 });
 ```
 
-- [ ] Run validator/policy tests: expect failures before type parameter/policy exists. Add these policy exports without a registry:
+- [x] Run validator/policy tests: expect failures before type parameter/policy exists. Add these policy exports without a registry:
 
 ```ts
 export type AbstractPresentationType = 'oral' | 'poster';
@@ -383,7 +383,7 @@ export const maxPresentationBytes = (type: AbstractPresentationType) => type ===
 export const presentationStorageProvider = (type: AbstractPresentationType) => type === 'oral' ? 'drive' as const : 'r2' as const;
 ```
 
-- [ ] Replace validator with this full enforcement boundary; validation must not infer type from file or multipart:
+- [x] Replace validator with this full enforcement boundary; validation must not infer type from file or multipart:
 
 ```ts
 import { createHash } from 'node:crypto';
@@ -417,8 +417,8 @@ export async function validatePresentationFile(
 }
 ```
 
-- [ ] Extend requirePresentationOwner/readCandidates SELECT with `e.event_code AS "eventCode"` and authoritative `c.name AS "categoryName"` using `LEFT JOIN abstract_categories c ON c.id=a.category_id AND c.event_id=a.event_id`; preserve event/owner/active/role and existing lock clauses. Category lookup is required for Oral storage only; do not fabricate it from client data or make an inner join deny otherwise-eligible legacy Poster records. DbCandidate.categoryName is string|null.
-- [ ] Define the DTO/storage identity contract used by Tasks 4–11:
+- [x] Extend requirePresentationOwner/readCandidates SELECT with `e.event_code AS "eventCode"` and authoritative `c.name AS "categoryName"` using `LEFT JOIN abstract_categories c ON c.id=a.category_id AND c.event_id=a.event_id`; preserve event/owner/active/role and existing lock clauses. Category lookup is required for Oral storage only; do not fabricate it from client data or make an inner join deny otherwise-eligible legacy Poster records. DbCandidate.categoryName is string|null.
+- [x] Define the DTO/storage identity contract used by Tasks 4–11:
 
 ```ts
 export type StorageProvider='drive'|'r2';
@@ -432,7 +432,7 @@ export type UploadDto = { id:string;version:number;fileName:string;storedFileNam
 // fileName is the original name shown to users; SQL original_filename maps to fileName.
 ```
 
-- [ ] Re-run validator/policy tests; update callers with explicit owner type, never a default that silently treats Oral as Poster. The new DTO shape is a cross-module contract change; full API/frontend typechecks are final gates in Task 13 after consumers are migrated. Record intermediate errors instead of claiming they passed or introducing temporary optional fields. Commit `feat(presentations): enforce per-type PDF policies`.
+- [x] Re-run validator/policy tests; update callers with explicit owner type, never a default that silently treats Oral as Poster. The new DTO shape is a cross-module contract change; full API/frontend typechecks are final gates in Task 13 after consumers are migrated. Record intermediate errors instead of claiming they passed or introducing temporary optional fields. Commit `feat(presentations): enforce per-type PDF policies`.
 
 ## Task 4: Drive helper with file identity and public sharing
 
@@ -442,7 +442,7 @@ export type UploadDto = { id:string;version:number;fileName:string;storedFileNam
 
 `DriveWriteInput = {fileId,parentId,fileName,buffer,digest,md5Checksum,attemptId}`; inspection returns `id,name,mimeType,size,md5Checksum,parents,appProperties`. write returns `{fileId,fileUrl,storedFileName}` only after byte identity and anyone-reader permission are confirmed.
 
-- [ ] Add tests with an injected fake `drive.files`/`drive.permissions`: initial create, retry conflict same ID, same name different IDs, mismatched checksum/name/parent/attempt ID, permission failure, failed metadata read, escaped folder queries and folder duplicates. Every fake asserts zero real network calls.
+- [x] Add tests with an injected fake `drive.files`/`drive.permissions`: initial create, retry conflict same ID, same name different IDs, mismatched checksum/name/parent/attempt ID, permission failure, failed metadata read, escaped folder queries and folder duplicates. Every fake asserts zero real network calls.
 
 ```ts
 import assert from 'node:assert/strict';
@@ -483,7 +483,7 @@ test('same Drive ID replays without overwrite; same name new ID retains both ver
 ```
 
 This is a storage-helper check, not a PDF validity check; real PDF validation remains Task 3.
-- [ ] Run the new helper test to confirm failure before exports exist. Add the exact helper identity checks and shared URL behavior:
+- [x] Run the new helper test to confirm failure before exports exist. Add the exact helper identity checks and shared URL behavior:
 
 ```ts
 // Add to googleDrive.ts; use existing google import, Readable and getDriveClient.
@@ -531,7 +531,7 @@ export async function writePresentationDriveFile(input:DriveWriteInput,drive:Pre
 }
 ```
 
-- [ ] Extend the existing private getOrCreateFolder, rather than duplicating folder resolution. Existing callers use the same defaults; Presentation's DB-serialized lookup passes fresh=true. Replace its body with:
+- [x] Extend the existing private getOrCreateFolder, rather than duplicating folder resolution. Existing callers use the same defaults; Presentation's DB-serialized lookup passes fresh=true. Replace its body with:
 
 ```ts
 async function getOrCreateFolder(parentFolderId:string,folderName:string,
@@ -571,8 +571,8 @@ async function getOrCreateFolder(parentFolderId:string,folderName:string,
 }
 ```
 
-- [ ] Use narrow fixture casts for the fake installed google client, not an exported generic factory/registry. Test 409 as an identity check, never as unconditional success; verify same attempt never invokes files.update and new version allocates another ID. Do not alter original filename or add suffixes.
-- [ ] Run `./node_modules/.bin/tsx.cmd --test src/services/googleDrive.presentation.test.ts` to PASS. Full API typecheck follows the contract migration in Task 13, not a temporary DTO compatibility hack. Commit `feat(presentations): store public Oral PDFs with stable Drive identities`.
+- [x] Use narrow fixture casts for the fake installed google client, not an exported generic factory/registry. Test 409 as an identity check, never as unconditional success; verify same attempt never invokes files.update and new version allocates another ID. Do not alter original filename or add suffixes.
+- [x] Run `./node_modules/.bin/tsx.cmd --test src/services/googleDrive.presentation.test.ts` to PASS. Full API typecheck follows the contract migration in Task 13, not a temporary DTO compatibility hack. Commit `feat(presentations): store public Oral PDFs with stable Drive identities`.
 
 ## Task 5: Provider-aware storage, identity persistence and cleanup
 
@@ -580,7 +580,7 @@ async function getOrCreateFolder(parentFolderId:string,folderName:string,
 
 **Interfaces:** Retain R2 put/delete shape as `R2PresentationStorage`. `PresentationStorage = {r2:()=>R2PresentationStorage;drive:DrivePresentationStorage}`; default factory is lazy so a Poster request does not require Google config and an Oral request does not require R2 config. `AttemptReservation` exposes `kind`, `attemptId`, `claimToken`, `identity:StorageIdentity`, `location:DriveLocation|null`, `upload:UploadDto|null`. `storePresentationAttempt(database,attempt,file,storage)` prepares/persists Drive identity before upload and returns void; `readUploadDto` maps the new columns; `cleanupFailedAttempt` keeps its existing signature with the new storage type.
 
-- [ ] Update existing memory storage in uploads/workflow tests to the new shape; assert one-provider dispatch and lazy config. Add storage unit checks: Drive ID DB write precedes write bytes, stored mark follows sharing, claim/lease loss prevents upload, original R2 checksum/bytes/cache-control unchanged, cleanup never touches accepted/current/history, unknown DB commit preserves resource.
+- [x] Update existing memory storage in uploads/workflow tests to the new shape; assert one-provider dispatch and lazy config. Add storage unit checks: Drive ID DB write precedes write bytes, stored mark follows sharing, claim/lease loss prevents upload, original R2 checksum/bytes/cache-control unchanged, cleanup never touches accepted/current/history, unknown DB commit preserves resource.
 
 ```ts
 // storage.test.ts: inspect order through the existing SQL-double harness.
@@ -596,7 +596,7 @@ const storage:PresentationStorage={
 // After storePresentationAttempt: assert order generate < persist < write < stored.
 ```
 
-- [ ] Run storage.test.ts expecting failure before provider handling. Define complete adapter contracts/factory:
+- [x] Run storage.test.ts expecting failure before provider handling. Define complete adapter contracts/factory:
 
 ```ts
 import { generatePresentationDriveFileId, getOrCreatePresentationDriveFolder,
@@ -623,7 +623,7 @@ export function createPresentationStorage():PresentationStorage {
 }
 ```
 
-- [ ] Resolve Drive folder with a parent/name advisory lock and fresh service lookup, not the old in-process cache. Bytes upload remains outside DB transactions:
+- [x] Resolve Drive folder with a parent/name advisory lock and fresh service lookup, not the old in-process cache. Bytes upload remains outside DB transactions:
 
 ```ts
 async function resolveOralFolder(database:PresentationDatabase,location:DriveLocation,storage:PresentationStorage):Promise<string> {
@@ -639,7 +639,7 @@ async function resolveOralFolder(database:PresentationDatabase,location:DriveLoc
 }
 ```
 
-- [ ] For a Drive reserved attempt, reuse identity if already persisted; otherwise generate fileId and resolve folder, then claim the identity with a guarded update. A lost DB response means no bytes are sent until a subsequent read proves which ID committed:
+- [x] For a Drive reserved attempt, reuse identity if already persisted; otherwise generate fileId and resolve folder, then claim the identity with a guarded update. A lost DB response means no bytes are sent until a subsequent read proves which ID committed:
 
 ```ts
 const folderId=await resolveOralFolder(database,attempt.location!,storage);
@@ -658,9 +658,9 @@ const written=await storage.drive.write({fileId:identity.driveFileId,parentId:id
 attempt.identity.fileUrl=written.fileUrl;
 ```
 
-- [ ] Add the branch for already-persisted Drive ID to skip generate/folder/update and call write with persisted IDs; validate both ID/folder are present together. For R2, call its old put method with original file bytes and new objectKey. Both branches then `UPDATE ... SET state='stored' ... WHERE state='reserved' AND claim_token ... AND lease_until>clock_timestamp() RETURNING id`; no returned ID is retry-required, not acceptance.
-- [ ] Distinguish unknown provider outcome from proven failure. Unknown Drive create/read outcome remains reserved/recoverable until lease expiry; do not let the existing immediate cleanup-on-error path erase an in-flight resource. Add `storageOutcome:'unknown'` to provider error handling and a skip guard for early cleanup. A successful resource inspection does not by itself create an accepted DB upload.
-- [ ] Extend cleanup's locked read to provider/fileId/objectKey and keep the current terminal-claim-before-delete transaction, querying every successful upload by attempt AND matching provider identity. Drive id null means bytes were never sent by this implementation; known fileId deletes via Drive; R2 deletes objectKey. Exact dispatch after a committed cleanup claim:
+- [x] Add the branch for already-persisted Drive ID to skip generate/folder/update and call write with persisted IDs; validate both ID/folder are present together. For R2, call its old put method with original file bytes and new objectKey. Both branches then `UPDATE ... SET state='stored' ... WHERE state='reserved' AND claim_token ... AND lease_until>clock_timestamp() RETURNING id`; no returned ID is retry-required, not acceptance.
+- [x] Distinguish unknown provider outcome from proven failure. Unknown Drive create/read outcome remains reserved/recoverable until lease expiry; do not let the existing immediate cleanup-on-error path erase an in-flight resource. Add `storageOutcome:'unknown'` to provider error handling and a skip guard for early cleanup. A successful resource inspection does not by itself create an accepted DB upload.
+- [x] Extend cleanup's locked read to provider/fileId/objectKey and keep the current terminal-claim-before-delete transaction, querying every successful upload by attempt AND matching provider identity. Drive id null means bytes were never sent by this implementation; known fileId deletes via Drive; R2 deletes objectKey. Exact dispatch after a committed cleanup claim:
 
 ```ts
 if(attempt.storage_provider==='drive') {
@@ -670,8 +670,8 @@ if(attempt.storage_provider==='drive') {
 }
 ```
 
-- [ ] Update readUploadDto SELECT: original_filename AS fileName, stored_filename AS storedFileName, file_url AS fileUrl, storage_provider AS storageProvider, drive_file_id AS driveFileId; retain receivedAt ISO conversion/request/version.
-- [ ] Run storage unit + guarded uploads integration tests to PASS; commit `feat(presentations): dispatch storage and protect provider identities`.
+- [x] Update readUploadDto SELECT: original_filename AS fileName, stored_filename AS storedFileName, file_url AS fileUrl, storage_provider AS storageProvider, drive_file_id AS driveFileId; retain receivedAt ISO conversion/request/version.
+- [x] Run storage unit + guarded uploads integration tests to PASS; commit `feat(presentations): dispatch storage and protect provider identities`.
 
 ## Task 6: Reconciliation and atomic owner upload/revision acceptance
 
@@ -679,7 +679,7 @@ if(attempt.storage_provider==='drive') {
 
 **Interfaces:** `readUploadGate(tx,actor,abstractId,requestId):Promise<UploadGate>` gains `presentationType:'oral'|'poster'` and `location:DriveLocation`; `reserveUploadAttempt(database,actor,abstractId,key,requestId,file):Promise<AttemptReservation>` writes provider/name/reservation metadata, not Drive bytes; `finalizePresentationAttempt(database,actor,abstractId,requestId,attempt,file,storage):Promise<UploadDto>` receives ValidatedFile from Task 3, reads persisted provider identity, rechecks file policy, and atomically writes latest version/request/receipt. submit retains one injected PresentationStorage parameter.
 
-- [ ] Add Oral initial/revision success integration scenarios with two-page PDF and injected memory Drive. Add same-name revision with distinct fileId, same successful key replay, concurrent initial uploads, sharing fail, lease/DB failure, type/owner/deadline races, and both-round eligibility. Tests inspect persisted DB metadata, not just HTTP status.
+- [x] Add Oral initial/revision success integration scenarios with two-page PDF and injected memory Drive. Add same-name revision with distinct fileId, same successful key replay, concurrent initial uploads, sharing fail, lease/DB failure, type/owner/deadline races, and both-round eligibility. Tests inspect persisted DB metadata, not just HTTP status.
 
 ```ts
 test('Oral initial receipt and same-key replay use one Drive file and one version',async t=>{
@@ -702,8 +702,8 @@ test('Oral initial receipt and same-key replay use one Drive file and one versio
 });
 ```
 
-- [ ] Run focused integrations expecting Oral gate failure before edits. Remove exactly three Oral exclusions in reconcile (target creation, initial_enabled ready rows, assertInitialReady), retaining all existing match/alias/duplicate/remap/source/incomplete/withdrawn/used-right logic. The matching function still maps Highlighted to poster.
-- [ ] Replace owner poster-only guard with membership of the existing Abstract enum; validate input with requirePresentationOwner's current type before any reservation/storage. Include file validated type in reservation fingerprint and verify it matches the gate's locked owner type:
+- [x] Run focused integrations expecting Oral gate failure before edits. Remove exactly three Oral exclusions in reconcile (target creation, initial_enabled ready rows, assertInitialReady), retaining all existing match/alias/duplicate/remap/source/incomplete/withdrawn/used-right logic. The matching function still maps Highlighted to poster.
+- [x] Replace owner poster-only guard with membership of the existing Abstract enum; validate input with requirePresentationOwner's current type before any reservation/storage. Include file validated type in reservation fingerprint and verify it matches the gate's locked owner type:
 
 ```ts
 // In readUploadGate after requirePresentationOwner.
@@ -716,7 +716,7 @@ const owner=await requirePresentationOwner(database,actor,abstractId);
 const validated=await validatePresentationFile(file,owner.presentationType);
 ```
 
-- [ ] Retain the old successful-replay branch before new-right checks; never call readUploadGate as a preliminary unconditional check that makes replay fail after its right was consumed. New reservation inserts provider, stored name and identity:
+- [x] Retain the old successful-replay branch before new-right checks; never call readUploadGate as a preliminary unconditional check that makes replay fail after its right was consumed. New reservation inserts provider, stored name and identity:
 
 ```ts
 const gate=await readUploadGate(tx,actor,abstractId,requestId);
@@ -731,8 +731,8 @@ await tx.execute(sql`INSERT INTO presentation_upload_attempts(id,target_id,user_
     ${file.filename},${storedFileName},${file.mimeType},${file.sizeBytes},${file.digest},clock_timestamp()+interval '5 minutes',${claimToken}::uuid)`);
 ```
 
-- [ ] Extend readBoundUpload to compare claimed provider/actual stored identities in addition to target/user/request/claim token. Drive IDs persisted after reservation must be read fresh, not compared to a stale null reservation field. R2 objectKey check stays.
-- [ ] Finalize reads the persisted attempt identity and checks `storage_provider` against current owner type, page/size policy already validated, state='stored'/lease, active request and server close. Persist `file_url` from `drive_file_id` for Drive or R2 base/key; write original/stored filenames and version using these complete column/value lists:
+- [x] Extend readBoundUpload to compare claimed provider/actual stored identities in addition to target/user/request/claim token. Drive IDs persisted after reservation must be read fresh, not compared to a stale null reservation field. R2 objectKey check stays.
+- [x] Finalize reads the persisted attempt identity and checks `storage_provider` against current owner type, page/size policy already validated, state='stored'/lease, active request and server close. Persist `file_url` from `drive_file_id` for Drive or R2 base/key; write original/stored filenames and version using these complete column/value lists:
 
 ```ts
 const fileUrl=a.storage_provider==='drive'
@@ -756,9 +756,9 @@ const upload=await finalizePresentationAttempt(database,actor,abstractId,request
 return {upload,replayed:false};
 ```
 
-- [ ] Keep current pointer/request submitted/attempt accepted/automatic receipt insertion in the same transaction. Receipt fallback subject becomes “ระบบได้รับไฟล์นำเสนอแล้ว”; template version becomes presentation-receipt-failed-v1. Rendering failure is recorded, DB insert/commit failure rolls back acceptance. Unknown DB outcome re-reads bound upload before cleanup; unknown provider outcome defers deletion to the lease recovery path from Task 5.
-- [ ] Add file pageCount/validated type to attempt data retained for finalize policy recheck: pass the validated result into finalize rather than trusting request values; recovery of a stored attempt still runs through submit with the same original file/key. Keep successful replay independent of closed deadline, same as existing behavior.
-- [ ] Run focused integrations to PASS including legacy Poster behavior and existing revision tests; commit `feat(presentations): accept Oral and Poster through one atomic workflow`.
+- [x] Keep current pointer/request submitted/attempt accepted/automatic receipt insertion in the same transaction. Receipt fallback subject becomes “ระบบได้รับไฟล์นำเสนอแล้ว”; template version becomes presentation-receipt-failed-v1. Rendering failure is recorded, DB insert/commit failure rolls back acceptance. Unknown DB outcome re-reads bound upload before cleanup; unknown provider outcome defers deletion to the lease recovery path from Task 5.
+- [x] Add file pageCount/validated type to attempt data retained for finalize policy recheck: pass the validated result into finalize rather than trusting request values; recovery of a stored attempt still runs through submit with the same original file/key. Keep successful replay independent of closed deadline, same as existing behavior.
+- [x] Run focused integrations to PASS including legacy Poster behavior and existing revision tests; commit `feat(presentations): accept Oral and Poster through one atomic workflow`.
 
 ## Task 7: Current DB staff grants and correct protected readers
 
@@ -766,7 +766,7 @@ return {upload,replayed:false};
 
 **Interfaces:** `requirePresentationStaff(q,actor,eventId,manage):Promise<{manage:boolean;types:Array<'oral'|'poster'>}>`. Non-admin empty types returns no readable rows; manage true still requires admin. Owner reader retains OwnerPresentationDto shape with new upload metadata. Staff list/detail use the returned fresh grants.
 
-- [ ] Add tests for admin all, Organizer/Reviewer same-event only, empty array no rows/count=0/detail 404, oral-only, poster-only including Highlighted, revoked/invalid/inactive account and changed assignments after token issuance. Keep existing mail/match redaction tests. Use both role names, not just Reviewer.
+- [x] Add tests for admin all, Organizer/Reviewer same-event only, empty array no rows/count=0/detail 404, oral-only, poster-only including Highlighted, revoked/invalid/inactive account and changed assignments after token issuance. Keep existing mail/match redaction tests. Use both role names, not just Reviewer.
 
 ```ts
 test('staff type grants are read fresh and empty does not mean all',async t=>{
@@ -780,7 +780,7 @@ test('staff type grants are read fresh and empty does not mean all',async t=>{
   await assert.rejects(requirePresentationStaff(database,actor,fixture.eventId,true),{code:'PRESENTATION_ACCESS_DENIED'});
 });
 ```
-- [ ] Run readers/access checks expecting over-broad results before edits. Extend the existing fresh staff SELECT and return grants; validate type membership with exact allowed values, not a default-to-all branch:
+- [x] Run readers/access checks expecting over-broad results before edits. Extend the existing fresh staff SELECT and return grants; validate type membership with exact allowed values, not a default-to-all branch:
 
 ```ts
 // Existing requirePresentationStaff keeps role/email/active/event/assignment validation.
@@ -790,7 +790,7 @@ const types=actor.role==='admin'?['oral','poster'] as const:
 return {manage:actor.role==='admin',types:[...new Set(types)]};
 ```
 
-- [ ] readRosterRows includes all three announcement types. Add grants filtering before query filters/count/pagination; detail checks the same authoritative type (current Abstract type, not client input). Correct canNotify so ready Oral can be selected by admin. Do not filter the public announcement roster by staff grants.
+- [x] readRosterRows includes all three announcement types. Add grants filtering before query filters/count/pagination; detail checks the same authoritative type (current Abstract type, not client input). Correct canNotify so ready Oral can be selected by admin. Do not filter the public announcement roster by staff grants.
 
 ```ts
 const grants=await requirePresentationStaff(database,actor,eventId,false);
@@ -810,8 +810,8 @@ const typeScope=allowedTypes===null?sql`true`:
 // All detail callers pass the same fresh grants rather than readRosterRows's admin default.
 ```
 
-- [ ] Owner reader removes poster-only block; fallback type must use `owner.presentationType` when announcement metadata is missing, not hard-coded poster. Initial ready/source checks remain unchanged except Oral eligibility. Revision does not acquire new rights from type changes.
-- [ ] Run unit + guarded access/readers integrations to PASS. Commit `fix(presentations): enforce event and assigned type on protected reads`.
+- [x] Owner reader removes poster-only block; fallback type must use `owner.presentationType` when announcement metadata is missing, not hard-coded poster. Initial ready/source checks remain unchanged except Oral eligibility. Revision does not acquire new rights from type changes.
+- [x] Run unit + guarded access/readers integrations to PASS. Commit `fix(presentations): enforce event and assigned type on protected reads`.
 
 ## Task 8: New API paths, schemas and multipart limits
 
@@ -819,7 +819,7 @@ const typeScope=allowedTypes===null?sql`true`:
 
 **Interfaces:** GET `/:abstractId/presentation`; POST `/:abstractId/presentation-uploads`; twelve BO method/path pairs retain existing envelopes and parameter/body semantics with `presentation-*` tokens. POST accepts exactly one file field and optional UUID requestId; client-supplied type/provider rejected. No old paths registered.
 
-- [ ] Add route tests for new owner/BO paths, strict type query oral/poster/highlighted-poster, unknown multipart fields, wrong owner before byte buffering, oral 50MiB/Poster30MiB caps, old paths 404, auth/idempotency unchanged.
+- [x] Add route tests for new owner/BO paths, strict type query oral/poster/highlighted-poster, unknown multipart fields, wrong owner before byte buffering, oral 50MiB/Poster30MiB caps, old paths 404, auth/idempotency unchanged.
 
 ```ts
 test('new owner route is registered and the old route has no adapter',async t=>{
@@ -835,7 +835,7 @@ test('new owner route is registered and the old route has no adapter',async t=>{
 ```
 
 Import Fastify from fastify, presentationOwnerRoutes from public.routes.js and existing fixture/assert/test symbols. The injected user is test-only; production continues using the authenticated registration in src/index.ts.
-- [ ] Run route tests expecting new endpoint/size failures. In POST resolve owner once before reading parts; pass authoritative max into multipart helper:
+- [x] Run route tests expecting new endpoint/size failures. In POST resolve owner once before reading parts; pass authoritative max into multipart helper:
 
 ```ts
 async function readPresentationMultipart(request:FastifyRequest,maxBytes:number) {
@@ -859,9 +859,9 @@ const owner=await requirePresentationOwner(database,actor,abstractId);
 const input=await readPresentationMultipart(request,maxPresentationBytes(owner.presentationType));
 ```
 
-- [ ] Extend `listQuerySchema.presentationType` to z.enum(['oral','poster','highlighted-poster']); register owner and BO plugins under existing /api/abstracts and /api/backoffice prefixes. Preserve approved-abstracts public roster endpoint and its allowlist response.
-- [ ] Map Fastify multipart errors to PRESENTATION codes/statuses like the existing implementation; global multipart 50MiB already matches the Oral ceiling, so do not increase global caps for unrelated uploads.
-- [ ] Run route integrations to PASS; full typecheck is Task 13 after mail and client DTO consumers converge. Commit `feat(presentations): expose renamed APIs with authoritative upload bounds`.
+- [x] Extend `listQuerySchema.presentationType` to z.enum(['oral','poster','highlighted-poster']); register owner and BO plugins under existing /api/abstracts and /api/backoffice prefixes. Preserve approved-abstracts public roster endpoint and its allowlist response.
+- [x] Map Fastify multipart errors to PRESENTATION codes/statuses like the existing implementation; global multipart 50MiB already matches the Oral ceiling, so do not increase global caps for unrelated uploads.
+- [x] Run route integrations to PASS; full typecheck is Task 13 after mail and client DTO consumers converge. Commit `feat(presentations): expose renamed APIs with authoritative upload bounds`.
 
 ## Task 9: Participant Presentation page, selection, links and bilingual copy
 
@@ -869,7 +869,7 @@ const input=await readPresentationMultipart(request,maxPresentationBytes(owner.p
 
 **Interfaces:** `getOwnerPresentation(token,abstractId,requestId?,signal?):Promise<OwnerPresentationDto>`; `uploadPresentation({token,abstractId,requestId,file,key,onProgress,signal?}):Promise<{upload:UploadDto;replayed:boolean}>`; `fileProblem(file,type:AnnouncementType):string|null`; `presentationReturnPath(search):string|null`. DTO/fileUrl/name fields are exactly Task 3's contract; errors use PRESENTATION prefix.
 
-- [ ] Extend selection and workspace/page tests with Oral DTO, 50MiB ceiling, Oral requirements/template, Drive URL history/current link, original filename shown, filename retained for confirm/receipt and type-specific size text. Keep uncertainty/key/remount/100%-progress/focus assertions. Add redirect tests with the new path and duplicate/invalid abstractId/requestId cases.
+- [x] Extend selection and workspace/page tests with Oral DTO, 50MiB ceiling, Oral requirements/template, Drive URL history/current link, original filename shown, filename retained for confirm/receipt and type-specific size text. Keep uncertainty/key/remount/100%-progress/focus assertions. Add redirect tests with the new path and duplicate/invalid abstractId/requestId cases.
 
 ```ts
 test('declared sizes are checked against the owner type',()=>{
@@ -881,7 +881,7 @@ test('declared sizes are checked against the owner type',()=>{
 });
 ```
 
-- [ ] Run selection/workspace/page/api/redirect tests expecting failures for Oral requirements or updated DTO. Replace fileProblem with this complete client declaration check (page count stays on API):
+- [x] Run selection/workspace/page/api/redirect tests expecting failures for Oral requirements or updated DTO. Replace fileProblem with this complete client declaration check (page count stays on API):
 
 ```ts
 export function fileProblem(file:File,type:AnnouncementType):string|null {
@@ -892,7 +892,7 @@ export function fileProblem(file:File,type:AnnouncementType):string|null {
 }
 ```
 
-- [ ] Pass owner.presentationType at every fileProblem caller in page/workspace, including effect dependency when a new type arrives. Keep explicit `application/pdf` Blob preview and URL revocation. Add type/requirements/template variables without a new UI framework:
+- [x] Pass owner.presentationType at every fileProblem caller in page/workspace, including effect dependency when a new type arrives. Keep explicit `application/pdf` Blob preview and URL revocation. Add type/requirements/template variables without a new UI framework:
 
 ```tsx
 const oral=o.presentationType==='oral';
@@ -913,10 +913,10 @@ const templateUrl=oral
 
 The JSX snippets replace existing elements, not adjacent duplicated UI. currentUpload's anchor remains inside its existing non-null condition.
 
-- [ ] Change current/history DTO references publicUrl to fileUrl in workflow components only; copied UploadDto is PDF-only because old upload test data is intentionally discarded. Preserve original fileName for every confirmation/receipt, and never show stored prefix as the user's uploaded name.
-- [ ] Update API URLs to presentation/presentation-uploads; retain FormData, bearer, Idempotency-Key, XHR timeout/progress, network-unknown classification and original retry File/key. getApprovedAnnouncements retains the existing roster URL after its module import move.
-- [ ] Retarget presentationReturnPath, eventReturnQuery, normalizeLocalizedRedirectPath, refresh preservation and Header locale switch to `/presentation-submission`, preserving query validation. Do not add redirects or aliases for poster-submission.
-- [ ] Add these exact messages under root presentation; keep other messages and accessibility/error texts, adjusting active workflow wording without renaming actual types:
+- [x] Change current/history DTO references publicUrl to fileUrl in workflow components only; copied UploadDto is PDF-only because old upload test data is intentionally discarded. Preserve original fileName for every confirmation/receipt, and never show stored prefix as the user's uploaded name.
+- [x] Update API URLs to presentation/presentation-uploads; retain FormData, bearer, Idempotency-Key, XHR timeout/progress, network-unknown classification and original retry File/key. getApprovedAnnouncements retains the existing roster URL after its module import move.
+- [x] Retarget presentationReturnPath, eventReturnQuery, normalizeLocalizedRedirectPath, refresh preservation and Header locale switch to `/presentation-submission`, preserving query validation. Do not add redirects or aliases for poster-submission.
+- [x] Add these exact messages under root presentation; keep other messages and accessibility/error texts, adjusting active workflow wording without renaming actual types:
 
 ```json
 {
@@ -956,7 +956,7 @@ const translate=(key:string,values:Record<string,string|number>={})=>
   String(lookup(key)??key).replace(/\{(\w+)\}/g,(_match,name:string)=>String(values[name]??`{${name}}`));
 ```
 
-- [ ] Re-run all seven focused tests and Pris typecheck/focused ESLint. Expected no new failures; an unrelated pre-existing test/type error must be cited separately, not fixed by weakening types. Commit `feat(presentations): unify owner UI with Oral PDF rules and Drive links`.
+- [x] Re-run all seven focused tests and Pris typecheck/focused ESLint. Expected no new failures; an unrelated pre-existing test/type error must be cited separately, not fixed by weakening types. Commit `feat(presentations): unify owner UI with Oral PDF rules and Drive links`.
 
 ## Task 10: Backoffice Presentation screens and Organizer type assignment
 
@@ -964,7 +964,7 @@ const translate=(key:string,values:Record<string,string|number>={})=>
 
 **Interfaces:** `api.presentations` retains the existing twelve method signatures/envelopes/idempotency fields on new URLs; `User.assignedPresentationTypes` remains the existing field. Type assignment create/update payload supports Organizer and Reviewer; existing API users routes/schema already accept it.
 
-- [ ] Extend the existing BO helper/harness check for new paths/envelopes, badge mapping, Drive links, received-only viewer controls and type assignment payload. Add assertions that Reviewer categories remain unchanged while Organizer sends assignedPresentationTypes. Use the existing test executable from API, no new runner dependency:
+- [x] Extend the existing BO helper/harness check for new paths/envelopes, badge mapping, Drive links, received-only viewer controls and type assignment payload. Add assertions that Reviewer categories remain unchanged while Organizer sends assignedPresentationTypes. Use the existing test executable from API, no new runner dependency:
 
 ```ts
 test('Organizer type assignment does not create Reviewer category restrictions',()=>{
@@ -980,7 +980,7 @@ test('Organizer type assignment does not create Reviewer category restrictions',
 ../conference-api/node_modules/.bin/tsx.cmd --test src/lib/presentationUi.test.ts
 ```
 
-- [ ] Run to fail before UI edits. Use a three-type label in list/detail/history while preserving status/progress classes and query scope:
+- [x] Run to fail before UI edits. Use a three-type label in list/detail/history while preserving status/progress classes and query scope:
 
 ```tsx
 const typeLabels={oral:'Oral',poster:'Poster','highlighted-poster':'Highlighted Poster'};
@@ -991,8 +991,8 @@ const typeLabels={oral:'Oral',poster:'Poster','highlighted-poster':'Highlighted 
 </select>
 ```
 
-- [ ] api.presentations URLs use new BO tokens; page/detail/back links use /presentations and eventId. AuthContext/Sidebar allowlists replace /posters with /presentations for both roles; permission enforcement stays in API. Label headers/current file/revision/selection/pagination itemName Presentation, and keep admin-only fields/buttons.
-- [ ] Show accepted Oral as its stored Drive view link, not an iframe pointed at a Drive view page. R2 PDF preview stays inline. Remove the old historical PNG-specific branch from these new-schema pages/tests because no old uploads are copied:
+- [x] api.presentations URLs use new BO tokens; page/detail/back links use /presentations and eventId. AuthContext/Sidebar allowlists replace /posters with /presentations for both roles; permission enforcement stays in API. Label headers/current file/revision/selection/pagination itemName Presentation, and keep admin-only fields/buttons.
+- [x] Show accepted Oral as its stored Drive view link, not an iframe pointed at a Drive view page. R2 PDF preview stays inline. Remove the old historical PNG-specific branch from these new-schema pages/tests because no old uploads are copied:
 
 ```tsx
 {detail.row.currentUpload && (detail.row.currentUpload.storageProvider==='drive'
@@ -1000,7 +1000,7 @@ const typeLabels={oral:'Oral',poster:'Poster','highlighted-poster':'Highlighted 
   :<iframe src={detail.row.currentUpload.fileUrl} title={`ไฟล์นำเสนอ ${detail.row.announcement.title}`} className="h-[650px] w-full" />)}
 ```
 
-- [ ] In both user create/edit dialogs show the existing presentation-type controls for Organizer or Reviewer; keep category controls Reviewer-only. Replace payload spreads in create and PATCH handlers exactly:
+- [x] In both user create/edit dialogs show the existing presentation-type controls for Organizer or Reviewer; keep category controls Reviewer-only. Replace payload spreads in create and PATCH handlers exactly:
 
 ```ts
 // Export in the already-inventoried presentationUi.ts; both users handlers reuse it.
@@ -1015,7 +1015,7 @@ const assignments=presentationUserAssignments(formData.role,formData.assignedPre
 ```
 
 Update helper text to “เลือกประเภทที่เจ้าหน้าที่ได้รับมอบหมาย หากไม่เลือกจะไม่เห็นไฟล์นำเสนอ” and expose only oral/poster checkboxes. No separate Highlighted or new category grants. Do not edit API users.ts just for an already-supported field.
-- [ ] Re-run BO helper check, typecheck and focused ESLint; verify create/edit Organizer persists assignments through existing API. Commit `feat(presentations): unify backoffice and expose staff type assignments`.
+- [x] Re-run BO helper check, typecheck and focused ESLint; verify create/edit Organizer persists assignments through existing API. Commit `feat(presentations): unify backoffice and expose staff type assignments`.
 
 ## Task 11: Four type-aware emails and current worker prechecks
 
@@ -1023,7 +1023,7 @@ Update helper text to “เลือกประเภทที่เจ้า�
 
 **Interfaces:** `MailPayload` gains `presentationType:AnnouncementType`; `buildMailPayload` reads current DB/source type; `renderPresentationEmail(p)` returns `{subject,html,templateVersion}`; `buildSubmissionUrl` uses presentation-submission. Preview digest includes the type; initial/reminder/revision worker owner gate supports oral/poster. No old payload compatibility branch.
 
-- [ ] Add tests across 3 announcement types × 4 mail kinds for subject/type/requirements/template/link/deadline/escaping. Verify no receipt Template requirement, correct received upload version/name/time, HTML escaping of original filename/revision details and no actual provider calls. Existing email transport tests stay unchanged except import path/name.
+- [x] Add tests across 3 announcement types × 4 mail kinds for subject/type/requirements/template/link/deadline/escaping. Verify no receipt Template requirement, correct received upload version/name/time, HTML escaping of original filename/revision details and no actual provider calls. Existing email transport tests stay unchanged except import path/name.
 
 ```ts
 test('Oral initial email uses the Oral ZIP, two-page minimum and 50 MiB',()=>{
@@ -1037,7 +1037,7 @@ test('Oral initial email uses the Oral ZIP, two-page minimum and 50 MiB',()=>{
   assert.match(rendered.html,/Synthetic &lt;title&gt;/);assert.doesNotMatch(rendered.html,/30 MiB/);
 });
 ```
-- [ ] Run mail tests to fail for Oral text/worker gate. Add complete renderer helpers and replace the pure renderer while preserving contact/signature and not using unescaped DB fields:
+- [x] Run mail tests to fail for Oral text/worker gate. Add complete renderer helpers and replace the pure renderer while preserving contact/signature and not using unescaped DB fields:
 
 ```ts
 const oralTemplate='https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20Oral%20Template.zip';
@@ -1083,10 +1083,10 @@ export function renderPresentationEmail(p:MailPayload):{subject:string;html:stri
 }
 ```
 
-- [ ] buildSubmissionUrl preserves current HTTPS/origin/path/credentials validation and switches its path to `/th/presentation-submission`. buildMailPayload SELECT includes `a.presentation_type`; retrieve the active announcement type to retain Highlighted label but do not use an input type. Map new upload columns as Task 3. Snapshot contains the type before render/digest.
-- [ ] Replace worker `a.presentation_type='poster'` owner query with `IN ('oral','poster')`; require active owner/current staff checks and existing readiness/deadline/no-current-file/current-request/fingerprint checks. Claimed provider acceptance still means sent, not inbox delivery; unknown remains unknown, no auto-resend.
-- [ ] Preserve initial/reminder preview-confirm and idempotent batch keys; revise payload/type shape in preview/create/resend/receipt paths together to avoid stale fingerprints introduced by inconsistent copies. No migration of old jobs or legacy renderer versions.
-- [ ] Run mail/operations/revision integration checks + emailService unit test to PASS; commit `feat(presentations): render and deliver type-aware presentation emails`.
+- [x] buildSubmissionUrl preserves current HTTPS/origin/path/credentials validation and switches its path to `/th/presentation-submission`. buildMailPayload SELECT includes `a.presentation_type`; retrieve the active announcement type to retain Highlighted label but do not use an input type. Map new upload columns as Task 3. Snapshot contains the type before render/digest.
+- [x] Replace worker `a.presentation_type='poster'` owner query with `IN ('oral','poster')`; require active owner/current staff checks and existing readiness/deadline/no-current-file/current-request/fingerprint checks. Claimed provider acceptance still means sent, not inbox delivery; unknown remains unknown, no auto-resend.
+- [x] Preserve initial/reminder preview-confirm and idempotent batch keys; revise payload/type shape in preview/create/resend/receipt paths together to avoid stale fingerprints introduced by inconsistent copies. No migration of old jobs or legacy renderer versions.
+- [x] Run mail/operations/revision integration checks + emailService unit test to PASS; commit `feat(presentations): render and deliver type-aware presentation emails`.
 
 ## Task 12: Startup, worker commands, preflight/verification and rollout runbook
 
@@ -1094,7 +1094,7 @@ export function renderPresentationEmail(p:MailPayload):{subject:string;html:stri
 
 **Interfaces:** `initializePresentations`, `presentationReadiness`, `presentationWorkerHealthy`, `runPresentationWorkerIteration`; flags/commands/SERVICE_ROLE per approved spec. Reconcile startup while paused continues without overwriting custom deadline/used rights and without queueing notifications.
 
-- [ ] Extend deployment integration to legacy-to-new migration, fresh install, paused source reconciliation, compiled CLI exit0/1/clean pool close, renamed healthcheck before DB import, custom deadline preservation and new provider cleanup. No duplicate worker or second runtime DB.
+- [x] Extend deployment integration to legacy-to-new migration, fresh install, paused source reconciliation, compiled CLI exit0/1/clean pool close, renamed healthcheck before DB import, custom deadline preservation and new provider cleanup. No duplicate worker or second runtime DB.
 
 ```ts
 test('renamed worker healthcheck does not import a runtime DB',async()=>{
@@ -1107,7 +1107,7 @@ test('renamed worker healthcheck does not import a runtime DB',async()=>{
 ```
 
 Import writeFile/unlink from node:fs/promises, promisify from node:util, execFile from node:child_process and presentationHeartbeatPath from jobs-runner.ts; these are installed stdlib/existing symbols. This test only touches the newly named test heartbeat, never the legacy worker heartbeat.
-- [ ] Run deployment check to fail for old compile paths/config names. Update operational literals explicitly:
+- [x] Run deployment check to fail for old compile paths/config names. Update operational literals explicitly:
 
 ```json
 {
@@ -1122,7 +1122,7 @@ Import writeFile/unlink from node:fs/promises, promisify from node:util, execFil
 
 `.env.example` uses PRESENTATION_SUBMISSIONS_ENABLED=false and PRESENTATION_EMAILS_ENABLED=false, retains GOOGLE_DRIVE_FOLDER_ABSTRACTS, existing Google credentials and Abstract-only folder ENV names. Docker SERVICE_ROLE is presentation-worker with `dist/modules/presentations/jobs-runner.js --healthcheck`; existing other SERVICE_ROLE branches remain identical. Heartbeat `pris-presentation-worker-heartbeat`.
 
-- [ ] Replace preflight with an explicit read-only check of one PRIS event, required tracking/categories/assignments objects, no presentation schema already initialized, recognized old schema states and dependency inventory. It must not require zero old poster tables, because replacement of those tables is the authorized migration. Read-only assertions:
+- [x] Replace preflight with an explicit read-only check of one PRIS event, required tracking/categories/assignments objects, no presentation schema already initialized, recognized old schema states and dependency inventory. It must not require zero old poster tables, because replacement of those tables is the authorized migration. Read-only assertions:
 
 ```sql
 BEGIN READ ONLY;
@@ -1138,7 +1138,7 @@ WHERE e.event_code='PRIS-2026' ORDER BY a.id;
 COMMIT;
 ```
 
-- [ ] Verification preserves old invariant checks under new names and adds provider/size checks/current owner identity counts, settings close/version, type/source/match/round counts and that no poster tables remain. Include this exact provider invariant query; an empty result is PASS:
+- [x] Verification preserves old invariant checks under new names and adds provider/size checks/current owner identity counts, settings close/version, type/source/match/round counts and that no poster tables remain. Include this exact provider invariant query; an empty result is PASS:
 
 ```sql
 SELECT id,storage_provider,size_bytes,drive_file_id,object_key FROM presentation_uploads
@@ -1146,9 +1146,9 @@ WHERE (storage_provider='drive' AND (size_bytes>52428800 OR drive_file_id IS NUL
    OR (storage_provider='r2' AND (size_bytes>31457280 OR object_key IS NULL OR drive_file_id IS NOT NULL));
 ```
 
-- [ ] Rewrite runbook for coordinated new API/worker/Pris/BO rollout. Include explicit environment/backup/operator evidence, stopped legacy worker/receiving, migration transaction, official source review (exclude local Round2 test rows), reconciliation while disabled, rights/grants/Drive sharing checks, one worker, readiness, separately enable receiving/mail. Do not run deploy merely because code checks passed.
-- [ ] Document rollback: before accepting real new data use the environment's approved migration backup process if needed; after accepting data pause flags and fix forward/compatible artifact, never drop presentation uploads or delete Drive/R2 objects to restore the old code. Leave old SQL 0038 in history.
-- [ ] Build API then run guarded deployment tests and healthcheck tests to PASS; commit `chore(presentations): align worker and replacement rollout checks`.
+- [x] Rewrite runbook for coordinated new API/worker/Pris/BO rollout. Include explicit environment/backup/operator evidence, stopped legacy worker/receiving, migration transaction, official source review (exclude local Round2 test rows), reconciliation while disabled, rights/grants/Drive sharing checks, one worker, readiness, separately enable receiving/mail. Do not run deploy merely because code checks passed.
+- [x] Document rollback: before accepting real new data use the environment's approved migration backup process if needed; after accepting data pause flags and fix forward/compatible artifact, never drop presentation uploads or delete Drive/R2 objects to restore the old code. Leave old SQL 0038 in history.
+- [x] Build API then run guarded deployment tests and healthcheck tests to PASS; commit `chore(presentations): align worker and replacement rollout checks`.
 
 ## Task 13: Final proof and handoff
 
@@ -1156,8 +1156,8 @@ WHERE (storage_provider='drive' AND (size_bytes>52428800 OR drive_file_id IS NUL
 
 **Interfaces:** Produces reviewable cross-repo diffs/commit SHAs, acceptance results, baseline exceptions, approved source status and executable release runbook. Does not itself deploy or call live providers.
 
-- [ ] Check coverage against every item in the approved spec Acceptance section and every path in the 84-entry inventory. Record any actual count delta and why; do not claim the estimate is the final diff count.
-- [ ] Resolve data.test.ts baseline without discarding user source edits: assert official Round1 data directly and test loader composition with the current Round2 module, rather than force Round2 empty. The two manual rows remain clearly local-only and their removal from a release source requires the real approved roster, not a fabricated replacement. Exact split:
+- [x] Check coverage against every item in the approved spec Acceptance section and every path in the 84-entry inventory. Record any actual count delta and why; do not claim the estimate is the final diff count.
+- [x] Resolve data.test.ts baseline without discarding user source edits: assert official Round1 data directly and test loader composition with the current Round2 module, rather than force Round2 empty. The two manual rows remain clearly local-only and their removal from a release source requires the real approved roster, not a fabricated replacement. Exact split:
 
 ```ts
 import { approvedRound1Abstracts } from './data/approvedRound1Abstracts.js';
@@ -1168,7 +1168,7 @@ assert.equal(createHash('sha256').update(JSON.stringify(approvedRound1Abstracts)
   '290765d7e029bd1ecf9e550ebffc9e1d2fb27c09192faae802ccd11e4de6b812');
 ```
 
-- [ ] Run focused full gates once after all code changes (then repeat only failed/newly affected checks). Commands and expected results:
+- [x] Run focused full gates once after all code changes (then repeat only failed/newly affected checks). Commands and expected results:
 
 ```powershell
 # CWD conference-api
@@ -1191,17 +1191,17 @@ npm run build
 
 Expected exit0 for changed-scope tests/builds. If a baseline unrelated error survives, provide its exact file/message and prove it predates this work; do not hide it as a new success. Missing integration target is unverified acceptance, not PASS. No claim of 84-file implementation completion without the protected-storage/rights/migration gates.
 
-- [ ] Run focused ESLint only for changed frontend paths, not a whole-repo cleanup. Run `git diff --check` in each repo. Inspect old workflow literals with explicit exclusions for type names/history/approved test DB guard:
+- [x] Run focused ESLint only for changed frontend paths, not a whole-repo cleanup. Run `git diff --check` in each repo. Inspect old workflow literals with explicit exclusions for type names/history/approved test DB guard:
 
 ```powershell
 rg -n 'modules/posters|components/posters|types/posters|poster-submission|/posters|POSTER_SUBMISSIONS_ENABLED|POSTER_EMAILS_ENABLED|poster-worker' conference-api/src conference-api/package.json conference-api/Dockerfile conference-api/.env.example Pris2026/src conference-backoffice/src
 # Expected: no active old workflow literal; actual Abstract type/ENV/history is not in this expression.
 ```
 
-- [ ] In the existing local test preview run TH/EN owner Oral initial/revision/upload-unknown/receipt/history, Poster page-count/size failure, Organizer oral-only, Reviewer poster-only with Highlighted, empty type assignment no records, and Admin preview/confirm/revision. Use doubles/synthetic accounts, no live email/R2/Drive upload. The plan does not authorize opening a second service on the existing port; check established running services first.
-- [ ] Review final SQL against drop allowlist and preserved objects; review provider identity/cleanup race scenarios and fresh staff grants. Confirm no legacy adapters/payload compatibility, new dependency, private proxy, new root ENV or type-change/reset feature slipped in.
-- [ ] Ensure the user Round2 file is still uncommitted at its new path, with content unchanged except necessary type import/module rename; compare original data/rows to the preserved snapshot. Stage only remaining scoped code/docs/tests and commit `test(presentations): prove shared submission and replacement safety` per affected repository.
-- [ ] Report final SHAs/checks/limitations and link the release runbook. Runtime migration/deploy/real provider tests remain separate explicit actions against a named environment.
+- [x] In the existing local test preview run TH/EN owner Oral initial/revision/upload-unknown/receipt/history, Poster page-count/size failure, Organizer oral-only, Reviewer poster-only with Highlighted, empty type assignment no records, and Admin preview/confirm/revision. Use doubles/synthetic accounts, no live email/R2/Drive upload. The plan does not authorize opening a second service on the existing port; check established running services first.
+- [x] Review final SQL against drop allowlist and preserved objects; review provider identity/cleanup race scenarios and fresh staff grants. Confirm no legacy adapters/payload compatibility, new dependency, private proxy, new root ENV or type-change/reset feature slipped in.
+- [x] Ensure the user Round2 file is still uncommitted at its new path, with content unchanged except necessary type import/module rename; compare original data/rows to the preserved snapshot. Stage only remaining scoped code/docs/tests and commit `test(presentations): prove shared submission and replacement safety` per affected repository.
+- [x] Report final SHAs/checks/limitations and link the release runbook. Runtime migration/deploy/real provider tests remain separate explicit actions against a named environment.
 
 ## Requirement-to-task coverage
 
@@ -1236,3 +1236,34 @@ Both skills exist locally. Read the chosen skill when execution is requested, no
 - User explicitly authorized creating one Docker database for the entire implementation. Created pris2026-presentation-test-20261008 using installed postgres:16-alpine, bound only to 127.0.0.1:55073, database confer_posters_integration_test. Existing guard unchanged. Credentials stay in local untracked .test-artifacts/presentations ENV files.
 - Task 2 migration checks passed 6 tests, including legacy-table replacement, fresh schema, preservation, transaction rollback, reapply rejection, provider constraints and database guard. No runtime migration or external provider call.
 - Integration command (API CWD): node --env-file='../.test-artifacts/presentations/integration.env' --import tsx --test --test-concurrency=1 src/modules/presentations/migration.integration.test.ts
+
+### Final implementation checkpoints
+
+All 13 implementation tasks are delivered in the existing checkouts. Checked steps record delivered changes and verified final states; expected pre-edit failure text above is planning guidance, not a claim that every example produced a retained red-test log. Actual evidence is recorded here.
+
+| Checkpoint | Commit/evidence |
+| --- | --- |
+| 3 — authoritative PDF policy/DTO/location | API 2adaa3e; validator/policy 18 passed, exact size ceilings plus one byte and page boundaries |
+| 4 — immutable public Drive helper | API ead6307; four fake-provider tests, replay identity/checksum/folder/public sharing and no overwrite |
+| 5–7 — provider storage, atomic upload, fresh staff grants | API 7bbce79; storage 7, uploads integration 25, reconciliation/access/revision/readers integration 22 passed |
+| 8 — renamed APIs/strict multipart | API 4fa0418; two route tests exercise all 15 route registrations, old route 404 and authoritative byte limits |
+| 9 — TH/EN owner flow | Pris 12e5dd1; 22 final focused tests passed; copy/baseline test typing finalized in 0ea3509 |
+| 10 — staff screens and Organizer assignments | Backoffice 09ae183; 23 final tests passed; obsolete legacy text-job UI removed in c277ca0 |
+| 11 — four type-aware email kinds | API b79ec15; 25 mail/operations/revision integrations passed, Oral rounds 1/2 and automatic initial/revision receipts |
+| 12 — replacement rollout/CLI/SQL | API 1f48138; guarded deployment checks passed; current runbook, preflight and verification |
+| 13 — final contracts/source preservation/proof | API 8fdba7f, Pris 0ea3509, Backoffice c277ca0; gates below |
+
+Final gates on the delivered source:
+
+- API `npm run build` passed; `npm run test:presentations` 47 passed; existing emailService/emailTemplates tests 9 passed.
+- Guarded integration suite ran 74 cases, initially 73 passed and one workflow fixture failed because receiving/mail flags were disabled in the test environment. The fixture now explicitly enables/restores both flags; that affected workflow case was rerun and passed. All 74 integration cases are verified. Retained logs distinguish the original full run from the corrected single-case rerun; no claim of an unexecuted second full run.
+- Pris seven focused files: 22 passed; `tsc --noEmit`, focused ESLint and production build passed. Pre-existing TS2349 in approvedAnnouncementsPage.test.ts was fixed with a typed cleanup holder in the test only, without weakening types or changing production behavior.
+- Backoffice focused UI harness: 23 passed; `tsc --noEmit`, focused Presentation/Sidebar ESLint and production build passed. Existing unrelated users-page lint debt was not expanded into a cleanup.
+- `git diff --check` passed in all three repos. No package-lock/dependency changes, no private file proxy, no new Drive root ENV, no type-reset workflow, no old route/job adapter. Historical 0038 is unchanged.
+- Inventory checked by exact final paths: all 84 entries exist and changed relative to pre-implementation snapshots. Scope remains 82 existing files plus two new files; final implementation count is 84. This plan's checkpoint update is one additional documentation path, excluded from that implementation count. Moves are counted once, not as old-path deletion plus new-path addition.
+- SQL review: only ten named legacy tables, their request-immutability function and workflow index are replaced; no operational CASCADE/schema reset/external file deletion. Migration tests verify preserved unrelated data and transaction rollback.
+- Local browser checks used synthetic API doubles/accounts/PDFs, not live providers: TH/EN Oral initial submission, unknown outcome and same File/key retry, server receipt/Drive URL, revision/current/history; Poster page-count rejection and 30 MiB+1 client rejection; Organizer Oral-only, Reviewer Poster plus Highlighted, empty types zero records; Admin preview/confirm batch and immutable revision creation with retained file history. Browser request evidence confirms identical file digest and idempotency key across unknown retry.
+- Screenshots and logs are local untracked artifacts under `D:/confer/confer/conference/.test-artifacts/presentations/`; owner receipt image is `owner-oral-receipt.jpg`, staff Oral detail is `backoffice-oral.jpg`. Temporary browser tabs and local preview/fixture processes were closed/stopped after verification.
+- Round 2 user file remains unstaged at its new path. Original SHA256 remains exactly `930259132212DF4983D9AE5119369CB37A67DAED585D50BE56696A63762DF0DA`; both LOCAL MANUAL TEST ONLY rows are preserved. Official Round 1 JSON hash/count remain unchanged and are directly tested. Release must exclude those local Round 2 test rows and review real source/DB matching before deployment.
+- Authorized Docker container `pris2026-presentation-test-20261008` remains healthy at `127.0.0.1:55073`, DB `confer_posters_integration_test`. Credentials are only in local untracked ENV files. Existing DB target guard was not loosened.
+- Implementation is committed on `feat/pris2026-presentation-submission` in all three existing checkouts. No push, merge, runtime migration, live Drive/R2/mail request or deployment was performed. Release procedure: `docs/superpowers/runbooks/pris2026-presentations.md`.
