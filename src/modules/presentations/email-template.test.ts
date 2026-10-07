@@ -32,6 +32,12 @@ test('all four emails select trusted type wording, requirements and Template for
       for (const requirement of ['9:16 (แนวตั้ง)', '18 × 32 เซนติเมตร', 'ไม่มีขอบขาว', 'ไม่เกิน 3 รูป', 'ส่วนหัวกระดาษ (Header)']) {
         assert.equal(result.html.includes(requirement), posterPreparation);
       }
+      if (posterPreparation) {
+        const rules = ['ให้จัดทำตามรูปแบบและส่วนหัวกระดาษ', 'โปสเตอร์ต้องมีอัตราส่วน', 'สามารถใช้รูปภาพประกอบ',
+          'ไฟล์ที่ส่งต้องเป็น PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MB', 'ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน'];
+        const positions = rules.map(rule => result.html.indexOf(rule));
+        assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])));
+      }
       if (kind === 'initial' || kind === 'reminder') assert.ok(result.html.includes(type === 'oral' ? 'ข้อกำหนดการจัดทำไฟล์นำเสนอ Oral' : 'ข้อกำหนดการจัดทำโปสเตอร์'));
       if (kind === 'receipt') {
         assert.ok(result.html.includes('&lt;slides&gt;.pdf')); assert.ok(result.html.includes('14.12.34'));

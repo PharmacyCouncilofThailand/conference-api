@@ -148,7 +148,7 @@ const pageRule = t(oral ? 'pageRuleOral' : 'pageRulePoster');
 ```json
 {
   "requirementsOral": "ไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน {maxMB} MB และไม่ตั้งรหัสผ่าน",
-  "requirementsPoster": "ไฟล์ PDF หนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน {maxMB} MB และไม่ตั้งรหัสผ่าน"
+  "requirementsPoster": "ไฟล์ที่ส่งต้องเป็น PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน {maxMB} MB"
 }
 ```
 
@@ -157,7 +157,7 @@ const pageRule = t(oral ? 'pageRuleOral' : 'pageRulePoster');
 ```json
 {
   "requirementsOral": "One PDF file, maximum {maxMB} MB, without password protection.",
-  "requirementsPoster": "One PDF file, exactly 1 page, maximum {maxMB} MB, without password protection."
+  "requirementsPoster": "Submit one PDF file, exactly 1 page, maximum {maxMB} MB."
 }
 ```
 
