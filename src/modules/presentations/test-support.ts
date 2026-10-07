@@ -63,7 +63,8 @@ export async function resetPresentationTestDatabase(sql: TestSql): Promise<void>
     CREATE TABLE backoffice_users(id serial PRIMARY KEY,email text,role text NOT NULL,is_active boolean NOT NULL DEFAULT true,assigned_presentation_types jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE staff_event_assignments(staff_id integer REFERENCES backoffice_users(id),event_id integer REFERENCES events(id));
     CREATE TABLE abstract_categories(id serial PRIMARY KEY,event_id integer NOT NULL REFERENCES events(id),name text NOT NULL);
-    CREATE TABLE abstracts(id serial PRIMARY KEY,event_id integer NOT NULL REFERENCES events(id),category_id integer REFERENCES abstract_categories(id),user_id integer REFERENCES users(id),tracking_id text UNIQUE,title text NOT NULL,presentation_type text NOT NULL,status text NOT NULL DEFAULT 'pending');
+    CREATE TYPE presentation_type AS ENUM ('oral','poster');
+    CREATE TABLE abstracts(id serial PRIMARY KEY,event_id integer NOT NULL REFERENCES events(id),category_id integer REFERENCES abstract_categories(id),user_id integer REFERENCES users(id),tracking_id text UNIQUE,title text NOT NULL,presentation_type presentation_type NOT NULL,status text NOT NULL DEFAULT 'pending');
     CREATE TABLE abstract_tracking_identifiers(tracking_id text PRIMARY KEY,abstract_id integer NOT NULL REFERENCES abstracts(id),event_id integer NOT NULL REFERENCES events(id));
   `);
 }

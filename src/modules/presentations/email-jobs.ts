@@ -20,7 +20,7 @@ export async function buildMailPayload(tx: Pick<PresentationDatabase, 'execute'>
       CASE WHEN a.presentation_type='oral' THEN 'oral'
         WHEN EXISTS(SELECT 1 FROM presentation_announcements pa WHERE pa.target_id=t.id AND pa.present
           AND pa.source_row->>'presentationType'='highlighted-poster') THEN 'highlighted-poster'
-        ELSE a.presentation_type END AS "presentationType"
+        ELSE a.presentation_type::text END AS "presentationType"
     FROM presentation_targets t JOIN abstracts a ON a.id=t.abstract_id JOIN users u ON u.id=a.user_id
     JOIN events e ON e.id=t.event_id JOIN presentation_settings s ON s.event_id=t.event_id
     WHERE t.id=${targetId}::uuid

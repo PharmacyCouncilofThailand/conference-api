@@ -30,6 +30,23 @@ const storage: PresentationStorage = {r2:()=>({ publicBaseUrl: 'https://syntheti
 test.beforeEach(() => { sent.length = 0; deleted.length = 0; process.env.PRESENTATION_EMAILS_ENABLED = 'true'; process.env.PRESENTATION_SUBMISSIONS_ENABLED = 'true'; });
 test.afterEach(() => { process.env.PRESENTATION_EMAILS_ENABLED = 'false'; process.env.PRESENTATION_SUBMISSIONS_ENABLED = 'false'; });
 
+test('email previews select Oral, Poster and Highlighted labels from the real two-value Abstract enum', async t => {
+  for (const type of ['oral','poster','highlighted-poster'] as const) {
+    const s = await preparePresentationScenario(t, { type: type === 'oral' ? 'oral' : 'poster', round: 2 });
+    await reconcilePresentations(s.database, [{ ...s.announcement, presentationType: type }]);
+    const enumValues = await s.client`SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname='presentation_type' ORDER BY e.enumsortorder`;
+    assert.deepEqual(enumValues.map(row => row.enumlabel), ['oral','poster']);
+    for (const kind of ['initial','reminder'] as const) {
+      const preview = await previewPresentationMail(s.database, s.fixture.admin, s.fixture.eventId, { kind, abstractIds: [s.fixture.abstractId] });
+      const label = type === 'highlighted-poster' ? 'Highlighted Poster' : type === 'oral' ? 'Oral' : 'Poster';
+      assert.equal(preview.messages.length, 1);
+      assert.ok(preview.messages[0].subject.includes(label));
+      assert.ok(preview.messages[0].html.includes(`Presentation%20${type === 'oral' ? 'Oral' : 'Poster'}%20Template.zip`));
+    }
+    assert.equal((await s.client`SELECT count(*)::int AS n FROM presentation_email_jobs`)[0].n, 0);
+  }
+});
+
 test('Oral round 1 and 2 use all four previewed mails and the fresh worker owner gate', async t => {
   for (const round of [1, 2] as const) {
     const s = await preparePresentationScenario(t, { type: 'oral', round });

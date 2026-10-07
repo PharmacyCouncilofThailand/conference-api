@@ -65,7 +65,7 @@ function revisionDto(r:RevisionDto,now:Date):RevisionDto{
 // ponytail: bounded conference roster; switch to SQL filtering/pagination if events grow to thousands of works.
 async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:number,now:Date,allowedTypes:Array<'oral'|'poster'>|null=null):Promise<PresentationListRow[]>{
  if(allowedTypes!==null&&allowedTypes.length===0)return [];
- const typeScope=allowedTypes===null?sql`true`:sql`ab.presentation_type IN (SELECT jsonb_array_elements_text(${JSON.stringify(allowedTypes)}::jsonb))`;
+ const typeScope=allowedTypes===null?sql`true`:sql`ab.presentation_type::text IN (SELECT jsonb_array_elements_text(${JSON.stringify(allowedTypes)}::jsonb))`;
  const announcements=await rows<RosterRecord>(q,sql`SELECT a.*,t.id AS target_id,t.abstract_id,t.current_upload_id,u.email AS submitter_email
   FROM presentation_announcements a LEFT JOIN presentation_targets t ON t.id=a.target_id LEFT JOIN abstracts ab ON ab.id=t.abstract_id AND ab.event_id=a.event_id
   LEFT JOIN users u ON u.id=ab.user_id WHERE a.event_id=${eventId} AND (a.source_row->>'presentationType' IN ('oral','poster','highlighted-poster')) AND ${typeScope}
