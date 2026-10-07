@@ -47,7 +47,7 @@ Initial รับสำเร็จหนึ่งครั้งต่อผล
 | 1 | Rename/contract | Presentation symbols/modules/types, DTO metadata ตรงกันทั้งสามโปรเจกต์; Poster ที่เป็นประเภท Abstract ยังถูกต้อง |
 | 2 | Source/reconcile | มี targets/initial rights สำหรับ Oral ที่ match; source/alias/duplicate/remap/withdrawal guards เดิม; ไม่คัดลอก source อีกรายการ |
 | 3 | Owner/upload policy | ตรวจ role/status/owner/event และ request/deadline เดิม; validation/provider ใช้ประเภท authoritative; idempotency ไม่รับไฟล์สำเร็จซ้ำ |
-| 4 | PDF validation/limits | Oral >=2 หน้า/50 MiB, Poster/Highlighted =1 หน้า/30 MiB; MIME/extension/content/EOF/encryption/filename ตรวจเดิม |
+| 4 | PDF validation/limits | Oral >=2 หน้า/50 MB, Poster/Highlighted =1 หน้า/30 MB; MIME/extension/content/EOF/encryption/filename ตรวจเดิม; MB เป็นป้ายแสดงผล เพดานเดิม 52,428,800 / 31,457,280 bytes |
 | 5 | API rename | Owner 2 และ BO 12 method/path contracts เปลี่ยน poster เป็น presentation; ไม่มี aliases/redirect; roster approved-abstracts URL เดิม |
 | 6 | Owner UI | presentation-submission, ประเภท/กติกา/Template ถูกต้อง, progress/confirmation/receipt/history/uncertain retry เดิม; ดู Oral ด้วย Drive link |
 | 7 | Auth/locale links | login/signup return, refresh และ language switch รักษา abstractId/requestId สำหรับ URL ใหม่; ไม่เก็บ poster route adapter |
@@ -154,7 +154,7 @@ Worker เดียวสำหรับ mail/recovery/cleanup เลือก d
 
 MailPayload ต้องมี authoritative announcement/presentation type รวม snapshot ของข้อมูลที่ใช้ render ข้อกำหนด/template/deadline ทำ preview fingerprint ให้ตรงกับ payload ที่ queue; worker รับทั้ง Oral/Poster และยืนยัน freshness/สิทธิ์เหมือนเดิม
 
-สี่ kind: initial, reminder, revision, receipt ใช้ renderer กลาง; label เป็น Oral/Poster/Highlighted Poster ตามงาน ข้อกำหนดระบุ page policy และ MiB ตามตาราง Receipt อ้าง upload/version/receivedAt ของไฟล์ accepted เท่านั้น Receipt template failure ไม่ทำให้ไฟล์ที่บันทึกสำเร็จหาย
+สี่ kind: initial, reminder, revision, receipt ใช้ renderer กลาง; label เป็น Oral/Poster/Highlighted Poster ตามงาน ข้อกำหนดระบุ page policy และ MB ตามตาราง Receipt อ้าง upload/version/receivedAt ของไฟล์ accepted เท่านั้น Receipt template failure ไม่ทำให้ไฟล์ที่บันทึกสำเร็จหาย
 
 Template Oral ในหน้าและ initial/reminder/revision:
 

@@ -59,7 +59,7 @@ test('Oral requires at least two PDF pages with no maximum and retains byte iden
   }
 });
 
-test('Oral accepts exactly 50 MiB and rejects one byte more; Poster keeps its 30 MiB cap', async () => {
+test('Oral accepts exactly 50 MB and rejects one byte more; Poster keeps its 30 MB cap', async () => {
   const original = await pdf(2);
   const buffer = Buffer.concat([original, Buffer.alloc(MAX_ORAL_BYTES - original.length, 32)]);
   const input = {buffer, filename: 'slides.pdf', mimetype: 'application/pdf'};

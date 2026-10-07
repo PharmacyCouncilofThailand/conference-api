@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ApiError } from '../../errors/ApiError.js';
 import type { MailPayload } from './types.js';
+import { maxPresentationBytes } from './policy.js';
 
 const escape = (text: string) => text.replace(/[&<>"']/g, char =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
@@ -32,6 +33,7 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
   if (!z.string().email().safeParse(p.recipient).success) throw Error('PRESENTATION_EMAIL_INVALID');
   if (!['oral', 'poster', 'highlighted-poster'].includes(p.presentationType)) throw Error('PRESENTATION_TYPE_INVALID');
   const oral = p.presentationType === 'oral';
+  const maxMB = maxPresentationBytes(oral ? 'oral' : 'poster') / (1024 * 1024);
   const type = oral ? 'Oral' : p.presentationType === 'highlighted-poster' ? 'Highlighted Poster' : 'Poster';
   const template = oral ? 'Oral' : 'Poster';
   if (p.kind !== 'receipt') {
@@ -49,7 +51,7 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
     </ul>
     <p><strong>ข้อกำหนดของไฟล์</strong></p>
     <ul>
-      <li>ไฟล์ PDF จำนวนหนึ่งไฟล์ ${oral ? 'อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MiB' : 'หนึ่งหน้า ขนาดไม่เกิน 30 MiB'}</li>
+      <li>ไฟล์ PDF จำนวนหนึ่งไฟล์ ${oral ? 'อย่างน้อย 2 หน้า' : 'หนึ่งหน้า'} ขนาดไม่เกิน ${maxMB} MB</li>
       <li>ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน</li>
     </ul>
     <p><a href="https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20${template}%20Template.zip">ดาวน์โหลด Template สำหรับ ${template} (.ZIP)</a></p>

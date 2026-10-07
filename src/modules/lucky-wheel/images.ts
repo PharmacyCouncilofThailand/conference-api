@@ -204,7 +204,7 @@ export async function normalizeWheelImage(
     throw new WheelImageError(
       400,
       "IMAGE_TOO_LARGE",
-      "Lucky Wheel image must be 5 MiB or smaller",
+      "Lucky Wheel image must be 5 MB or smaller",
     );
   }
 
@@ -299,7 +299,7 @@ export async function normalizeWheelImage(
     throw new WheelImageError(
       400,
       "IMAGE_TOO_LARGE",
-      "Normalized Lucky Wheel image exceeds 5 MiB",
+      "Normalized Lucky Wheel image exceeds 5 MB",
     );
   }
 

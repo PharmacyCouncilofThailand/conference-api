@@ -32,7 +32,7 @@ test('all four emails select trusted type wording, requirements and Template for
         assert.ok(result.html.includes('&lt;slides&gt;.pdf')); assert.ok(result.html.includes('14.12.34'));
         assert.equal(result.html.includes('Template'), false); assert.equal(result.html.includes('PRIS_'), false);
       } else {
-        assert.ok(result.html.includes(type === 'oral' ? 'อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MiB' : 'หนึ่งหน้า ขนาดไม่เกิน 30 MiB'));
+        assert.ok(result.html.includes(type === 'oral' ? 'อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MB' : 'หนึ่งหน้า ขนาดไม่เกิน 30 MB'));
         assert.ok(result.html.includes(`Presentation%20${type === 'oral' ? 'Oral' : 'Poster'}%20Template.zip`));
         assert.ok(result.html.includes('20 ตุลาคม 2569 เวลา 23.59.59'));
         if (kind === 'revision') assert.ok(result.html.includes('&lt;script&gt;change&lt;/script&gt;<br>Keep originals'));
@@ -55,7 +55,7 @@ test('initial notification uses invitation-style paragraphs, actual lists, bold 
   assert.ok(result.html.includes('<p>สภาเภสัชกรรม</p>\n    <p>(The Pharmacy Council of Thailand)</p>'));
   assert.ok(result.html.includes('&lt;script&gt;x&lt;/script&gt;')); assert.equal(result.html.includes('<script>'), false);
   assert.ok(result.html.includes('ชื่อ &amp; &quot;นามสกุล&quot;'));
-  for (const text of ['30 MiB', 'ไม่ตั้งรหัสผ่าน', 'abstractId=501', 'pr@pharmacycouncil.org', '15 ตุลาคม 2569 เวลา 23.59.59']) assert.ok(result.html.includes(text));
+  for (const text of ['30 MB', 'ไม่ตั้งรหัสผ่าน', 'abstractId=501', 'pr@pharmacycouncil.org', '15 ตุลาคม 2569 เวลา 23.59.59']) assert.ok(result.html.includes(text));
   assert.equal(result.html.includes('pharmactcouncil'), false);
   assert.equal(result.html.includes('PNG'), false);
   const changed = renderPresentationEmail({ ...payload, closesAt: '2026-10-21T05:30:00Z' });
@@ -101,7 +101,7 @@ test('revision drafts preserve details and bind their link and deadline to the r
   assert.ok(result.html.includes('<p><em>หมายเหตุ:'));
   assert.ok(!result.html.includes('<img'));
   assert.equal(result.html.includes('PNG'), false);
-  assert.ok(result.html.includes('ไฟล์ PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MiB'));
+  assert.ok(result.html.includes('ไฟล์ PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MB'));
   assert.throws(() => renderPresentationEmail({ ...payload, kind: 'revision', revisionRequestId: requestId, closesAt: null }), /PRESENTATION_MAIL_DEADLINE_MISSING/);
 });
 

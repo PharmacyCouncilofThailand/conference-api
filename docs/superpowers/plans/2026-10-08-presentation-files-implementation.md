@@ -819,7 +819,7 @@ const typeScope=allowedTypes===null?sql`true`:
 
 **Interfaces:** GET `/:abstractId/presentation`; POST `/:abstractId/presentation-uploads`; twelve BO method/path pairs retain existing envelopes and parameter/body semantics with `presentation-*` tokens. POST accepts exactly one file field and optional UUID requestId; client-supplied type/provider rejected. No old paths registered.
 
-- [x] Add route tests for new owner/BO paths, strict type query oral/poster/highlighted-poster, unknown multipart fields, wrong owner before byte buffering, oral 50MiB/Poster30MiB caps, old paths 404, auth/idempotency unchanged.
+- [x] Add route tests for new owner/BO paths, strict type query oral/poster/highlighted-poster, unknown multipart fields, wrong owner before byte buffering, oral 50MB/Poster30MB caps, old paths 404, auth/idempotency unchanged.
 
 ```ts
 test('new owner route is registered and the old route has no adapter',async t=>{
@@ -860,7 +860,7 @@ const input=await readPresentationMultipart(request,maxPresentationBytes(owner.p
 ```
 
 - [x] Extend `listQuerySchema.presentationType` to z.enum(['oral','poster','highlighted-poster']); register owner and BO plugins under existing /api/abstracts and /api/backoffice prefixes. Preserve approved-abstracts public roster endpoint and its allowlist response.
-- [x] Map Fastify multipart errors to PRESENTATION codes/statuses like the existing implementation; global multipart 50MiB already matches the Oral ceiling, so do not increase global caps for unrelated uploads.
+- [x] Map Fastify multipart errors to PRESENTATION codes/statuses like the existing implementation; global multipart 50MB already matches the Oral ceiling, so do not increase global caps for unrelated uploads.
 - [x] Run route integrations to PASS; full typecheck is Task 13 after mail and client DTO consumers converge. Commit `feat(presentations): expose renamed APIs with authoritative upload bounds`.
 
 ## Task 9: Participant Presentation page, selection, links and bilingual copy
@@ -869,7 +869,7 @@ const input=await readPresentationMultipart(request,maxPresentationBytes(owner.p
 
 **Interfaces:** `getOwnerPresentation(token,abstractId,requestId?,signal?):Promise<OwnerPresentationDto>`; `uploadPresentation({token,abstractId,requestId,file,key,onProgress,signal?}):Promise<{upload:UploadDto;replayed:boolean}>`; `fileProblem(file,type:AnnouncementType):string|null`; `presentationReturnPath(search):string|null`. DTO/fileUrl/name fields are exactly Task 3's contract; errors use PRESENTATION prefix.
 
-- [x] Extend selection and workspace/page tests with Oral DTO, 50MiB ceiling, Oral requirements/template, Drive URL history/current link, original filename shown, filename retained for confirm/receipt and type-specific size text. Keep uncertainty/key/remount/100%-progress/focus assertions. Add redirect tests with the new path and duplicate/invalid abstractId/requestId cases.
+- [x] Extend selection and workspace/page tests with Oral DTO, 50MB ceiling, Oral requirements/template, Drive URL history/current link, original filename shown, filename retained for confirm/receipt and type-specific size text. Keep uncertainty/key/remount/100%-progress/focus assertions. Add redirect tests with the new path and duplicate/invalid abstractId/requestId cases.
 
 ```ts
 test('declared sizes are checked against the owner type',()=>{
@@ -897,7 +897,7 @@ export function fileProblem(file:File,type:AnnouncementType):string|null {
 ```tsx
 const oral=o.presentationType==='oral';
 const typeKey=oral?'oral':o.presentationType==='highlighted-poster'?'highlighted':'poster';
-const maxMiB=oral?50:30;
+const maxMB=oral?50:30;
 const pageRule=t(oral?'pageRuleOral':'pageRulePoster');
 const templateUrl=oral
   ?'https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20Oral%20Template.zip'
@@ -906,9 +906,9 @@ const templateUrl=oral
 <PageHero title1={t(o.selectedRequest?'revisionHeroTitle':'heroTitle')} title2={t(typeKey)} inlineTitle inlineTitleTight />
 <p>{t(oral?'requirementsOral':'requirementsPoster')}</p>
 <a href={templateUrl} target="_blank" rel="noopener noreferrer">{t(oral?'downloadOralTemplate':'downloadPosterTemplate')}</a>
-<span>PDF · {maxMiB} MiB</span>
+<span>PDF · {maxMB} MB</span>
 <a href={o.currentUpload!.fileUrl} target="_blank" rel="noopener noreferrer">{o.currentUpload!.fileName}</a>
-{p.error&&<p role="alert">{t.has(`errors.${p.error}`)?t(`errors.${p.error}`,{maxMiB,pageRule}):t('uploadError')}</p>}
+{p.error&&<p role="alert">{t.has(`errors.${p.error}`)?t(`errors.${p.error}`,{maxMB,pageRule}):t('uploadError')}</p>}
 ```
 
 The JSX snippets replace existing elements, not adjacent duplicated UI. currentUpload's anchor remains inside its existing non-null condition.
@@ -922,27 +922,27 @@ The JSX snippets replace existing elements, not adjacent duplicated UI. currentU
 {
   "th": {
     "oral": "Oral",
-    "requirementsOral": "ไฟล์ PDF หนึ่งไฟล์ อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MiB และไม่ตั้งรหัสผ่าน",
-    "requirementsPoster": "ไฟล์ PDF หนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MiB และไม่ตั้งรหัสผ่าน",
+    "requirementsOral": "ไฟล์ PDF หนึ่งไฟล์ อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MB และไม่ตั้งรหัสผ่าน",
+    "requirementsPoster": "ไฟล์ PDF หนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MB และไม่ตั้งรหัสผ่าน",
     "downloadOralTemplate": "ดาวน์โหลด Template สำหรับ Oral (.ZIP)",
     "downloadPosterTemplate": "ดาวน์โหลด Template สำหรับ Poster (.ZIP)",
     "pageRuleOral": "อย่างน้อย 2 หน้า",
     "pageRulePoster": "หนึ่งหน้า",
     "errors": {
-      "PRESENTATION_FILE_TOO_LARGE": "ไฟล์ต้องมีขนาดไม่เกิน {maxMiB} MiB",
+      "PRESENTATION_FILE_TOO_LARGE": "ไฟล์ต้องมีขนาดไม่เกิน {maxMB} MB",
       "PRESENTATION_PDF_PAGE_COUNT": "ไฟล์ PDF ต้องมี {pageRule}"
     }
   },
   "en": {
     "oral": "Oral",
-    "requirementsOral": "One PDF file, at least 2 pages, maximum 50 MiB, without password protection.",
-    "requirementsPoster": "One PDF file, exactly 1 page, maximum 30 MiB, without password protection.",
+    "requirementsOral": "One PDF file, at least 2 pages, maximum 50 MB, without password protection.",
+    "requirementsPoster": "One PDF file, exactly 1 page, maximum 30 MB, without password protection.",
     "downloadOralTemplate": "Download Oral Template (.ZIP)",
     "downloadPosterTemplate": "Download Poster Template (.ZIP)",
     "pageRuleOral": "at least 2 pages",
     "pageRulePoster": "exactly 1 page",
     "errors": {
-      "PRESENTATION_FILE_TOO_LARGE": "The file must not exceed {maxMiB} MiB.",
+      "PRESENTATION_FILE_TOO_LARGE": "The file must not exceed {maxMB} MB.",
       "PRESENTATION_PDF_PAGE_COUNT": "The PDF must have {pageRule}."
     }
   }
@@ -1026,15 +1026,15 @@ Update helper text to “เลือกประเภทที่เจ้า�
 - [x] Add tests across 3 announcement types × 4 mail kinds for subject/type/requirements/template/link/deadline/escaping. Verify no receipt Template requirement, correct received upload version/name/time, HTML escaping of original filename/revision details and no actual provider calls. Existing email transport tests stay unchanged except import path/name.
 
 ```ts
-test('Oral initial email uses the Oral ZIP, two-page minimum and 50 MiB',()=>{
+test('Oral initial email uses the Oral ZIP, two-page minimum and 50 MB',()=>{
   const payload:MailPayload={kind:'initial',abstractId:1,trackingId:'PRIS-2026-O001',title:'Synthetic <title>',
     submitterName:'Synthetic Owner',recipient:'owner@example.invalid',websiteOrigin:'https://example.invalid',
     closesAt:'2026-10-20T17:00:00.000Z',revisionRequestId:null,revisionDetails:null,upload:null,presentationType:'oral'};
   const rendered=renderPresentationEmail(payload);
   assert.match(rendered.subject,/Oral/);assert.match(rendered.html,/อย่างน้อย 2 หน้า/);
-  assert.match(rendered.html,/50 MiB/);assert.match(rendered.html,/Presentation%20Oral%20Template.zip/);
+  assert.match(rendered.html,/50 MB/);assert.match(rendered.html,/Presentation%20Oral%20Template.zip/);
   assert.match(rendered.html,/presentation-submission\?abstractId=1/);
-  assert.match(rendered.html,/Synthetic &lt;title&gt;/);assert.doesNotMatch(rendered.html,/30 MiB/);
+  assert.match(rendered.html,/Synthetic &lt;title&gt;/);assert.doesNotMatch(rendered.html,/30 MB/);
 });
 ```
 - [x] Run mail tests to fail for Oral text/worker gate. Add complete renderer helpers and replace the pure renderer while preserving contact/signature and not using unescaped DB fields:
@@ -1069,7 +1069,7 @@ export function renderPresentationEmail(p:MailPayload):{subject:string;html:stri
       <ul><li><strong>รหัสผลงาน:</strong> ${escape(p.trackingId)}</li><li><strong>ชื่อผลงาน:</strong> ${escape(p.title)}</li>
       ${p.kind==='revision'?`<li><strong>รายละเอียดการแก้ไข:</strong> ${escape(p.revisionDetails??'').replace(/\r?\n/g,'<br>')}</li>`:''}
       <li><strong>กำหนดส่ง:</strong> ${escape(thaiDate(p.closesAt,-1000))} น. (เวลาประเทศไทย)</li></ul>
-      <p><strong>ข้อกำหนดของไฟล์</strong></p><ul><li>ไฟล์ PDF หนึ่งไฟล์ ${oral?'อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MiB':'หนึ่งหน้า ขนาดไม่เกิน 30 MiB'}</li><li>ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน</li></ul>
+      <p><strong>ข้อกำหนดของไฟล์</strong></p><ul><li>ไฟล์ PDF หนึ่งไฟล์ ${oral?'อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MB':'หนึ่งหน้า ขนาดไม่เกิน 30 MB'}</li><li>ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน</li></ul>
       <p><a href="${oral?oralTemplate:posterTemplate}">ดาวน์โหลด Template สำหรับ ${oral?'Oral':'Poster'} (.ZIP)</a></p>
       <p><strong>ขั้นตอนและเงื่อนไขการส่ง</strong></p><ol><li>เข้าสู่ระบบด้วยบัญชีที่ใช้ส่งบทคัดย่อของผลงานนี้</li>
       <li>การส่งสำเร็จเมื่อระบบตรวจสอบและบันทึกไฟล์เรียบร้อยแล้ว</li><li>สิทธิ์นี้ส่งสำเร็จได้หนึ่งครั้ง หากต้องการแก้ไขภายหลังกรุณาติดต่อเจ้าหน้าที่</li></ol>
@@ -1209,7 +1209,7 @@ rg -n 'modules/posters|components/posters|types/posters|poster-submission|/poste
 | --- | --- |
 | Full workflow rename/no legacy routes or jobs | 1, 8, 9, 10, 11, 12, 13 |
 | Real source rounds 1/2/current owner/matching | 3, 6, 8, 13 |
-| Oral >=2 pages/50MiB, Poster1page/30MiB | 2, 3, 6, 8, 9, 11 |
+| Oral >=2 pages/50MB, Poster1page/30MB | 2, 3, 6, 8, 9, 11 |
 | Shared editable Thai deadline | 2, 3, 6, 9, 10, 11, 12 |
 | Existing initial/revision lifecycle and data checks | 5, 6, 7, 11, 13 |
 | Staff event AND type, empty none, Highlighted=poster | 2, 7, 10, 13 |
@@ -1262,7 +1262,7 @@ Final gates on the delivered source:
 - `git diff --check` passed in all three repos. No package-lock/dependency changes, no private file proxy, no new Drive root ENV, no type-reset workflow, no old route/job adapter. Historical 0038 is unchanged.
 - Inventory checked by exact final paths: all 84 entries exist and changed relative to pre-implementation snapshots. Scope remains 82 existing files plus two new files; final implementation count is 84. This plan's checkpoint update is one additional documentation path, excluded from that implementation count. Moves are counted once, not as old-path deletion plus new-path addition.
 - SQL review: only ten named legacy tables, their request-immutability function and workflow index are replaced; no operational CASCADE/schema reset/external file deletion. Migration tests verify preserved unrelated data and transaction rollback.
-- Local browser checks used synthetic API doubles/accounts/PDFs, not live providers: TH/EN Oral initial submission, unknown outcome and same File/key retry, server receipt/Drive URL, revision/current/history; Poster page-count rejection and 30 MiB+1 client rejection; Organizer Oral-only, Reviewer Poster plus Highlighted, empty types zero records; Admin preview/confirm batch and immutable revision creation with retained file history. Browser request evidence confirms identical file digest and idempotency key across unknown retry.
+- Local browser checks used synthetic API doubles/accounts/PDFs, not live providers: TH/EN Oral initial submission, unknown outcome and same File/key retry, server receipt/Drive URL, revision/current/history; Poster page-count rejection and 30 MB+1 client rejection; Organizer Oral-only, Reviewer Poster plus Highlighted, empty types zero records; Admin preview/confirm batch and immutable revision creation with retained file history. Browser request evidence confirms identical file digest and idempotency key across unknown retry.
 - Screenshots and logs are local untracked artifacts under `D:/confer/confer/conference/.test-artifacts/presentations/`; owner receipt image is `owner-oral-receipt.jpg`, staff Oral detail is `backoffice-oral.jpg`. Temporary browser tabs and local preview/fixture processes were closed/stopped after verification.
 - Round 2 user file remains unstaged at its new path. Original SHA256 remains exactly `930259132212DF4983D9AE5119369CB37A67DAED585D50BE56696A63762DF0DA`; both LOCAL MANUAL TEST ONLY rows are preserved. Official Round 1 JSON hash/count remain unchanged and are directly tested. Release must exclude those local Round 2 test rows and review real source/DB matching before deployment.
 - Authorized Docker container `pris2026-presentation-test-20261008` remains healthy at `127.0.0.1:55073`, DB `confer_posters_integration_test`. Credentials are only in local untracked ENV files. Existing DB target guard was not loosened.

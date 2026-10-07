@@ -54,7 +54,7 @@ test('Oral round 1 and 2 use all four previewed mails and the fresh worker owner
       const id = await notice(s, kind);
       await runPresentationMailOnce(s.database, transport);
       assert.equal((await s.client`SELECT state FROM presentation_email_jobs WHERE id=${id}`)[0].state, 'sent');
-      assert.match(sent.at(-1)!.subject, /Oral/); assert.match(sent.at(-1)!.html, /50 MiB/);
+      assert.match(sent.at(-1)!.subject, /Oral/); assert.match(sent.at(-1)!.html, /50 MB/);
       assert.match(sent.at(-1)!.html, /Presentation%20Oral%20Template.zip/);
     }
     const drive: PresentationStorage = { ...storage, drive: { rootFolderId: () => 'root', generateId: async () => randomUUID(),

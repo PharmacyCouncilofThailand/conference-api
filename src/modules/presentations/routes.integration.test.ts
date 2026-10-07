@@ -129,7 +129,8 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  const png=await sharp({create:{width:8,height:8,channels:3,background:'white'}}).png().toBuffer();
  const upload=async(buffer:Buffer,status:number,options:{files?:number;filename?:string;type?:string;requestId?:string;key?:string;headers?:object}={})=>{
   const body=form(buffer,options.filename,options.type,options.requestId,options.files);
-  const r=await app.inject({method:'POST',url:uploadUrl,...body,headers:{...owner,...body.headers,'idempotency-key':options.key??randomUUID(),...options.headers}});assert.equal(r.statusCode,status,r.body);return r.json();
+  const r=await app.inject({method:'POST',url:uploadUrl,...body,headers:{...owner,...body.headers,'idempotency-key':options.key??randomUUID(),...options.headers}});assert.equal(r.statusCode,status,r.body);
+  if(status===413)assert.equal(r.json().code,'PRESENTATION_FILE_TOO_LARGE');return r.json();
  };
  await upload(pdf,400,{key:'invalid'});await upload(pdf,422,{files:0});await upload(Buffer.alloc(0),422);await upload(pdf,422,{files:2});await upload(Buffer.alloc(MAX_POSTER_BYTES+1),413);
  await upload(Buffer.from('%PDF-1.7 invalid'),422);await upload(pdf,415,{filename:'poster.jpg'});await upload(pdf,415,{type:'text/plain'});
@@ -184,7 +185,7 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  assert.equal((await get(base+'/presentation-settings')).history.length,1);
 });
 
-test('Oral route buffers at most 50 MiB, rejects client type/provider and accepts multi-page PDF using Drive', {timeout:30000}, async t=>{
+test('Oral route buffers at most 50 MB, rejects client type/provider and accepts multi-page PDF using Drive', {timeout:30000}, async t=>{
  const {database,fixture:f}=await preparePresentationScenario(t,{type:'oral'});
  process.env.PRESENTATION_SUBMISSIONS_ENABLED='true';
  let writes=0;
@@ -204,7 +205,8 @@ test('Oral route buffers at most 50 MiB, rejects client type/provider and accept
   if(extraField){const last=Buffer.from('--poster-test-boundary--\r\n');body.payload=Buffer.concat([body.payload.subarray(0,body.payload.length-last.length),
    Buffer.from(`--poster-test-boundary\r\nContent-Disposition: form-data; name="${extraField}"\r\n\r\noral\r\n`),last]);}
   const response=await app.inject({method:'POST',url,...body,headers:{...headers,...body.headers}});
-  assert.equal(response.statusCode,status,response.body);return response.json();
+  assert.equal(response.statusCode,status,response.body);
+  if(status===413)assert.equal(response.json().code,'PRESENTATION_FILE_TOO_LARGE');return response.json();
  };
  await send(Buffer.alloc(MAX_ORAL_BYTES+1),413);
  const document=await PDFDocument.create();document.addPage();
