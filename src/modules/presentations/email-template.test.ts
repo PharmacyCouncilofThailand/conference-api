@@ -172,8 +172,8 @@ test('local HTTP previews work outside production while remote HTTP remains reje
       const request = kind === 'revision' ? requestId : undefined;
       const href = buildSubmissionUrl(origin, 2, request).replace(/&/g, '&amp;');
       const { html } = renderPresentationEmail({ ...payload, abstractId: 2, websiteOrigin: origin, kind, revisionRequestId: request ?? null });
-      assert.ok(html.includes(`<p>ส่งไฟล์นำเสนอที่นี่</p>\n    <p>${href}</p>`));
-      assert.ok(!html.includes(`<a href="${href}">`));
+      assert.ok(html.includes(`<p><a href="${href}">ส่งไฟล์นำเสนอที่นี่</a></p>`));
+      assert.ok(!html.includes(`<p>${href}</p>`));
     }
   }
   for (const origin of ['http://example.invalid', 'http://localhost.example.invalid',
