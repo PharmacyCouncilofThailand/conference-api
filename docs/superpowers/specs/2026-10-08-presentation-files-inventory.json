@@ -1,0 +1,422 @@
+[
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/access.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/backoffice.routes.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/email-jobs.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/email-template.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/file-validation.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/jobs-runner.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/operations.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/policy.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/public.routes.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/readers.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/reconcile.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/revisions.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/schemas.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/startup.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/storage.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/types.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/uploads.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/data/approvedRound1Abstracts.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/data/approvedRound2Abstracts.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/modules/posters/data/index.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/index.ts",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/package.json",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/Dockerfile",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/.env.example",
+    "new": false
+  },
+  {
+    "group": "api_runtime",
+    "path": "conference-api/src/services/googleDrive.ts",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/app/[locale]/poster-submission/page.tsx",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/components/posters/PosterWorkspace.tsx",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/components/posters/PosterConfirmDialog.tsx",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/components/posters/PosterSuccessDialog.tsx",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/lib/posterApi.ts",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/lib/posterSubmissionState.ts",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/types/posters.ts",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/components/layout/Header.tsx",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/lib/localizedRedirect.ts",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/lib/refreshRedirect.ts",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/messages/th.json",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/messages/en.json",
+    "new": false
+  },
+  {
+    "group": "pris_runtime",
+    "path": "Pris2026/src/app/[locale]/approved-abstracts/page.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/components/posters/PosterDialog.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/components/posters/PosterEmailDialog.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/components/posters/PosterHistoryViews.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/components/posters/PosterManagementDialog.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/components/posters/PosterRevisionDialog.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/components/posters/PosterTable.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/app/posters/page.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/app/posters/[abstractId]/page.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/types/posters.ts",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/lib/api.ts",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/lib/posterUi.ts",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/contexts/AuthContext.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/components/layout/Sidebar.tsx",
+    "new": false
+  },
+  {
+    "group": "bo_runtime",
+    "path": "conference-backoffice/src/app/users/page.tsx",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/access.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/data.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/deployment.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/email-jobs.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/email-template.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/file-validation.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/migration.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/operations.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/policy.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/readers.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/readers.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/reconcile.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/revisions.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/routes.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/storage.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/test-support.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/uploads.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/modules/posters/workflow.integration.test.ts",
+    "new": false
+  },
+  {
+    "group": "api_tests",
+    "path": "conference-api/src/services/emailService.test.ts",
+    "new": false
+  },
+  {
+    "group": "pris_tests",
+    "path": "Pris2026/src/lib/posterApi.test.ts",
+    "new": false
+  },
+  {
+    "group": "pris_tests",
+    "path": "Pris2026/src/lib/posterSubmissionState.test.ts",
+    "new": false
+  },
+  {
+    "group": "pris_tests",
+    "path": "Pris2026/src/lib/posterPage.test.ts",
+    "new": false
+  },
+  {
+    "group": "pris_tests",
+    "path": "Pris2026/src/lib/posterWorkspace.test.ts",
+    "new": false
+  },
+  {
+    "group": "pris_tests",
+    "path": "Pris2026/src/lib/localizedRedirect.test.ts",
+    "new": false
+  },
+  {
+    "group": "pris_tests",
+    "path": "Pris2026/src/lib/refreshRedirect.test.ts",
+    "new": false
+  },
+  {
+    "group": "pris_tests",
+    "path": "Pris2026/src/lib/approvedAnnouncementsPage.test.ts",
+    "new": false
+  },
+  {
+    "group": "bo_tests",
+    "path": "conference-backoffice/src/lib/posterUi.test.ts",
+    "new": false
+  },
+  {
+    "group": "operations",
+    "path": "conference-api/docs/superpowers/runbooks/pris2026-posters.md",
+    "new": false
+  },
+  {
+    "group": "operations",
+    "path": "conference-api/sql/posters-setup/02_verify.sql",
+    "new": false
+  },
+  {
+    "group": "operations",
+    "path": "conference-api/sql/posters-setup/01_preflight.sql",
+    "new": false
+  },
+  {
+    "group": "new_files",
+    "path": "conference-api/drizzle/0039_pris2026_presentations.sql",
+    "new": true
+  },
+  {
+    "group": "new_files",
+    "path": "conference-api/src/services/googleDrive.presentation.test.ts",
+    "new": true
+  }
+]
