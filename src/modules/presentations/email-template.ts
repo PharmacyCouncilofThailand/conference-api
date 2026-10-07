@@ -51,7 +51,7 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
     </ul>
     <p><strong>ข้อกำหนดของไฟล์</strong></p>
     <ul>
-      <li>ไฟล์ PDF จำนวนหนึ่งไฟล์ ${oral ? 'อย่างน้อย 2 หน้า' : 'หนึ่งหน้า'} ขนาดไม่เกิน ${maxMB} MB</li>
+      <li>ไฟล์ PDF จำนวนหนึ่งไฟล์ ${oral ? '' : 'หนึ่งหน้า '}ขนาดไม่เกิน ${maxMB} MB</li>
       <li>ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน</li>
     </ul>
     <p><a href="https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20${template}%20Template.zip">ดาวน์โหลด Template สำหรับ ${template} (.ZIP)</a></p>

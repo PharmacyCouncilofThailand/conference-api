@@ -147,7 +147,7 @@ const pageRule = t(oral ? 'pageRuleOral' : 'pageRulePoster');
 
 ```json
 {
-  "requirementsOral": "ไฟล์ PDF หนึ่งไฟล์ อย่างน้อย 2 หน้า ขนาดไม่เกิน {maxMB} MB และไม่ตั้งรหัสผ่าน",
+  "requirementsOral": "ไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน {maxMB} MB และไม่ตั้งรหัสผ่าน",
   "requirementsPoster": "ไฟล์ PDF หนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน {maxMB} MB และไม่ตั้งรหัสผ่าน"
 }
 ```
@@ -156,7 +156,7 @@ const pageRule = t(oral ? 'pageRuleOral' : 'pageRulePoster');
 
 ```json
 {
-  "requirementsOral": "One PDF file, at least 2 pages, maximum {maxMB} MB, without password protection.",
+  "requirementsOral": "One PDF file, maximum {maxMB} MB, without password protection.",
   "requirementsPoster": "One PDF file, exactly 1 page, maximum {maxMB} MB, without password protection."
 }
 ```
@@ -173,10 +173,12 @@ const maxMB = maxPresentationBytes(oral ? 'oral' : 'poster') / (1024 * 1024);
 ส่วน HTML ภายใน template literal:
 
 ```ts
-<li>ไฟล์ PDF จำนวนหนึ่งไฟล์ ${oral ? 'อย่างน้อย 2 หน้า' : 'หนึ่งหน้า'} ขนาดไม่เกิน ${maxMB} MB</li>
+<li>ไฟล์ PDF จำนวนหนึ่งไฟล์ ${oral ? '' : 'หนึ่งหน้า '}ขนาดไม่เกิน ${maxMB} MB</li>
 ```
 
 ข้อความอีเมลอ่านขนาดจาก policy อัตโนมัติ รวม initial / reminder / revision; receipt ใช้รูปแบบยืนยันรับไฟล์เดิม
+
+หน้าเว็บและอีเมลไม่แสดงข้อความขั้นต่ำจำนวนหน้าของ Oral ตามที่อนุมัติ แต่ API ยังตรวจขั้นต่ำ 2 หน้าตามโค้ดในหัวข้อ 3
 
 ## หากเปลี่ยนขนาดในอนาคต
 

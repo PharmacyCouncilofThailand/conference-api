@@ -32,7 +32,8 @@ test('all four emails select trusted type wording, requirements and Template for
         assert.ok(result.html.includes('&lt;slides&gt;.pdf')); assert.ok(result.html.includes('14.12.34'));
         assert.equal(result.html.includes('Template'), false); assert.equal(result.html.includes('PRIS_'), false);
       } else {
-        assert.ok(result.html.includes(type === 'oral' ? 'อย่างน้อย 2 หน้า ขนาดไม่เกิน 50 MB' : 'หนึ่งหน้า ขนาดไม่เกิน 30 MB'));
+        assert.ok(result.html.includes(type === 'oral' ? 'ไฟล์ PDF จำนวนหนึ่งไฟล์ ขนาดไม่เกิน 50 MB' : 'หนึ่งหน้า ขนาดไม่เกิน 30 MB'));
+        if (type === 'oral') assert.equal(result.html.includes('อย่างน้อย 2 หน้า'), false);
         assert.ok(result.html.includes(`Presentation%20${type === 'oral' ? 'Oral' : 'Poster'}%20Template.zip`));
         assert.ok(result.html.includes('20 ตุลาคม 2569 เวลา 23.59.59'));
         if (kind === 'revision') assert.ok(result.html.includes('&lt;script&gt;change&lt;/script&gt;<br>Keep originals'));
