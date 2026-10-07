@@ -145,6 +145,9 @@ test('links use the trusted HTTPS origin and only work/request identifiers', () 
 });
 
 test('local HTTP previews work outside production while remote HTTP remains rejected', () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'development';
+  try {
   for (const origin of ['http://localhost:3003', 'http://127.0.0.1:3003', 'http://[::1]:3003']) {
     const url = new URL(buildSubmissionUrl(origin, 2, requestId, 'development'));
     assert.equal(url.origin, origin);
@@ -153,11 +156,21 @@ test('local HTTP previews work outside production while remote HTTP remains reje
     assert.equal(url.searchParams.get('requestId'), requestId);
     assert.throws(() => buildSubmissionUrl(origin, 2, undefined, 'production'),
       { code: 'PRESENTATION_WEBSITE_INVALID', statusCode: 503 });
+    for (const kind of ['initial', 'reminder', 'revision'] as const) {
+      const request = kind === 'revision' ? requestId : undefined;
+      const href = buildSubmissionUrl(origin, 2, request).replace(/&/g, '&amp;');
+      const { html } = renderPresentationEmail({ ...payload, abstractId: 2, websiteOrigin: origin, kind, revisionRequestId: request ?? null });
+      assert.ok(html.includes(`<p>ส่งไฟล์นำเสนอที่นี่</p>\n    <p>${href}</p>`));
+      assert.ok(!html.includes(`<a href="${href}">`));
+    }
   }
   for (const origin of ['http://example.invalid', 'http://localhost.example.invalid',
     'http://localhost:3003?redirect=evil', 'http://user:pass@localhost:3003']) {
     assert.throws(() => buildSubmissionUrl(origin, 2, undefined, 'development'),
       { code: 'PRESENTATION_WEBSITE_INVALID', statusCode: 503 });
+  }
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousNodeEnv;
   }
 });
 
