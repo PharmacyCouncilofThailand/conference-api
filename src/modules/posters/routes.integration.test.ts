@@ -6,6 +6,7 @@ import type {PosterActor} from './types.js';
 import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
 import sharp from 'sharp';
+import { PDFDocument } from 'pdf-lib';
 import { ApiError } from '../../errors/ApiError.js';
 import { posterAnnouncementRoutes, posterOwnerRoutes } from './public.routes.js';
 import { posterBackofficeRoutes } from './backoffice.routes.js';
@@ -13,7 +14,7 @@ import { preparePosterScenario } from './test-support.js';
 import { reconcilePosters } from './reconcile.js';
 import { MAX_POSTER_BYTES } from './policy.js';
 
-function form(buffer:Buffer,filename='poster.png',type='image/png',extra='',files=1){
+function form(buffer:Buffer,filename='poster.pdf',type='application/pdf',extra='',files=1){
  const boundary='poster-test-boundary';
  const parts=[];
  for(let i=0;i<files;i++)parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${type}\r\n\r\n`),buffer,Buffer.from('\r\n'));
@@ -79,7 +80,9 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  await sql`INSERT INTO backoffice_users(email,role) VALUES ('reviewer@example.invalid','reviewer')`;
  const reviewer=auth({id:2,email:'reviewer@example.invalid',role:'reviewer'});
  await get(base+'/poster-settings',reviewer,403);await sql`INSERT INTO staff_event_assignments VALUES (2,${f.eventId})`;
- assert.equal((await get(base+'/poster-settings',reviewer)).capabilities.manage,false);
+ await get(base+'/poster-settings',reviewer,403);
+ assert.equal((await get(base+'/poster-targets',reviewer)).total,0);
+ await get(base+`/poster-targets/${f.abstractId}`,reviewer,404);
  const writeCases:Array<['POST'|'PATCH',string,unknown]>=[
  ['POST','/poster-reconciliations',{}],['POST','/poster-verifications',{sourceKey:'1:1',fingerprint:'a'.repeat(64),reason:'Checked'}],
  ['PATCH','/poster-settings',{closesAt:new Date(Date.now()+3600000).toISOString(),reason:'Change',version:1}],
@@ -92,7 +95,7 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  await sql`UPDATE backoffice_users SET role='organizer' WHERE id=2`;
  await get(base+'/poster-settings',reviewer,403);
  const organizer=auth({id:2,email:'reviewer@example.invalid',role:'organizer'});
- await get(base+'/poster-settings',organizer);for(const [method,path,payload]of writeCases)await send(method,base+path,payload,403,organizer);
+ await get(base+'/poster-settings',organizer,403);for(const [method,path,payload]of writeCases)await send(method,base+path,payload,403,organizer);
  await sql`UPDATE backoffice_users SET is_active=false WHERE id=2`;await get(base+'/poster-settings',organizer,403);
  await send('POST',base+'/poster-reconciliations',{rows:[]},400);
  await send('PATCH',base+'/poster-settings',{closesAt:new Date(Date.now()+3600000).toISOString(),version:1,reason:'Adjust',extra:true},400);
@@ -120,17 +123,19 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  await sql`UPDATE poster_email_jobs SET state='failed',error_code='TEST' WHERE id=${batch.jobIds[0]}`;
  const resendPreview=await send('POST',base+'/poster-email-previews',{kind:'resend',jobId:batch.jobIds[0]},200);
  await send('POST',base+`/poster-email-jobs/${batch.jobIds[0]}/resends`,{previewFingerprint:resendPreview.fingerprint},202,admin,randomUUID(),true);
+ const document=await PDFDocument.create();document.addPage();const pdf=Buffer.from(await document.save());
  const png=await sharp({create:{width:8,height:8,channels:3,background:'white'}}).png().toBuffer();
  const upload=async(buffer:Buffer,status:number,options:{files?:number;filename?:string;type?:string;requestId?:string;key?:string;headers?:object}={})=>{
   const body=form(buffer,options.filename,options.type,options.requestId,options.files);
   const r=await app.inject({method:'POST',url:uploadUrl,...body,headers:{...owner,...body.headers,'idempotency-key':options.key??randomUUID(),...options.headers}});assert.equal(r.statusCode,status,r.body);return r.json();
  };
- await upload(png,400,{key:'invalid'});await upload(png,422,{files:0});await upload(Buffer.alloc(0),422);await upload(png,422,{files:2});await upload(Buffer.alloc(MAX_POSTER_BYTES+1),413);
- await upload(Buffer.from('invalid png'),422);await upload(png,415,{filename:'poster.jpg'});await upload(png,415,{type:'text/plain'});
- await upload(png,400,{requestId:'invalid'});await upload(png,403,{headers:other});
- process.env.POSTER_SUBMISSIONS_ENABLED='false';await upload(png,503);await get(ownerUrl,owner);await get(base+'/poster-settings');await get('/api/events/PRIS-2026/approved-abstracts',{});
- process.env.POSTER_SUBMISSIONS_ENABLED='true';const uploadKey=randomUUID();const uploaded=await upload(png,201,{key:uploadKey});const replayed=await upload(png,201,{key:uploadKey});
- assert.deepEqual(replayed.data.upload,uploaded.data.upload);assert.equal(replayed.data.replayed,true);assert.equal(objects.size,1);await upload(png,409);
+ await upload(pdf,400,{key:'invalid'});await upload(pdf,422,{files:0});await upload(Buffer.alloc(0),422);await upload(pdf,422,{files:2});await upload(Buffer.alloc(MAX_POSTER_BYTES+1),413);
+ await upload(Buffer.from('%PDF-1.7 invalid'),422);await upload(pdf,415,{filename:'poster.jpg'});await upload(pdf,415,{type:'text/plain'});
+ await upload(png,415,{filename:'poster.png',type:'image/png'});await upload(png,415);assert.equal(objects.size,0);
+ await upload(pdf,400,{requestId:'invalid'});await upload(pdf,403,{headers:other});
+ process.env.POSTER_SUBMISSIONS_ENABLED='false';await upload(pdf,503);await get(ownerUrl,owner);await get(base+'/poster-settings');await get('/api/events/PRIS-2026/approved-abstracts',{});
+ process.env.POSTER_SUBMISSIONS_ENABLED='true';const uploadKey=randomUUID();const uploaded=await upload(pdf,201,{key:uploadKey});const replayed=await upload(pdf,201,{key:uploadKey});
+ assert.deepEqual(replayed.data.upload,uploaded.data.upload);assert.equal(replayed.data.replayed,true);assert.equal(objects.size,1);await upload(pdf,409);
  const details='Improve labels';const revisionPreview=await send('POST',base+'/poster-email-previews',{kind:'revision',abstractId:f.abstractId,details,closesAt:close},200);
  const revision=await send('POST',base+`/poster-targets/${f.abstractId}/revision-requests`,{requestId:revisionPreview.requestId,details,closesAt:close,previewFingerprint:revisionPreview.fingerprint},201,admin,randomUUID(),true);
  assert.equal((await get(ownerUrl+'?requestId='+revision.request.id.toUpperCase(),owner)).mode,'revision');
@@ -138,13 +143,13 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  await sql`UPDATE abstracts SET presentation_type='poster' WHERE id=${f.abstractId}`;
  await send('POST',base+`/poster-revision-requests/${revision.request.id}/cancellations`,{reason:'Replace request'},201,admin,randomUUID(),true);
  assert.equal((await get(ownerUrl+'?requestId='+revision.request.id,owner)).blockCode,'POSTER_REQUEST_CANCELLED');
- await upload(png,409,{requestId:revision.request.id});
+ await upload(pdf,409,{requestId:revision.request.id});
  const expiredId=randomUUID();
  await sql`INSERT INTO poster_revision_requests(id,target_id,details,closes_at,requested_by)
  SELECT ${expiredId}::uuid,id,'Expired fixture',clock_timestamp()-interval '1 second',${f.adminId} FROM poster_targets WHERE abstract_id=${f.abstractId}`;
  const expiredOwner=await get(ownerUrl+'?requestId='+expiredId,owner);
  assert.equal(expiredOwner.blockCode,'POSTER_REQUEST_EXPIRED');assert.equal(expiredOwner.canUpload,false);
- await upload(png,409,{requestId:expiredId});
+ await upload(pdf,409,{requestId:expiredId});
  assert.equal((await get(base+'/poster-targets?status=revision_expired')).total,1);
  await sql`INSERT INTO poster_email_attempts(job_id,claim_token,result,recipient,subject,html,template_version) VALUES(${batch.jobIds[0]},${randomUUID()},'failed',${f.owner.email},'Test subject','Test html','poster-v1')`;
  const detail=await get(base+`/poster-targets/${f.abstractId}`);assert.equal(detail.uploads.length,1);assert.equal(detail.requests.length,2);assert.ok(detail.emailJobs.length>=4);

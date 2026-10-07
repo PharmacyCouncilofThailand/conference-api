@@ -3,9 +3,35 @@ import test from 'node:test';
 import { DEFAULT_POSTER_CLOSE, MAX_POSTER_BYTES, digest, effectiveRevisionStatus, isBeforeClose, matchAnnouncement, normalizeSubmitterName, sourceKey } from './policy.js';
 import { batchInputSchema, closeSchema, revisionInputSchema, settingsInputSchema } from './schemas.js';
 import type { Announcement, DbCandidate, RevisionDto } from './types.js';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { readPosterDetail } from './readers.js';
+import type { PosterDatabase } from './access.js';
 
 const row: Announcement = { id: 1, sequence: 1, trackingId: 'PRIS-2026-P001', title: 'ตัวอย่างผลงาน', presentationType: 'highlighted-poster', categoryId: 1, categoryName: 'สาขาตัวอย่าง', submitterName: 'ชื่อ นามสกุล', affiliation: null, round: 1 };
 const candidate: DbCandidate = { abstractId: 501, eventId: 2, canonicalTrackingId: row.trackingId, aliases: [], title: row.title, presentationType: 'poster', userId: 9, firstName: 'ชื่อ', lastName: 'นามสกุล', email: 'author@example.invalid' };
+
+test('detail audit query excludes unrelated event-wide and other-work histories without a database', async () => {
+  const audits = [
+    { id: 'own', event_id: 1, abstract_id: 2, created_at: '2026-10-07T00:00:00Z' },
+    { id: 'unmatched', event_id: 1, abstract_id: null, created_at: '2026-10-07T00:00:00Z' },
+    { id: 'other-work', event_id: 1, abstract_id: 3, created_at: '2026-10-07T00:00:00Z' },
+    { id: 'other-event', event_id: 2, abstract_id: 2, created_at: '2026-10-07T00:00:00Z' },
+  ];
+  const responses: unknown[][] = [[{ role: 'admin' }], [{ id: 1 }], [{ now: '2026-10-07T00:00:00Z' }], [{ id: 'target' }],
+    [{ source_key: '1:1', source_row: row, abstract_id: 2, target_id: 'target', present: true, match_state: 'ready', match_snapshot: {}, submitter_email: 'owner@example.invalid' }], [], [], [], [{ closes_at: DEFAULT_POSTER_CLOSE, reconcile_ready: true }], [], [], [], []];
+  let calls = 0;
+  const database = { execute: async (statement: Parameters<PgDialect['sqlToQuery']>[0]) => {
+    const query = new PgDialect().sqlToQuery(statement);
+    if (query.sql.includes('FROM poster_audit_events')) {
+      assert.deepEqual(query.params, [1, 2]);
+      return audits.filter(audit => audit.event_id === query.params[0] && (audit.abstract_id === query.params[1] || (query.sql.includes('abstract_id IS NULL') && audit.abstract_id === null)));
+    }
+    assert.ok(calls < responses.length, `Unexpected query: ${query.sql}`);
+    return responses[calls++];
+  } } as unknown as PosterDatabase;
+  const result = await readPosterDetail(database, { id: 9, email: 'admin@example.invalid', role: 'admin' }, 1, 2);
+  assert.deepEqual(result.audit.map(audit => (audit as { id: string }).id), ['own']);
+});
 
 test('digest and match fingerprints survive JSONB object key ordering while retaining array order and values', () => {
   assert.equal(digest({ b: { d: 4, c: 3 }, a: 1 }), digest({ a: 1, b: { c: 3, d: 4 } }));

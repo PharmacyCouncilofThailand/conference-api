@@ -1,14 +1,21 @@
 import { z } from 'zod';
+import { ApiError } from '../../errors/ApiError.js';
 import type { MailPayload } from './types.js';
 
 const escape = (text: string) => text.replace(/[&<>"']/g, char =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
+export const POSTER_TEXT_TEMPLATE_VERSION = 'poster-text-v2';
 
-export function buildSubmissionUrl(origin: string, abstractId: number, requestId?: string): string {
+export function buildSubmissionUrl(origin: string, abstractId: number, requestId?: string,
+  nodeEnv = process.env.NODE_ENV): string {
+  const invalidWebsite = () => new ApiError('POSTER_WEBSITE_INVALID',
+    'URL เว็บไซต์ของ Event ไม่ถูกต้อง กรุณาตั้งค่าเป็น HTTPS ของเว็บ PRIS (HTTP localhost ใช้ได้เฉพาะระบบพัฒนา)', 503);
   let base: URL;
-  try { base = new URL(origin); } catch { throw Error('POSTER_WEBSITE_INVALID'); }
-  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) {
-    throw Error('POSTER_WEBSITE_INVALID');
+  try { base = new URL(origin); } catch { throw invalidWebsite(); }
+  const localHttp = nodeEnv !== 'production' && base.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname);
+  if ((base.protocol !== 'https:' && !localHttp) || base.username || base.password || base.search || base.hash) {
+    throw invalidWebsite();
   }
   const url = new URL('/th/poster-submission', base.origin);
   url.searchParams.set('abstractId', String(abstractId));
@@ -22,36 +29,67 @@ function dateTime(instant: string, locale: 'th' | 'en', offset = 0): string {
   }).format(new Date(Date.parse(instant) + offset));
 }
 
-export function renderPosterEmail(p: MailPayload): { subject: string; html: string; templateVersion: string } {
+export function renderPosterEmail(p: MailPayload): { subject: string; html: string; text?: string; templateVersion: string } {
   if (!z.string().email().safeParse(p.recipient).success) throw Error('POSTER_EMAIL_INVALID');
-  const subject = { initial: 'แจ้งส่งไฟล์ Poster', reminder: 'เตือนส่งไฟล์ Poster',
-    revision: 'ขอแก้ไข Poster', receipt: 'ระบบได้รับไฟล์ Poster แล้ว' }[p.kind];
-  const href = escape(buildSubmissionUrl(p.websiteOrigin, p.abstractId, p.revisionRequestId ?? undefined));
-  const parts = [
-    `<p>เรียน ${escape(p.submitterName)} / Dear ${escape(p.submitterName)},</p>`,
-    `<p><strong>${escape(p.trackingId)}</strong><br>${escape(p.title)}</p>`,
-  ];
-  if (p.kind === 'receipt') {
-    if (!p.upload) throw Error('POSTER_RECEIPT_UPLOAD_MISSING');
-    parts.push('<p>ระบบได้รับไฟล์ Poster แล้ว / The system has received your Poster file.</p>',
-      `<p>ชื่อไฟล์ / File: ${escape(p.upload.fileName)}<br>ฉบับที่ / Version ${p.upload.version}<br>เวลารับ / Received: ${escape(dateTime(p.upload.receivedAt, 'th'))} (เวลาไทย)<br>${escape(dateTime(p.upload.receivedAt, 'en'))} (Bangkok time)</p>`);
-  } else {
+  if (p.kind !== 'receipt') {
     if (!p.closesAt) throw Error('POSTER_MAIL_DEADLINE_MISSING');
-    const notice = {
-      initial: 'ขอแจ้งให้ท่านส่งไฟล์ Poster สำหรับผลงานนี้ / Please submit your Poster file for this abstract.',
-      reminder: 'ขอเตือนให้ท่านส่งไฟล์ Poster สำหรับผลงานนี้ / Please remember to submit your Poster file for this abstract.',
-      revision: 'กรุณาแก้ไขและส่งไฟล์ Poster ตามรายละเอียดต่อไปนี้ / Please revise and submit your Poster file as detailed below.',
-    }[p.kind];
-    parts.push(`<p>${notice}</p>`);
-    if (p.kind === 'revision') parts.push(`<p><strong>รายละเอียดการแก้ไข / Revision details</strong><br>${escape(p.revisionDetails ?? '').replace(/\r?\n/g, '<br>')}</p>`);
-    parts.push('<p>ส่ง PNG หรือ PDF หนึ่งไฟล์ หนึ่งหน้า ไม่เกิน 30 MB; PDF ไม่ใส่รหัสผ่าน และ PNG เป็นภาพเดี่ยว<br>Upload one single-page PNG or unencrypted PDF, up to 30 MB. Animated/multiple-frame PNG is not accepted.</p>',
-      // closesAt is exclusive; show the last permissible second, in Bangkok time.
-      `<p>กำหนดส่ง: ${escape(dateTime(p.closesAt, 'th', -1000))} (เวลาไทย)<br>Deadline: ${escape(dateTime(p.closesAt, 'en', -1000))} (Bangkok time)</p>`,
-      '<p>กรุณา Login ด้วยบัญชีที่ใช้ส่งบทคัดย่อของผลงานนี้<br>Please sign in with the account used to submit this abstract.</p>',
-      '<p>ระบบถือว่าส่งสำเร็จเมื่อรับ ตรวจ และบันทึกไฟล์สำเร็จ ส่งสำเร็จได้หนึ่งครั้งสำหรับสิทธิ์นี้ หากต้องแก้ไขหลังส่ง กรุณาติดต่อเจ้าหน้าที่<br>Submission succeeds after the system receives, validates and saves the file. One successful upload is allowed for this submission right. Contact the organizer if further changes are needed.</p>');
+    const href = escape(buildSubmissionUrl(p.websiteOrigin, p.abstractId, p.kind === 'revision' ? p.revisionRequestId ?? undefined : undefined));
+    const html = `<!doctype html>
+<html lang="th">
+  <body>
+    <p>เรียน คุณ${escape(p.submitterName)}</p>
+    <p>สภาเภสัชกรรมขอเรียน${p.kind === 'reminder' ? 'เตือน' : 'แจ้ง'}ให้ท่านดำเนินการ${p.kind === 'revision' ? 'แก้ไขและ' : ''}ส่งไฟล์โปสเตอร์สำหรับผลงานดังต่อไปนี้</p>
+    <ul>
+      <li><strong>รหัสผลงาน:</strong> ${escape(p.trackingId)}</li>
+      <li><strong>ชื่อผลงาน:</strong> ${escape(p.title)}</li>${p.kind === 'revision' ? `\n      <li><strong>รายละเอียดการแก้ไข:</strong> ${escape(p.revisionDetails ?? '').replace(/\r?\n/g, '<br>')}</li>` : ''}
+      <li><strong>กำหนดส่ง:</strong> วันที่ ${escape(dateTime(p.closesAt, 'th', -1000).replace(/:/g, '.'))} น. (เวลาประเทศไทย)</li>
+    </ul>
+    <p><strong>ข้อกำหนดของไฟล์</strong></p>
+    <ul>
+      <li>ไฟล์ PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MB</li>
+      <li>ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน</li>
+    </ul>
+    <p><a href="https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20Poster%20Template.zip">ดาวน์โหลด Template สำหรับ Poster (.ZIP)</a></p>
+    <p><strong>ขั้นตอนและเงื่อนไขการส่ง</strong></p>
+    <ol>
+      <li>กรุณาเข้าสู่ระบบด้วยบัญชีที่ใช้ส่งบทคัดย่อของผลงานนี้</li>
+      <li>ระบบจะถือว่าการส่งสำเร็จเมื่อได้รับ ตรวจสอบ และบันทึกไฟล์เรียบร้อยแล้ว</li>
+      <li>สิทธิ์นี้สามารถส่งไฟล์ได้สำเร็จเพียงหนึ่งครั้ง หากต้องการแก้ไขภายหลังการส่ง กรุณาติดต่อเจ้าหน้าที่</li>
+    </ol>
+    <p><a href="${href}">ส่งโปสเตอร์ที่นี่</a></p>
+    <p>หากมีข้อสงสัยเพิ่มเติม สามารถติดต่อได้ที่ <a href="mailto:pr@pharmacycouncil.org">pr@pharmacycouncil.org</a></p>
+    <p>จึงเรียนมาเพื่อโปรดดำเนินการ</p>
+    <p>ขอแสดงความนับถือ</p>
+    <p>สภาเภสัชกรรม</p>
+    <p>(The Pharmacy Council of Thailand)</p>
+    <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
+  </body>
+</html>`;
+    return { subject: `${p.kind === 'revision' ? 'แจ้งขอแก้ไข' : p.kind === 'reminder' ? 'เตือนส่ง' : 'แจ้งส่ง'}ไฟล์โปสเตอร์ผลงาน รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion: `poster-${p.kind}-v4` };
   }
-  parts.push(`<p><a href="${href}">${p.kind === 'receipt' ? 'ดูไฟล์ที่ส่ง / View submission' : 'ส่ง Poster / Submit Poster'}</a><br>${href}</p>`,
-    '<p>สอบถามเพิ่มเติม / Contact: <a href="mailto:pr@pharmactcouncil.org">pr@pharmactcouncil.org</a></p>',
-    '<p>ขอแสดงความนับถือ / Sincerely,</p><p>สภาเภสัชกรรมแห่งประเทศไทย<br>The Pharmacy Council of Thailand</p>');
-  return { subject: `PRIS 2026 — ${subject}: ${p.trackingId}`, html: parts.join('\n'), templateVersion: 'poster-v1' };
+  if (!p.upload) throw Error('POSTER_RECEIPT_UPLOAD_MISSING');
+  const href = escape(buildSubmissionUrl(p.websiteOrigin, p.abstractId, p.revisionRequestId ?? p.upload.revisionRequestId ?? undefined));
+  const html = `<!doctype html>
+<html lang="th">
+  <body>
+    <p>เรียน คุณ${escape(p.submitterName)}</p>
+    <p>สภาเภสัชกรรมขอเรียนแจ้งว่า ระบบได้รับไฟล์โปสเตอร์สำหรับผลงานของท่านเรียบร้อยแล้ว โดยมีรายละเอียดดังนี้</p>
+    <ul>
+      <li><strong>รหัสผลงาน:</strong> ${escape(p.trackingId)}</li>
+      <li><strong>ชื่อผลงาน:</strong> ${escape(p.title)}</li>
+      <li><strong>ชื่อไฟล์:</strong> ${escape(p.upload.fileName)}</li>
+      <li><strong>ฉบับที่:</strong> ${p.upload.version}</li>
+      <li><strong>วันและเวลาที่ระบบได้รับ:</strong> วันที่ ${escape(dateTime(p.upload.receivedAt, 'th').replace(/:/g, '.'))} น. (เวลาประเทศไทย)</li>
+    </ul>
+    <p>ท่านสามารถตรวจสอบไฟล์ที่ส่งได้ที่ลิงก์ด้านล่าง</p>
+    <p><a href="${href}">ดูไฟล์ที่ส่ง</a></p>
+    <p>หากมีข้อสงสัยเพิ่มเติม สามารถติดต่อได้ที่ <a href="mailto:pr@pharmacycouncil.org">pr@pharmacycouncil.org</a></p>
+    <p>จึงเรียนมาเพื่อโปรดทราบ</p>
+    <p>ขอแสดงความนับถือ</p>
+    <p>สภาเภสัชกรรม</p>
+    <p>(The Pharmacy Council of Thailand)</p>
+    <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
+  </body>
+</html>`;
+  return { subject: `แจ้งการได้รับไฟล์โปสเตอร์ผลงาน รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion: 'poster-receipt-v4' };
 }

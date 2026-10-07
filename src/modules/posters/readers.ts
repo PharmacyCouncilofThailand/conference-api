@@ -1,3 +1,4 @@
+import { POSTER_TEXT_TEMPLATE_VERSION } from './email-template.js';
 import { loadPosterAnnouncements } from './data/index.js';
 import type { Announcement } from './types.js';
 
@@ -95,6 +96,10 @@ async function readRosterRows(q:Pick<PosterDatabase,'execute'>,eventId:number,no
    canNotify:a.present&&a.source_row.presentationType!=='oral'&&matchState==='ready'&&!!a.abstract_id&&z.string().email().safeParse(a.submitter_email).success&&!file&&!!setting?.reconcile_ready&&isBeforeClose(now,new Date(setting.closes_at))};
  });
 }
+function posterViewerRow(row:PosterListRow):PosterListRow{
+ return {...row,matchState:null,matchFingerprint:'',problems:[],snapshot:null,verifiedBy:null,verifiedAt:null,
+  verificationReason:null,lastEmail:null,canNotify:false};
+}
 export async function readPosterList(database:PosterDatabase,actor:PosterActor,eventId:number,query:z.infer<typeof listQuerySchema>):Promise<PosterListDto>{
  await requirePosterStaff(database,actor,eventId,false);const now=await dbNow(database);
  const [setting]=await rows<{eventId:number;closesAt:string;version:number;reconcileReady:boolean;reconciledAt:string|null}>(database,
@@ -102,35 +107,40 @@ export async function readPosterList(database:PosterDatabase,actor:PosterActor,e
    FROM poster_settings WHERE event_id=${eventId}`);
  if(!setting)fail('POSTER_RECONCILE_REQUIRED',503);
  const all=await readRosterRows(database,eventId,now);const term=normalizeSubmitterName(query.search??'').toLowerCase();
- const filtered=all.filter(r=>(!query.round||String(r.announcement.round)===query.round)&&(!query.presentationType||r.announcement.presentationType===query.presentationType)
-  &&(!query.matchState||r.matchState===query.matchState)&&(!query.status||r.progress===query.status)
+ const filtered=all.filter(r=>((actor.role==='admin'&&!query.received)||!!r.currentUpload)
+  &&(!query.round||String(r.announcement.round)===query.round)&&(!query.presentationType||r.announcement.presentationType===query.presentationType)
+  &&(actor.role!=='admin'||!query.matchState||r.matchState===query.matchState)&&(!query.status||r.progress===query.status)
   &&(!term||normalizeSubmitterName([r.announcement.title,r.announcement.submitterName,r.announcement.trackingId,r.submitterEmail].filter(Boolean).join(' ')).toLowerCase().includes(term)));
  const counts:Record<PosterProgress,number>={not_submitted:0,submitted:0,revision_pending:0,revised:0,revision_expired:0};
  for(const row of filtered)counts[row.progress]++;
- return {items:filtered.slice((query.page-1)*query.pageSize,query.page*query.pageSize),total:filtered.length,page:query.page,pageSize:query.pageSize,
+ const items=filtered.slice((query.page-1)*query.pageSize,query.page*query.pageSize);
+ return {items:actor.role==='admin'?items:items.map(posterViewerRow),total:filtered.length,page:query.page,pageSize:query.pageSize,
   settings:{...setting,closesAt:iso(setting.closesAt),reconciledAt:maybeIso(setting.reconciledAt)},capabilities:{read:true,manage:actor.role==='admin'},counts};
 }
 export async function readPosterDetail(database:PosterDatabase,actor:PosterActor,eventId:number,abstractId:number):Promise<PosterDetailDto>{
  await requirePosterStaff(database,actor,eventId,false);const now=await dbNow(database);
  const [target]=await rows<{id:string}>(database,sql`SELECT id FROM poster_targets WHERE event_id=${eventId} AND abstract_id=${abstractId}`);
  if(!target)fail('POSTER_NOT_FOUND',404);
- const row=(await readRosterRows(database,eventId,now)).find(r=>r.abstractId===abstractId);if(!row)fail('POSTER_NOT_FOUND',404);
+ const row=(await readRosterRows(database,eventId,now)).find(r=>r.abstractId===abstractId);
+ if(!row||(actor.role!=='admin'&&!row.currentUpload))fail('POSTER_NOT_FOUND',404);
  const ids=await rows<{id:string}>(database,sql`SELECT id FROM poster_uploads WHERE target_id=${target.id}::uuid ORDER BY version DESC`);
  const uploads:UploadDto[]=[];for(const file of ids)uploads.push((await readUploadDto(database,file.id))!);
  const requests=await rows<RevisionDto>(database,sql`SELECT id,details,closes_at AS "closesAt",status,created_at AS "createdAt",requested_by AS "requestedBy",
   submitted_at AS "submittedAt",cancelled_at AS "cancelledAt",cancelled_by AS "cancelledBy",cancellation_reason AS "cancellationReason"
   FROM poster_revision_requests WHERE target_id=${target.id}::uuid ORDER BY created_at DESC,id DESC`);
- const jobs=await rows<Omit<PosterDetailDto['emailJobs'][number],'attempts'>>(database,sql`SELECT id,kind,state,payload->>'recipient' AS recipient,
-  subject,html,created_at AS "createdAt",finished_at AS "finishedAt",triggered_by AS "triggeredBy",parent_job_id AS "parentJobId",
-  request_id AS "requestId",upload_id AS "uploadId",error_code AS "errorCode" FROM poster_email_jobs WHERE target_id=${target.id}::uuid ORDER BY created_at DESC,id DESC`);
- const attempts=await rows<{job_id:string;started_at:string;request_started_at:string|null;finished_at:string|null}>(database,sql`SELECT a.* FROM poster_email_attempts a JOIN poster_email_jobs j ON j.id=a.job_id
-  WHERE j.target_id=${target.id}::uuid ORDER BY a.started_at DESC,a.id DESC`);
- const audit=await rows<{created_at:string}>(database,sql`SELECT * FROM poster_audit_events WHERE event_id=${eventId} AND (abstract_id=${abstractId} OR abstract_id IS NULL) ORDER BY created_at DESC,id DESC`);
- return {row:row!,uploads,requests:requests.map(r=>revisionDto(r,now)),emailJobs:jobs.map(j=>({...j,createdAt:iso(j.createdAt),finishedAt:maybeIso(j.finishedAt),
-  attempts:attempts.filter(a=>a.job_id===j.id).map(a=>({...a,started_at:iso(a.started_at),request_started_at:maybeIso(a.request_started_at),finished_at:maybeIso(a.finished_at)}))})),audit:audit.map(a=>({...a,created_at:iso(a.created_at)})),capabilities:{read:true,manage:actor.role==='admin'}};
+ const jobs=actor.role==='admin'?await rows<Omit<PosterDetailDto['emailJobs'][number],'attempts'>>(database,sql`SELECT id,kind,state,payload->>'recipient' AS recipient,
+  subject,html,template_version AS "templateVersion",created_at AS "createdAt",finished_at AS "finishedAt",triggered_by AS "triggeredBy",parent_job_id AS "parentJobId",
+  request_id AS "requestId",upload_id AS "uploadId",error_code AS "errorCode" FROM poster_email_jobs WHERE target_id=${target.id}::uuid ORDER BY created_at DESC,id DESC`):[];
+ const attempts=actor.role==='admin'?await rows<{job_id:string;started_at:string;request_started_at:string|null;finished_at:string|null}>(database,sql`SELECT a.* FROM poster_email_attempts a JOIN poster_email_jobs j ON j.id=a.job_id
+  WHERE j.target_id=${target.id}::uuid ORDER BY a.started_at DESC,a.id DESC`):[];
+ const audit=await rows<{created_at:string;action:string;after_state:Record<string,unknown>|null}>(database,sql`SELECT * FROM poster_audit_events WHERE event_id=${eventId} AND abstract_id=${abstractId}
+  ${actor.role==='admin'?sql``:sql`AND action IN ('revision_created','revision_cancelled')`} ORDER BY created_at DESC,id DESC`);
+ return {row:actor.role==='admin'?row!:posterViewerRow(row!),uploads,requests:requests.map(r=>revisionDto(r,now)),emailJobs:jobs.map(j=>({...j,...(j.templateVersion===POSTER_TEXT_TEMPLATE_VERSION?{text:j.html}:{}),createdAt:iso(j.createdAt),finishedAt:maybeIso(j.finishedAt),
+  attempts:attempts.filter(a=>a.job_id===j.id).map(a=>({...a,started_at:iso(a.started_at),request_started_at:maybeIso(a.request_started_at),finished_at:maybeIso(a.finished_at)}))})),audit:audit.map(a=>({...a,created_at:iso(a.created_at),
+   ...(actor.role!=='admin'&&a.action==='revision_created'?{after_state:{request:a.after_state?.request}}:{})})),capabilities:{read:true,manage:actor.role==='admin'}};
 }
 export async function readPosterSettings(database:PosterDatabase,actor:PosterActor,eventId:number):Promise<PosterSettingsHistoryDto>{
- await requirePosterStaff(database,actor,eventId,false);
+ await requirePosterStaff(database,actor,eventId,true);
  const [setting]=await rows<PosterSettingsDto>(database,sql`SELECT event_id AS "eventId",closes_at AS "closesAt",version,
   reconcile_ready AS "reconcileReady",last_reconciled_at AS "reconciledAt" FROM poster_settings WHERE event_id=${eventId}`);
  if(!setting)fail('POSTER_RECONCILE_REQUIRED',503);
@@ -141,7 +151,7 @@ export async function readPosterSettings(database:PosterDatabase,actor:PosterAct
   history:history.map(h=>({...h,createdAt:iso(h.createdAt)})),capabilities:{read:true,manage:actor.role==='admin'}};
 }
 export async function readPosterBatch(database:PosterDatabase,actor:PosterActor,eventId:number,batchId:string):Promise<PosterBatchDto>{
- await requirePosterStaff(database,actor,eventId,false);
+ await requirePosterStaff(database,actor,eventId,true);
  const jobs=await rows<PosterBatchDto['jobs'][number]>(database,sql`SELECT j.id,t.abstract_id AS "abstractId",j.payload->>'recipient' AS recipient,j.state,j.error_code AS "errorCode"
   FROM poster_email_jobs j JOIN poster_targets t ON t.id=j.target_id WHERE t.event_id=${eventId} AND j.batch_id=${batchId}::uuid ORDER BY t.abstract_id`);
  if(!jobs.length)fail('POSTER_BATCH_NOT_FOUND',404);return {batchId,jobs};

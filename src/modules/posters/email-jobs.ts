@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { rows, fail, dbNow, requirePosterStaff, type PosterDatabase, type PosterTx } from './access.js';
-import { sendNipaMailHtml } from '../../services/emailService.js';
-import { renderPosterEmail } from './email-template.js';
+import { sendNipaMailHtml, sendNipaMailText } from '../../services/emailService.js';
+import { renderPosterEmail, POSTER_TEXT_TEMPLATE_VERSION } from './email-template.js';
 import type { MailKind, MailPayload, MailState, PosterActor, UploadDto } from './types.js';
 import { adminOperation, audit } from './operations.js';
 import { digest, isBeforeClose } from './policy.js';
@@ -55,12 +55,13 @@ export async function buildMailPayload(tx: Pick<PosterDatabase, 'execute'>, targ
 }
 
 export type PosterMailTransport = {
-  send(input: { recipient: string; subject: string; html: string }): Promise<{ providerMessageId?: string }>;
+  send(input: { recipient: string; subject: string; html: string; text?: string }): Promise<{ providerMessageId?: string }>;
 };
 
 export const createPosterMailTransport = (): PosterMailTransport => ({
   async send(input) {
-    await sendNipaMailHtml(input.recipient, input.subject, input.html, true, { timeoutMs: 15_000 });
+    if (input.text !== undefined) await sendNipaMailText(input.recipient, input.subject, input.text, true, { timeoutMs: 15_000 });
+    else await sendNipaMailHtml(input.recipient, input.subject, input.html, true, { timeoutMs: 15_000 });
     return {};
   },
 });
@@ -132,7 +133,8 @@ export async function runPosterMailOnce(database: PosterDatabase, transport: Pos
   } catch (error) { code = errorCode(error, 'POSTER_MAIL_PRECHECK_FAILED'); }
   if (!code) {
     try {
-      const result = await transport.send({ recipient: job.payload.recipient, subject: job.subject, html: job.html });
+      const result = await transport.send({ recipient: job.payload.recipient, subject: job.subject, html: job.html,
+        ...(job.template_version === POSTER_TEXT_TEMPLATE_VERSION ? { text: job.html } : {}) });
       state = 'sent'; providerId = result.providerMessageId ?? null;
     } catch (error) {
       state = typeof error === 'object' && error !== null && 'deliveryState' in error && error.deliveryState === 'failed'

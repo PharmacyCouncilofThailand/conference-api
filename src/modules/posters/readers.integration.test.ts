@@ -20,8 +20,9 @@ test('scoped readers retain orphan/withdrawn rows, filter and protect private pr
  const reviewer={id:2,email:'reviewer@example.invalid',role:'reviewer'};
  await assert.rejects(readPosterList(database,reviewer,f.eventId,listQuerySchema.parse({})),{statusCode:403});
  await sql`INSERT INTO staff_event_assignments VALUES (2,${f.eventId})`;
- assert.equal((await readPosterSettings(database,reviewer,f.eventId)).capabilities.manage,false);
- assert.equal((await readPosterDetail(database,reviewer,f.eventId,f.abstractId)).row.abstractId,f.abstractId);
+ await assert.rejects(readPosterSettings(database,reviewer,f.eventId),{statusCode:403});
+ assert.equal((await readPosterList(database,reviewer,f.eventId,listQuerySchema.parse({}))).total,0);
+ await assert.rejects(readPosterDetail(database,reviewer,f.eventId,f.abstractId),{statusCode:404});
  await assert.rejects(readPosterDetail(database,reviewer,999,f.abstractId),{statusCode:404});
  await assert.rejects(readPosterDetail(database,reviewer,f.eventId,999),{statusCode:404});
  await sql`UPDATE backoffice_users SET role='organizer' WHERE id=2`;

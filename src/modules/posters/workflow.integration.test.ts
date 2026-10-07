@@ -14,7 +14,7 @@ import { posterBackofficeRoutes } from './backoffice.routes.js';
 import { runPosterMailOnce } from './email-jobs.js';
 import type { OwnerPosterDto, PosterDetailDto, PosterListDto, PosterPreviewDto, RevisionDto, UploadDto } from './types.js';
 
-test('synthetic full HTTP workflow: reconcile alias, two works/mail, PNG, revision PDF, cancel, replay and retained history', { timeout: 30000 }, async t => {
+test('synthetic full HTTP workflow: reconcile alias, two works/mail, rejected PNG, initial/revision PDF, cancel, replay and retained history', { timeout: 30000 }, async t => {
   const { client: sql, database, fixture: f, announcement } = await preparePosterScenario(t);
   const [second] = await sql`INSERT INTO abstracts(event_id,user_id,tracking_id,title,presentation_type)
     VALUES(${f.eventId},${f.ownerId},'PRIS-2026-P002','Second synthetic work','poster') RETURNING id`;
@@ -64,9 +64,12 @@ test('synthetic full HTTP workflow: reconcile alias, two works/mail, PNG, revisi
     return app.inject({ method: 'POST', url: `/api/abstracts/${f.abstractId}/poster-uploads`, headers: { ...owner, 'content-type': `multipart/form-data; boundary=${boundary}`, 'idempotency-key': key }, payload });
   };
   const png = await sharp({ create: { width: 5, height: 7, channels: 4, background: '#ffffff' } }).png().toBuffer();
-  const firstKey = randomUUID(), first = await upload(png, 'first.png', 'image/png', undefined, firstKey); assert.equal(first.statusCode, 201, first.body);
+  const rejected = await upload(png, 'first.png', 'image/png'); assert.equal(rejected.statusCode, 415);
+  const disguised = await upload(png, 'first.pdf', 'application/pdf'); assert.equal(disguised.statusCode, 415); assert.equal(objects.size, 0);
+  const initialDocument = await PDFDocument.create(); initialDocument.addPage(); const initialPdf = Buffer.from(await initialDocument.save());
+  const firstKey = randomUUID(), first = await upload(initialPdf, 'first.pdf', 'application/pdf', undefined, firstKey); assert.equal(first.statusCode, 201, first.body);
   const firstFile = first.json().data.upload as UploadDto;
-  const firstReplay = await upload(png, 'first.png', 'image/png', undefined, firstKey); assert.equal(firstReplay.statusCode, 201); assert.deepEqual(firstReplay.json().data.upload, firstFile);
+  const firstReplay = await upload(initialPdf, 'first.pdf', 'application/pdf', undefined, firstKey); assert.equal(firstReplay.statusCode, 201); assert.deepEqual(firstReplay.json().data.upload, firstFile);
   const locked = await get<OwnerPosterDto>(`/api/abstracts/${f.abstractId}/poster`, owner); assert.equal(locked.canUpload, false); assert.equal(locked.currentUpload!.version, 1);
   await drain(); assert.equal(mail.length, 3, 'one automatic receipt for initial acceptance/replay');
   const deadline = new Date(Date.now() + 3600000).toISOString(), details = 'Revise the synthetic figure legend';
@@ -74,6 +77,7 @@ test('synthetic full HTTP workflow: reconcile alias, two works/mail, PNG, revisi
   const revision = await post<{ request: RevisionDto }>(`${base}/poster-targets/${f.abstractId}/revision-requests`, { requestId: draft.requestId, details, closesAt: draft.closesAt, previewFingerprint: draft.fingerprint });
   assert.equal((await get<OwnerPosterDto>(`/api/abstracts/${f.abstractId}/poster?requestId=${revision.request.id}`, owner)).currentUpload!.id, firstFile.id);
   await drain(); const document = await PDFDocument.create(); document.addPage(); const pdf = Buffer.from(await document.save());
+  const rejectedRevision = await upload(png, 'revision.png', 'image/png', revision.request.id); assert.equal(rejectedRevision.statusCode, 415); assert.equal(objects.size, 1);
   const revised = await upload(pdf, 'revision.pdf', 'application/pdf', revision.request.id); assert.equal(revised.statusCode, 201, revised.body);
   const secondFile = revised.json().data.upload as UploadDto; assert.equal(secondFile.version, 2); assert.equal(secondFile.revisionRequestId, revision.request.id);
   await drain(); assert.equal(mail.length, 5, 'initial pair + first receipt + revision notice + revision receipt');
@@ -90,7 +94,7 @@ test('synthetic full HTTP workflow: reconcile alias, two works/mail, PNG, revisi
   assert.ok(history.audit.length >= 3); assert.equal(history.emailJobs.filter(job => job.kind === 'receipt').length, 2);
   assert.ok(history.emailJobs.some(job => job.kind === 'revision' && job.state === 'suppressed'));
   assert.equal(objects.size, 2); assert.deepEqual(deletes, []);
-  assert.deepEqual([...objects.values()], [png, pdf]);
+  assert.deepEqual([...objects.values()], [initialPdf, pdf]);
   assert.ok([...objects.keys()].every(key => key.startsWith(`events/${f.eventId}/posters/${f.abstractId}/`)));
   console.log('A04/A09/A10/A13/A15/A18/A22 synthetic actual-route chain PASS; fake mail=5, original objects=2, retained versions=2, requests=2, no real providers');
 });

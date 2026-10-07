@@ -108,7 +108,7 @@ export function renderInvitationEmail(
 <html lang="th">
   <body>
     <p>เรียน คุณ${escapeHtml(personName)}</p>
-    <p>สภาเภสัชกรรมแห่งประเทศไทยขอเรียนเชิญท่านเข้าร่วมเซสชันดังรายละเอียดต่อไปนี้</p>
+    <p>สภาเภสัชกรรมขอเรียนเชิญท่านเข้าร่วมเซสชันดังรายละเอียดต่อไปนี้</p>
     <ul>
       <li>งาน: ${escapeHtml(snapshot.eventName)}</li>
       <li>สถานที่จัดงาน: ${escapeHtml(venue)}</li>
@@ -121,7 +121,7 @@ export function renderInvitationEmail(
     <p><a href="${escapeHtml(responsePageUrl)}">ตอบรับคำเชิญเข้าร่วมเซสชัน</a></p>
     <p>จึงเรียนมาเพื่อโปรดพิจารณา</p>
     <p>ขอแสดงความนับถือ</p>
-    <p>สภาเภสัชกรรมแห่งประเทศไทย</p>
+    <p>สภาเภสัชกรรม</p>
     <p>(The Pharmacy Council of Thailand)</p>
     <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
   </body>
@@ -148,7 +148,7 @@ export function renderGrantEmail(snapshot: GrantNotificationSnapshot): {
 <html lang="th">
   <body>
     <p>เรียน คุณ${escapeHtml(personName)}</p>
-    <p>สภาเภสัชกรรมแห่งประเทศไทยขอเรียนแจ้งว่า ผู้ดูแลระบบได้เพิ่มสิทธิ์เข้าร่วมเซสชันให้แก่ท่านเรียบร้อยแล้ว โดยมีรายละเอียดดังนี้</p>
+    <p>สภาเภสัชกรรมขอเรียนแจ้งว่า ผู้ดูแลระบบได้เพิ่มสิทธิ์เข้าร่วมเซสชันให้แก่ท่านเรียบร้อยแล้ว โดยมีรายละเอียดดังนี้</p>
     <ul>
       <li>งาน: ${escapeHtml(snapshot.eventName)}</li>
       <li>รหัสลงทะเบียน: ${escapeHtml(snapshot.regCode)}</li>
@@ -159,7 +159,7 @@ export function renderGrantEmail(snapshot: GrantNotificationSnapshot): {
     <p>ทั้งนี้ ท่านสามารถใช้รหัสลงทะเบียนเดิมในการเข้าร่วมเซสชันดังกล่าวได้</p>
     <p>จึงเรียนมาเพื่อโปรดทราบ</p>
     <p>ขอแสดงความนับถือ</p>
-    <p>สภาเภสัชกรรมแห่งประเทศไทย</p>
+    <p>สภาเภสัชกรรม</p>
     <p>(The Pharmacy Council of Thailand)</p>
     <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
   </body>
