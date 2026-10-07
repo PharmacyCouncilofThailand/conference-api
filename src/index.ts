@@ -83,11 +83,11 @@ fastify.register(cors, {
 fastify.register(rateLimit, {
   max: 600,  // Increased for shared network support (hospitals/universities)
   timeWindow: "1 minute",
-  errorResponseBuilder: () => ({
-    success: false,
-    code: "RATE_LIMIT_EXCEEDED",
-    error: "Too many requests. Please try again later.",
-  }),
+  errorResponseBuilder: () => new ApiError(
+    "RATE_LIMIT_EXCEEDED",
+    "Too many requests. Please try again later.",
+    429,
+  ),
 });
 
 // ============================================================================
