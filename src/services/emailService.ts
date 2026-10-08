@@ -221,58 +221,20 @@ export async function sendNipaMailHtml(
  * Send a no-markup text message via NipaMail.
  *
  * The current NipaMail `/v1/messages` contract requires the `html` body field.
- * Convert only line breaks to `<br>` so the plain-text template keeps the same
- * paragraph and line ordering when rendered by an HTML-only provider.
+ * Escape text and convert line breaks to `<br>` to preserve the plain-text
+ * template's paragraph ordering when rendered by an HTML-only provider.
  */
 export async function sendNipaMailText(
   recipient: string,
   subject: string,
   text: string,
-  retryOnAuth: boolean = true
+  retryOnAuth: boolean = true,
+  options: NipaMailSendOptions = {},
 ): Promise<void> {
-  const token = await getAccessToken();
-  const htmlContent = text.replace(/\n/g, "<br>\n");
-
-  try {
-    await axios.post(
-      `${NIPAMAIL_API_URL}/v1/messages`,
-      {
-        type: "EMAIL",
-        message: {
-          sender: getSenderString(),
-          recipient,
-          subject,
-          html: encodeToBase64(htmlContent),
-        },
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    );
-  } catch (error: unknown) {
-    if (
-      retryOnAuth &&
-      axios.isAxiosError(error) &&
-      error.response?.status === 401
-    ) {
-      cachedToken = null;
-      return sendNipaMailText(recipient, subject, text, false);
-    }
-
-    if (axios.isAxiosError(error) && error.response) {
-      console.error(
-        "NipaMail send failed:",
-        JSON.stringify(error.response.data)
-      );
-      throw new Error(
-        `Email send failed: ${error.response.data?.message || error.response.status}`
-      );
-    }
-    throw error;
-  }
+  // Escape untrusted names/titles before the provider's HTML-only adaptation.
+  const body = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br>\n");
+  return sendNipaMailHtml(recipient, subject, body, retryOnAuth, options);
 }
 
 /**

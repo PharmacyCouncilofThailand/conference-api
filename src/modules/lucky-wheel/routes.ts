@@ -695,7 +695,7 @@ export async function luckyWheelAdminRoutes(
             throw new WheelImageError(
               400,
               "IMAGE_TOO_LARGE",
-              "Lucky Wheel image must be 5 MiB or smaller",
+              "Lucky Wheel image must be 5 MB or smaller",
             );
           }
           chunks.push(buffer);
@@ -704,7 +704,7 @@ export async function luckyWheelAdminRoutes(
           throw new WheelImageError(
             400,
             "IMAGE_TOO_LARGE",
-            "Lucky Wheel image must be 5 MiB or smaller",
+            "Lucky Wheel image must be 5 MB or smaller",
           );
         }
 
@@ -742,7 +742,7 @@ export async function luckyWheelAdminRoutes(
             new WheelImageError(
               400,
               "IMAGE_TOO_LARGE",
-              "Lucky Wheel image must be 5 MiB or smaller",
+              "Lucky Wheel image must be 5 MB or smaller",
             ),
             request.id,
           );

@@ -48,6 +48,7 @@ export type WheelImageStorage = {
     body: Buffer;
     contentType: string;
     cacheControl: string;
+    signal?: AbortSignal;
   }): Promise<void>;
   deleteObject(key: string): Promise<void>;
 };
@@ -171,7 +172,7 @@ export function createR2ImageStorage(config: R2ImageConfig): WheelImageStorage {
         ContentType: input.contentType,
         ContentLength: input.body.length,
         CacheControl: input.cacheControl,
-      }));
+      }), { abortSignal: input.signal });
     },
     async deleteObject(key) {
       await client.send(new DeleteObjectCommand({
@@ -203,7 +204,7 @@ export async function normalizeWheelImage(
     throw new WheelImageError(
       400,
       "IMAGE_TOO_LARGE",
-      "Lucky Wheel image must be 5 MiB or smaller",
+      "Lucky Wheel image must be 5 MB or smaller",
     );
   }
 
@@ -298,7 +299,7 @@ export async function normalizeWheelImage(
     throw new WheelImageError(
       400,
       "IMAGE_TOO_LARGE",
-      "Normalized Lucky Wheel image exceeds 5 MiB",
+      "Normalized Lucky Wheel image exceeds 5 MB",
     );
   }
 
