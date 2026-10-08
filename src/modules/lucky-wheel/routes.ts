@@ -117,6 +117,8 @@ const ATTENDEE_ROLES = new Set([
   "medical_professional",
   "general",
   "student",
+  "healthhack",
+  "booth",
 ]);
 
 function claimedAttendee(request: FastifyRequest): WheelActor | null {

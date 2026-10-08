@@ -25,7 +25,7 @@ const listMembersQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
   search: z.string().optional(),
-  role: z.enum(["pharmacist", "medical_professional", "general", "student"]).optional(),
+  role: z.enum(["pharmacist", "medical_professional", "general", "student", "healthhack", "booth"]).optional(),
   status: z.enum(["pending_approval", "active", "rejected"]).optional(),
   eventId: z.coerce.number().int().positive().optional(),
 });
@@ -138,6 +138,8 @@ export default async function (fastify: FastifyInstance) {
           phone: users.phone,
           country: users.country,
           institution: users.institution,
+          healthHackLevel: users.healthHackLevel,
+          boothName: users.boothName,
           createdAt: users.createdAt,
         })
         .from(users)
@@ -201,6 +203,8 @@ export default async function (fastify: FastifyInstance) {
           phone: users.phone,
           country: users.country,
           institution: users.institution,
+          healthHackLevel: users.healthHackLevel,
+          boothName: users.boothName,
           thaiIdCard: users.thaiIdCard,
           passportId: users.passportId,
           pharmacyLicenseId: users.pharmacyLicenseId,

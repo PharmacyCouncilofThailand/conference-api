@@ -53,7 +53,7 @@ export const createSessionSchema = z.object({
 export const updateSessionSchema = createSessionSchema.partial();
 
 // Canonical role values matching the DB user_role enum
-export const VALID_TICKET_ROLES = ["pharmacist", "medical_professional", "student", "general"] as const;
+export const VALID_TICKET_ROLES = ["pharmacist", "medical_professional", "student", "general", "healthhack", "booth"] as const;
 
 // Valid student levels
 export const VALID_STUDENT_LEVELS = ["postgraduate", "undergraduate"] as const;

@@ -137,6 +137,43 @@ test("proves free checkout atomicity, promo concurrency, and idempotent settleme
     const { completeFreeCheckout } = await import("./free-checkout.service.js");
     const { settlePromoUsageSuccess } = await import("./promo-usage.service.js");
 
+    for (const role of ["healthhack", "booth"]) {
+      const fixture = await seedFixture(sql, 1);
+      await sql`UPDATE users SET role=${role} WHERE id=${fixture.userIds[0]}`;
+      await sql`UPDATE ticket_types SET allowed_roles=${JSON.stringify([role])} WHERE id=${fixture.ticketId}`;
+      const result = await completeFreeCheckout(freeInput(fixture, fixture.userIds[0]));
+      assert.equal(result.netAmount, 0);
+      assert.ok(result.regCode);
+      const [row] = await sql`
+        SELECT u.role, r.status, r.reg_code, o.total_amount, pc.used_count
+        FROM registrations r JOIN users u ON u.id=r.user_id
+        JOIN orders o ON o.id=r.order_id
+        JOIN promo_codes pc ON pc.id=${fixture.promoId}
+        WHERE o.id=${result.orderId}
+      `;
+      assert.equal(row.role, role);
+      assert.equal(row.status, "confirmed");
+      assert.equal(row.reg_code, result.regCode);
+      assert.equal(Number(row.total_amount), 0);
+      assert.equal(Number(row.used_count), 1);
+      await assert.rejects(
+        completeFreeCheckout(freeInput(fixture, fixture.userIds[1])),
+        { code: "PROMO_USAGE_LIMIT_REACHED" },
+      );
+      const [afterLimit] = await sql`SELECT count(*)::int AS total FROM registrations WHERE event_id=${fixture.eventId}`;
+      assert.equal(afterLimit.total, 1);
+      for (const [mode, code] of [["missing","PROMO_NOT_FOUND"],["expired","PROMO_EXPIRED"]]) {
+        const deniedFixture = await seedFixture(sql, 1);
+        await sql`UPDATE users SET role=${role} WHERE id=${deniedFixture.userIds[0]}`;
+        const deniedInput = freeInput(deniedFixture, deniedFixture.userIds[0]);
+        if (mode === "missing") deniedInput.promoCode = `MISSING-${randomUUID()}`;
+        else await sql`UPDATE promo_codes SET valid_until=now()-interval '1 day' WHERE id=${deniedFixture.promoId}`;
+        await assert.rejects(completeFreeCheckout(deniedInput), { code });
+        const [deniedCount] = await sql`SELECT count(*)::int AS total FROM registrations WHERE event_id=${deniedFixture.eventId}`;
+        assert.equal(deniedCount.total, 0);
+      }
+    }
+
     // Happy path.
     const happy = await seedFixture(sql, 1);
     const completed = await completeFreeCheckout(freeInput(happy, happy.userIds[0]));

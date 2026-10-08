@@ -17,6 +17,8 @@ const roleMapping = {
   generalPublic: "general",
   postgraduateStudent: "student",
   undergraduateStudent: "student",
+  healthhack: "healthhack",
+  booth: "booth",
 } as const;
 
 const studentLevelMapping: Record<string, "postgraduate" | "undergraduate" | null> = {
@@ -25,6 +27,8 @@ const studentLevelMapping: Record<string, "postgraduate" | "undergraduate" | nul
   generalPublic: null,
   postgraduateStudent: "postgraduate",
   undergraduateStudent: "undergraduate",
+  healthhack: null,
+  booth: null,
 };
 
 // Allowed file types for verification documents
@@ -101,10 +105,13 @@ export async function authRoutes(fastify: FastifyInstance) {
         pharmacyLicenseId,
         country,
         phone,
+        healthHackLevel,
+        boothName,
         recaptchaToken,
         source,
         eventCode,
       } = result.data;
+      const isSpecialRole = accountType === "healthhack" || accountType === "booth";
 
       // Verify reCAPTCHA if enabled
       if (isRecaptchaEnabled()) {
@@ -188,7 +195,7 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       // 4. Upload verification document to Google Drive (if file exists)
       let verificationDocUrl: string | null = null;
-      if (fileBuffer) {
+      if (fileBuffer && !isSpecialRole) {
         try {
           // Build filename using user's name instead of original filename
           const fileExt = fileName.includes('.') ? fileName.substring(fileName.lastIndexOf('.')) : '';
@@ -218,7 +225,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       // 6. Determine role, studentLevel & country
       const role = roleMapping[accountType];
       const studentLevel = studentLevelMapping[accountType];
-      const userCountry = country || "Thailand";
+      const userCountry = isSpecialRole ? "Thailand" : country || "Thailand";
 
       // Determine auto-approval based on role
       // Students require verification, all other roles are auto-approved
@@ -232,12 +239,14 @@ export async function authRoutes(fastify: FastifyInstance) {
           email,
           passwordHash,
           role,
-          firstName,
-          lastName,
+          firstName: isSpecialRole ? firstName.trim() : firstName,
+          lastName: isSpecialRole ? lastName.trim() : lastName,
           country: userCountry,
-          institution: organization || null,
+          institution: accountType === "healthhack" ? organization!.trim() : organization || null,
           university: university || null,
-          phone: phone || null,
+          phone: isSpecialRole ? phone!.trim() : phone || null,
+          healthHackLevel: accountType === "healthhack" ? healthHackLevel! : null,
+          boothName: accountType === "booth" ? boothName!.trim() : null,
           thaiIdCard: idCard || null,
           passportId: passportId || null,
           pharmacyLicenseId: pharmacyLicenseId || null,
@@ -292,6 +301,9 @@ export async function authRoutes(fastify: FastifyInstance) {
           lastName: newUser.lastName,
           role: newUser.role,
           studentLevel: newUser.studentLevel,
+          country: newUser.country,
+          healthHackLevel: newUser.healthHackLevel,
+          boothName: newUser.boothName,
           status: newUser.status,
           institution: newUser.institution,
           university: newUser.university,

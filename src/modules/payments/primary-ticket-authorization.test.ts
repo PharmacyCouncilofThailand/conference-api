@@ -9,6 +9,19 @@ const tickets = [
   { id: 6, allowedRoles: "student", allowedStudentLevels: "undergraduate" },
 ];
 
+test("new roles retain only eligible real ticket IDs and unrestricted tickets", () => {
+  const special = [
+    { id: 21, allowedRoles: '["healthhack"]', allowedStudentLevels: null },
+    { id: 22, allowedRoles: 'booth', allowedStudentLevels: null },
+    { id: 23, allowedRoles: null, allowedStudentLevels: null },
+    { id: 24, allowedRoles: 'student', allowedStudentLevels: 'undergraduate' },
+  ];
+  for (const [role, expected] of [["healthhack", [21, 23]], ["booth", [22, 23]], ["general", [23]]] as const) {
+    const result = authorizePrimaryTicketCandidates(special, { effectiveRole: role, effectiveStudentLevel: null }, null);
+    assert.deepEqual(result.map(row => row.id), expected);
+  }
+});
+
 test("general identity cannot retain pharmacist Early Bird", () => {
   const result = authorizePrimaryTicketCandidates(tickets, {
     effectiveRole: "general",
