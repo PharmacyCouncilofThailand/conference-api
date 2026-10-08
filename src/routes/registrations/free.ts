@@ -77,6 +77,8 @@ async function resolveFreeTicket(
     pharmacist: ["pharmacist"],
     medical_professional: ["medical_professional"],
     general: ["general"],
+    healthhack: ["healthhack"],
+    booth: ["booth"],
   };
   const roles = roleMap[packageId];
   if (!roles) return null;

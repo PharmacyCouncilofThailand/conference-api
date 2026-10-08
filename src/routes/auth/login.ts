@@ -102,6 +102,10 @@ export default async function (fastify: FastifyInstance) {
         case "general":
           delegateType = "general";
           break;
+        case "healthhack":
+        case "booth":
+          delegateType = user.role;
+          break;
         default:
           delegateType = "unknown";
       }
@@ -127,6 +131,8 @@ export default async function (fastify: FastifyInstance) {
           lastName: user.lastName,
           role: user.role,
           studentLevel: user.studentLevel,
+          healthHackLevel: user.healthHackLevel,
+          boothName: user.boothName,
           country: user.country,
           delegateType,
           isThai: isThai,

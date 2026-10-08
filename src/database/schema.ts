@@ -32,6 +32,17 @@ export const userRoleEnum = pgEnum("user_role", [
   "medical_professional",
   "general",
   "student",
+  "healthhack",
+  "booth",
+]);
+export const healthHackLevelEnum = pgEnum("health_hack_level", [
+  "m1",
+  "m2",
+  "m3",
+  "m4",
+  "m5",
+  "m6",
+  "undergraduate",
 ]);
 export const studentLevelEnum = pgEnum("student_level", [
   "postgraduate",
@@ -196,6 +207,8 @@ export const users = pgTable("users", {
   rejectionReason: text("rejection_reason"),
   resubmissionCount: integer("resubmission_count").notNull().default(0),
   studentLevel: studentLevelEnum("student_level"),
+  healthHackLevel: healthHackLevelEnum("health_hack_level"),
+  boothName: varchar("booth_name", { length: 255 }),
   registeredFromEvent: varchar("registered_from_event", { length: 50 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

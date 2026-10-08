@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { healthHackLevelEnum } from "../database/schema.js";
 
 export const registerBodySchema = z.object({
   firstName: z.string().min(1, "First name is required"),
@@ -11,6 +12,8 @@ export const registerBodySchema = z.object({
     "generalPublic",
     "postgraduateStudent",
     "undergraduateStudent",
+    "healthhack",
+    "booth",
   ]),
   organization: z.string().optional(),
   university: z.string().optional(),
@@ -19,6 +22,8 @@ export const registerBodySchema = z.object({
   pharmacyLicenseId: z.string().optional(),
   country: z.string().optional(),
   phone: z.string().optional(),
+  healthHackLevel: z.enum(healthHackLevelEnum.enumValues).optional(),
+  boothName: z.string().optional(),
   verificationDocUrl: z.string().optional(),
   recaptchaToken: z.string().optional(),
   source: z.string().optional(),
@@ -32,6 +37,25 @@ export const registerBodySchema = z.object({
 }, {
   message: "Pharmacy License ID is required for Pharmacists",
   path: ["pharmacyLicenseId"]
+}).superRefine((data, ctx) => {
+  if (data.accountType !== "healthhack" && data.accountType !== "booth") return;
+  const fields: Array<[string, string | undefined, number]> = [
+    ["firstName", data.firstName, 100],
+    ["lastName", data.lastName, 100],
+    ["email", data.email, 255],
+    ["phone", data.phone, 20],
+    data.accountType === "healthhack"
+      ? ["organization", data.organization, 255]
+      : ["boothName", data.boothName, 255],
+  ];
+  for (const [field, value, max] of fields) {
+    if (!value?.trim() || value.trim().length > max) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} is required and must be at most ${max} characters` });
+    }
+  }
+  if (data.accountType === "healthhack" && !data.healthHackLevel) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["healthHackLevel"], message: "HealthHack education level is required" });
+  }
 });
 
 export const loginBodySchema = z.object({

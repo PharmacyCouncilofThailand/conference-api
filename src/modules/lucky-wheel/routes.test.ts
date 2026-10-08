@@ -1148,3 +1148,41 @@ test("admin QR detail, recipient list and status change do not log the raw QR id
   } })).statusCode, 200);
   assert.equal(logs.join("").includes(qrId), false);
 });
+
+test("HealthHack and Booth reach attendee services and preserve eligibility failures", async (t) => {
+  const app = Fastify({ logger: false });
+  await app.register(rateLimit, { max: 600, timeWindow: "1 minute" });
+  app.addHook("preHandler", async request => {
+    const role = request.headers["x-test-role"];
+    if (typeof role === "string") (request as any).user = { id: 21, role, email: "test@example.invalid" };
+  });
+  let calls = 0;
+  const denied = async () => { calls += 1; throw new WheelError(409, "NO_CREDIT", "No credit"); };
+  const options: LuckyWheelRouteOptions = { database: {} as WheelDatabase,
+    getEligibilityFn: denied, previewQrCreditFn: denied, claimQrCreditFn: denied,
+    createSpinFn: denied, readOwnedSpinsFn: denied, readOwnedSpinFn: denied };
+  await app.register(luckyWheelAttendeeRoutes, { prefix: "/attendee", ...options });
+  await app.ready();
+  t.after(async () => app.close());
+  const id = "00000000-0000-4000-8000-000000000191";
+  for (const role of ["healthhack","booth"]) {
+    const headers = { "x-test-role": role };
+    const responses = [
+      await app.inject({ url: "/attendee/events/3/eligibility", headers }),
+      await app.inject({ url: `/attendee/events/3/qr-codes/${id}`, headers }),
+      await app.inject({ method: "POST", url: "/attendee/events/3/credit-claims", headers, payload: { qrId: id } }),
+      await app.inject({ url: "/attendee/events/3/spins", headers }),
+      await app.inject({ url: `/attendee/events/3/spins/${id}`, headers }),
+      await app.inject({ method: "POST", url: "/attendee/events/3/spins", headers,
+        payload: { eventId: 3, configurationVersion: 1, poolRevision: 1, scheduleVersion: 1, idempotencyKey: randomUUID() } }),
+    ];
+    for (const response of responses) {
+      assert.equal(response.statusCode, 409);
+      assert.equal(response.json().code, "NO_CREDIT");
+    }
+  }
+  assert.equal(calls, 12);
+  const unknown = await app.inject({ url: "/attendee/events/3/eligibility", headers: { "x-test-role": "unknown" } });
+  assert.equal(unknown.statusCode, 403);
+  assert.equal(calls, 12);
+});
