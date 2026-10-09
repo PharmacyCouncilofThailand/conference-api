@@ -1,3 +1,4 @@
+import { getGrantTracking } from "./tracking.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -15,6 +16,7 @@ import {
   idempotencyKeySchema,
   resultQuerySchema,
   retryEmailsSchema,
+  trackingQuerySchema,
 } from "./schemas.js";
 import { retryGrantEmails } from "./email-jobs.js";
 import {
@@ -35,6 +37,7 @@ export interface SessionGrantRouteOptions {
   database?: GrantDatabase;
   createGrantFn?: typeof createGrant;
   getGrantBatchFn?: typeof getGrantBatch;
+  getGrantTrackingFn?: typeof getGrantTracking;
   retryGrantEmailsFn?: typeof retryGrantEmails;
 }
 
@@ -74,6 +77,23 @@ export default async function sessionGrantRoutes(
   const createGrantFn = options.createGrantFn ?? createGrant;
   const getGrantBatchFn = options.getGrantBatchFn ?? getGrantBatch;
   const retryGrantEmailsFn = options.retryGrantEmailsFn ?? retryGrantEmails;
+
+  const getGrantTrackingFn = options.getGrantTrackingFn ?? getGrantTracking;
+
+  fastify.get("/tracking", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    if (!adminActor(request, reply)) return;
+    const parsed = trackingQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "Invalid query", code: "INVALID_QUERY" });
+    }
+    try {
+      return reply.send(await getGrantTrackingFn(database, parsed.data));
+    } catch {
+      fastify.log.error({ err: "SESSION_GRANT_TRACKING_FAILED" });
+      return reply.status(500).send({ error: "Failed to read session grant tracking", code: "SESSION_GRANT_TRACKING_FAILED" });
+    }
+  });
 
   fastify.get("/status", async (request, reply) => {
     const actor = adminActor(request, reply);
