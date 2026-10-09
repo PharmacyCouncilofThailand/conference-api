@@ -1,6 +1,6 @@
 # Admin Session Grant Tracking Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Give Admin a searchable tracking page for recorded immediate session grants and invitations, with independent response/mail states and safe per-item email retry.
 
@@ -27,7 +27,7 @@
 
 ## Execution boundary and file map
 
-This document contains implementation instructions and code; application files have not been changed. Execute Tasks 1 through 4 in order. The current skill catalog does not list the two superpowers execution skills in the required header; check for them at execution time and follow the user's selected execution method and available tools. Do not silently spawn agents before the user selects delegation.
+Implemented inline in this chat as requested by the user. API implementation commit: 516a927; Backoffice implementation commit: 250af66. Actual verification and browser limitations are recorded in ../verification/2026-10-09-admin-session-grant-tracking.md. Execute Tasks 1 through 4 in order. The current skill catalog does not list the two superpowers execution skills in the required header; check for them at execution time and follow the user's selected execution method and available tools. Do not silently spawn agents before the user selects delegation.
 
 | Task | Files | Purpose |
 | --- | --- | --- |
@@ -52,7 +52,7 @@ All API module paths below are under `src/modules/session-grants/`. All commands
 - Produces: `trackingQuerySchema`, `GrantTrackingQuery`, `GrantTrackingItemDto`, `GrantTrackingDto`, and `getGrantTracking(database: GrantDatabase, query: GrantTrackingQuery): Promise<GrantTrackingDto>`.
 - `GrantTrackingItemDto` reuses the item fields other than the internal entitlement link. The existing item/batch/history DTOs do not change.
 
-- [ ] **Step 1: Create the query contract test before adding the exports.**
+- [x] **Step 1: Create the query contract test before adding the exports.**
 
 `tracking-schemas.test.ts`:
 
@@ -83,7 +83,7 @@ test("tracking query defaults, coercion, trimming and strict boundaries", () => 
 });
 ```
 
-- [ ] **Step 2: Verify the focused test fails because the export does not exist.**
+- [x] **Step 2: Verify the focused test fails because the export does not exist.**
 
 ```powershell
 Set-Location -LiteralPath 'D:\confer\confer\conference\conference-api'
@@ -92,7 +92,7 @@ Set-Location -LiteralPath 'D:\confer\confer\conference\conference-api'
 
 Expected: missing `trackingQuerySchema` export. Do not treat missing installed tools as a valid red test.
 
-- [ ] **Step 3: Append the query schema and additive DTOs.**
+- [x] **Step 3: Append the query schema and additive DTOs.**
 
 Append to `schemas.ts`:
 
@@ -149,11 +149,11 @@ export interface GrantTrackingDto {
 }
 ```
 
-- [ ] **Step 4: Create the isolated database test shown after the reader below, then run it red with the harness commands in Step 6.**
+- [ ] **Step 4: Initial integration red run was not performed; the complete test passed after implementation (see verification).**
 
 Expected before implementation: missing `tracking.ts`. The test deliberately uses direct fixtures and never invokes a mail transport.
 
-- [ ] **Step 5: Create `src/modules/session-grants/tracking.ts` with the following complete reader.**
+- [x] **Step 5: Create `src/modules/session-grants/tracking.ts` with the following complete reader.**
 
 ```ts
 import { and, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
@@ -426,7 +426,7 @@ test("tracking filters effective states, preserves history and never writes on G
 });
 ```
 
-- [ ] **Step 6: Run contract and reader tests against a dedicated Compose project.**
+- [x] **Step 6: Run contract and reader tests against a dedicated Compose project.**
 
 The integration harness can reset its guarded test schema. Create a separate project/volume for this feature, and never point these migration tests at the live database. Compose URLs already distinguish runtime and integration databases. The first `createdb` command is for initial setup; if the database exists, verify its exact name and use it without dropping the volume.
 
@@ -444,7 +444,7 @@ npm run build
 
 Expected: all focused tests pass; 109 unique tracking rows; aggregate totals are independent of page; no live mail is sent. If Docker is unavailable, report the integration check as unrun and do not replace the DB guard with a live URL.
 
-- [ ] **Step 7: Commit only the Task 1 files in the API repository.**
+- [x] **Step 7: Commit only the Task 1 files in the API repository.**
 
 ```powershell
 git add -- src/modules/session-grants/schemas.ts src/modules/session-grants/types.ts src/modules/session-grants/tracking.ts src/modules/session-grants/tracking-schemas.test.ts src/modules/session-grants/tracking.integration.test.ts
@@ -464,7 +464,7 @@ git commit --only -m "feat(session-grants): add read-only tracking reader" -- sr
 - Produces: `GET /api/backoffice/session-grants/tracking`, returning `GrantTrackingDto`, and optional `SessionGrantRouteOptions.getGrantTrackingFn` for the existing route testing pattern.
 - Reuses: existing `adminActor`, protected route registration, feature status endpoint and retry route. Do not replace the existing registration history reader.
 
-- [ ] **Step 1: Create this complete route contract test and run it red.**
+- [ ] **Step 1: Initial route red run was not performed; the complete route test passed after implementation (see verification).**
 
 `tracking-routes.test.ts`:
 
@@ -545,7 +545,7 @@ $env:DATABASE_URL = 'postgres://tracking_unit:tracking_unit@127.0.0.1:1/tracking
 
 Expected before route integration: compile error for missing injectable option or `/tracking` resolves to the UUID reader and returns the wrong status. No DB connection is needed for this stubbed contract test. Restore the original environment value after testing if one existed.
 
-- [ ] **Step 2: Add the route with this exact integration code.**
+- [x] **Step 2: Add the route with this exact integration code.**
 
 Add imports to `routes.ts`:
 
@@ -590,7 +590,7 @@ Replace the following two existing `package.json` script values so the module's 
 "test:session-grants:integration": "tsx --test src/modules/session-grants/migration.integration.test.ts && tsx --test --test-concurrency=1 src/modules/session-grants/invitation-migration.integration.test.ts src/modules/session-grants/invitations.integration.test.ts && tsx --test --test-concurrency=1 src/modules/session-grants/tracking.integration.test.ts src/modules/session-grants/readers.integration.test.ts src/modules/session-grants/service.integration.test.ts src/modules/session-grants/writer-compatibility.integration.test.ts src/modules/session-grants/email-jobs.integration.test.ts"
 ```
 
-- [ ] **Step 3: Run the new contract test and existing grant/invitation unit suites once.**
+- [x] **Step 3: Run the new contract test and existing grant/invitation unit suites once.**
 
 ```powershell
 Set-Location -LiteralPath 'D:\confer\confer\conference\conference-api'
@@ -603,7 +603,7 @@ $env:DATABASE_URL = $taskOriginalDatabaseUrl
 
 Expected: authenticated Admin reads work with the flag off, non-Admins cannot read, invalid parameters never reach the reader, internal failures return the fixed code, and existing UUID batch/retry contracts still pass. The updated module scripts include the new tests in future runs; no new test framework or separate script is introduced.
 
-- [ ] **Step 4: Commit only route work.**
+- [x] **Step 4: Commit only route work.**
 
 ```powershell
 git add -- src/modules/session-grants/routes.ts src/modules/session-grants/tracking-routes.test.ts package.json
@@ -626,7 +626,7 @@ git commit --only -m "feat(session-grants): expose Admin tracking endpoint" -- s
 - Produces: mirrored `GrantTrackingItemDto`/`GrantTrackingDto`, `api.sessionGrants.tracking(token: string, query: string): Promise<GrantTrackingDto>`, and the Admin-only `/session-grants` page.
 - Local `sessionGrantRetryDisabledReason(item: GrantTrackingItemDto, enabled: boolean): string | null` handles display eligibility. It never replaces the authoritative retry service's checks.
 
-- [ ] **Step 1: Add the failing frontend boundary/client test.**
+- [ ] **Step 1: Initial frontend red run was not performed; the complete boundary/client test passed after implementation (see verification).**
 
 `src/lib/session-grant-tracking.test.ts`:
 
@@ -698,7 +698,7 @@ Set-Location -LiteralPath 'D:\confer\confer\conference\conference-backoffice'
 
 Expected before implementation: missing helper/client export. Use the installed sibling API's tsx binary; no test dependency is added to Backoffice.
 
-- [ ] **Step 2: Add mirrored types and one API client method.**
+- [x] **Step 2: Add mirrored types and one API client method.**
 
 Append to `src/types/session-grants.ts`:
 
@@ -737,7 +737,7 @@ tracking: (token: string, query: string) =>
   ),
 ```
 
-- [ ] **Step 3: Create the page's small state/label helper.**
+- [x] **Step 3: Create the page's small state/label helper.**
 
 `src/lib/session-grant-tracking.ts`:
 
@@ -763,7 +763,7 @@ export function sessionGrantRetryDisabledReason(item: GrantTrackingItemDto, enab
 }
 ```
 
-- [ ] **Step 4: Create the complete page below.**
+- [x] **Step 4: Create the complete page below.**
 
 The Suspense boundary is intentional: URL search state is read using Next.js `useSearchParams`. Keep the page's auth gate as well as the existing root AuthGuard; `AdminLayout` itself is only a layout component.
 
@@ -1026,7 +1026,7 @@ export default function SessionGrantTrackingPage() {
 }
 ```
 
-- [ ] **Step 5: Add the navigation link and keep it Admin-only.**
+- [x] **Step 5: Add the navigation link and keep it Admin-only.**
 
 In the `Registrations` submenu's `children` array in `Sidebar.tsx`, insert:
 
@@ -1042,7 +1042,7 @@ if (item.children) item = { ...item, children: item.children.filter(child => chi
 
 The existing AuthContext allows `admin: ['*']` and has no `/session-grants` entry for any other role. Leave its role lists intact. Existing role-specific submenu filters still run after this exclusion.
 
-- [ ] **Step 6: Run the helper/client test, Backoffice type check, targeted lint and build.**
+- [x] **Step 6: Run the helper/client test, Backoffice type check, targeted lint and build.**
 
 ```powershell
 Set-Location -LiteralPath 'D:\confer\confer\conference\conference-backoffice'
@@ -1054,7 +1054,7 @@ npm run build
 
 Expected: new tests and page pass. If the installed ESLint configuration flags an effect pattern already used by existing pages, fix new-page issues with the existing project conventions; do not silence the entire file or refactor unrelated pages. A failure in an unchanged file is reported separately with its exact file/command. Google font/network failures during a build do not prove the page compiles; retain the standalone type check evidence and report the build limitation.
 
-- [ ] **Step 7: Commit only Backoffice feature files after the focused checks pass.**
+- [x] **Step 7: Commit only Backoffice feature files after the focused checks pass.**
 
 ```powershell
 git add -- src/types/session-grants.ts src/lib/api.ts src/lib/session-grant-tracking.ts src/lib/session-grant-tracking.test.ts src/app/session-grants/page.tsx src/components/layout/Sidebar.tsx
@@ -1072,7 +1072,7 @@ git commit --only -m "feat(backoffice): track session grants and email retries" 
 - Consumes: the API reader, page, existing safe test fixtures, and the user's authorized execution method.
 - Produces: actual verification evidence and a ready-to-review diff; no new runtime service or release action.
 
-- [ ] **Step 1: Confirm API and Backoffice diffs contain only the approved feature.**
+- [x] **Step 1: Confirm API and Backoffice diffs contain only the approved feature.**
 
 ```powershell
 git -C 'D:\confer\confer\conference\conference-api' status --short
@@ -1083,7 +1083,7 @@ git -C 'D:\confer\confer\conference\conference-backoffice' diff --check
 
 Do not stage the unrelated presentation data change. Confirm the new endpoint has no token/notification payload fields and the UI calls the existing retry endpoint rather than a transport.
 
-- [ ] **Step 2: Run the unchanged retry/worker integration checks against the already prepared isolated integration DB.**
+- [x] **Step 2: Run the unchanged retry/worker integration checks against the already prepared isolated integration DB.**
 
 ```powershell
 Set-Location -LiteralPath 'D:\confer\confer\conference\conference-api'
@@ -1094,7 +1094,7 @@ docker compose -p session-grant-tracking-test -f docker-compose.session-grants-t
 
 Expected: existing transport tests preserve failed/unknown recovery, suppression and terminal invitation rules. These files use test/fake transports; the new tracking test itself does not send mail. Do not run schema reset/migration rehearsals concurrently with these tests.
 
-- [ ] **Step 3: Inspect the new page in a local review environment using test accounts and synthetic records.**
+- [x] **Step 3: Inspect the new page in a local review environment using test accounts and synthetic records.**
 
 Reuse an already suitable local review environment if one is available. For a fresh review environment, use the already migrated, dedicated Compose project from Task 1. The temporary override below is outside the repositories and exposes review ports on loopback only. Confirm ports 3001, 3002, 3004 and 18025 are free; do not stop another user's service to claim these ports. If an existing project/service already owns the correct review port, reuse it.
 
@@ -1177,7 +1177,7 @@ Perform these concrete browser checks at `/session-grants` and record each outco
 | Human response refresh | After mail is sent, respond through the existing test invitation flow and refocus Backoffice | Response refreshes on focus without continuous polling for human answers |
 | Keyboard/mobile | Tab through filters/actions/history; inspect narrow viewport | Controls are labelled and focus is visible; table scrolls; disabled retry has an explanation |
 
-- [ ] **Step 4: Write actual verification evidence and commit only that evidence document.**
+- [x] **Step 4: Write actual verification evidence and commit only that evidence document.**
 
 Use this exact structure; populate it with observed results, never invent passing commands:
 
@@ -1212,7 +1212,7 @@ git diff --cached --check
 git commit --only -m "docs: verify admin session grant tracking" -- docs/superpowers/verification/2026-10-09-admin-session-grant-tracking.md
 ```
 
-- [ ] **Step 5: Hand back the completed change for review.**
+- [x] **Step 5: Hand back the completed change for review.**
 
 Report what changed, focused tests/browser checks actually run, and material limitations. Deployment order is API first, Backoffice second. Reverting these additive readers/page changes rolls back the feature without reversing business data. Do not deploy, send to live recipients, push branches, or create a PR solely because this planning document exists; follow the user's later instructions.
 
