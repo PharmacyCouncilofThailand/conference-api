@@ -1,13 +1,15 @@
 # ขนาดไฟล์นำเสนอสูงสุด
 
-ข้อมูล ณ วันที่ 8 ตุลาคม 2026
+ข้อมูล ณ วันที่ 9 ตุลาคม 2026
 
 | ประเภทผลงาน | ขนาดสูงสุด | Bytes | จำนวนหน้า PDF |
 | --- | ---: | ---: | --- |
 | Oral | 50 MB | 52,428,800 | อย่างน้อย 2 หน้า ไม่จำกัดสูงสุด |
 | Poster / Highlighted Poster | 30 MB | 31,457,280 | 1 หน้า |
 
-รับ PDF หนึ่งไฟล์ ไม่ตั้งรหัสผ่าน ขนาดเท่ากับเพดานรับได้ แต่ยังต้องผ่านการตรวจไฟล์และสิทธิ์อื่นตามระบบ
+Oral รับ PDF หนึ่งไฟล์ ไม่ตั้งรหัสผ่าน; Poster / Highlighted Poster รับ PNG หนึ่งภาพหรือ PDF หนึ่งหน้า หนึ่งไฟล์ โดย PDF ต้องไม่ตั้งรหัสผ่าน ขนาดเท่ากับเพดานรับได้ แต่ยังต้องผ่านการตรวจไฟล์และสิทธิ์อื่นตามระบบ
+
+PNG ต้องเป็นภาพที่ถอดรหัสได้ ไม่เกิน 40 ล้านพิกเซล และเก็บไฟล์ต้นฉบับใน R2 ด้วย `image/png` ต้องใช้ migration `0041_pris2026_poster_png.sql` เพื่อขยาย constraint ของตารางอัปโหลดก่อนใช้งาน
 
 คำว่า `MB` เป็นป้ายแสดงผลตามที่อนุมัติ โดยคงเพดาน bytes และการแปลงขนาดด้วย `1024 * 1024` เดิม ไม่ได้เปลี่ยนเพดานเป็น 50,000,000 / 30,000,000 bytes กำหนดขนาดในโค้ด ไม่ใช้ ENV
 
@@ -120,9 +122,10 @@ import { PRESENTATION_LIMITS } from './presentationLimits';
 export function fileProblem(file: File, type: AnnouncementType): string | null {
   if (file.size < 1) return 'PRESENTATION_FILE_EMPTY';
   if (file.size > PRESENTATION_LIMITS[type === 'oral' ? 'oral' : 'poster'].bytes) return 'PRESENTATION_FILE_TOO_LARGE';
-  const extension = /\.pdf$/i.test(file.name);
+  const mimeType = /\.pdf$/i.test(file.name) ? 'application/pdf'
+    : type !== 'oral' && /\.png$/i.test(file.name) ? 'image/png' : null;
   const mime = file.type.toLowerCase();
-  return extension && ['', 'application/octet-stream', 'application/pdf'].includes(mime)
+  return mimeType && ['', 'application/octet-stream', mimeType].includes(mime)
     ? null : 'PRESENTATION_FILE_TYPE';
 }
 ```
@@ -141,14 +144,14 @@ const maxMB = PRESENTATION_LIMITS[oral ? 'oral' : 'poster'].mb;
 const pageRule = t(oral ? 'pageRuleOral' : 'pageRulePoster');
 ```
 
-`maxMB` ใช้แสดง `PDF · 50 MB` / `PDF · 30 MB` และเติมตัวเลขในข้อความผิดพลาดและข้อกำหนดด้วย `t(oral ? 'requirementsOral' : 'requirementsPoster', { maxMB })` ขนาดไฟล์ที่เลือกคำนวณด้วย `(p.file.size / PRESENTATION_SIZE_UNIT_BYTES).toFixed(2)`
+`maxMB` ใช้แสดง `PDF · 50 MB` / `PNG / PDF · 30 MB` และเติมตัวเลขในข้อความผิดพลาดและข้อกำหนดด้วย `t(oral ? 'requirementsOral' : 'requirementsPoster', { maxMB })` ขนาดไฟล์ที่เลือกคำนวณด้วย `(p.file.size / PRESENTATION_SIZE_UNIT_BYTES).toFixed(2)`
 
 `Pris2026/messages/th.json`
 
 ```json
 {
   "requirementsOral": "ไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน {maxMB} MB และไม่ตั้งรหัสผ่าน",
-  "requirementsPoster": "ไฟล์ที่ส่งต้องเป็น PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน {maxMB} MB"
+  "requirementsPoster": "ส่งไฟล์ PNG หนึ่งภาพ หรือ PDF หนึ่งหน้า จำนวนหนึ่งไฟล์ ขนาดไม่เกิน {maxMB} MB"
 }
 ```
 
@@ -157,7 +160,7 @@ const pageRule = t(oral ? 'pageRuleOral' : 'pageRulePoster');
 ```json
 {
   "requirementsOral": "One PDF file, maximum {maxMB} MB, without password protection.",
-  "requirementsPoster": "Submit one PDF file, exactly 1 page, maximum {maxMB} MB."
+  "requirementsPoster": "Submit one PNG image or one single-page PDF file, maximum {maxMB} MB."
 }
 ```
 
@@ -173,7 +176,7 @@ const maxMB = maxPresentationBytes(oral ? 'oral' : 'poster') / (1024 * 1024);
 ส่วน HTML ภายใน template literal:
 
 ```ts
-<li>ไฟล์ PDF จำนวนหนึ่งไฟล์ ${oral ? '' : 'หนึ่งหน้า '}ขนาดไม่เกิน ${maxMB} MB</li>
+<li>${oral ? 'ส่งไฟล์ PDF หนึ่งไฟล์' : 'ส่งไฟล์ PNG หนึ่งภาพ หรือ PDF หนึ่งหน้า จำนวนหนึ่งไฟล์'} ขนาดไม่เกิน ${maxMB} MB</li>
 ```
 
 ข้อความอีเมลอ่านขนาดจาก policy อัตโนมัติ รวม initial / reminder / revision; receipt ใช้รูปแบบยืนยันรับไฟล์เดิม

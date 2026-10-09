@@ -1,6 +1,6 @@
 # PRIS 2026 Presentation cutover
 
-This is an operator procedure. Implementation tests use one isolated Docker PostgreSQL database and injected Drive/R2/mail transports. No runtime migration, live file upload, email or deployment has been executed.
+This is an operator procedure. Implementation tests use one isolated Docker PostgreSQL database and injected Drive/R2/mail transports. Record runtime migrations, live provider rehearsals and deployment separately for each named environment.
 
 ## Release inputs
 
@@ -20,9 +20,15 @@ This is an operator procedure. Implementation tests use one isolated Docker Post
 8. Organizer/Reviewer must be active, assigned to this Event and explicitly assigned `oral` and/or `poster`. Empty grants show no files. `poster` covers Highlighted Poster. Both roles read received works/history; Admin manages all. Owner upload requires the submitting account and matching real announcement in either round.
 9. Oral uses `<GOOGLE_DRIVE_FOLDER_ABSTRACTS>/<EventCode>/Oral/Presentation Oral/<DB category name>/<canonical Abstract TrackingID>/`. Stored filename: `<TrackingID>_<original filename>` including extension. Every version has a new Drive fileId; duplicate names permitted. Share `anyone: reader`; open stored Drive view URL. Abstract locations unchanged. Poster/Highlighted retain R2 immutable attempt keys `events/<eventId>/presentations/<abstractId>/...`.
 10. Run **one** worker: `SERVICE_ROLE=presentation-worker`, command `npm run presentations:worker`. Docker health: `dist/modules/presentations/jobs-runner.js --healthcheck`; `npm run presentations:worker:health` reads local heartbeat before DB import. Heartbeat under 60 seconds proves an iteration, not delivery. Review `/health/ready`, SQL and logs. Never run old/new workers together.
-11. Review drafts and links. Oral: one PDF, >=2 pages, <=52,428,800 bytes. Poster/Highlighted: one single-page PDF, <=31,457,280 bytes. Correct ZIP on upload and initial/reminder/revision emails. Receipt uses accepted original filename/version/server time. Oral ZIP: `https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20Oral%20Template.zip`.
+11. Review drafts and links. Oral: one PDF, >=2 pages, <=52,428,800 bytes. Poster/Highlighted: one PNG image or one single-page PDF, <=31,457,280 bytes. Correct ZIP on upload and initial/reminder/revision emails. Receipt uses accepted original filename/version/server time. Oral ZIP: `https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20Oral%20Template.zip`.
 12. Enable receiving after source/readiness/config checks. Enable mail separately after reviewing recipients/drafts. Admin explicitly previews/confirms initial/reminder batches. Startup/reconcile/source changes enqueue no notices. Unknown remains unknown until intentional fresh preview/resend; `sent` means provider acceptance.
 13. Re-run verification; record deployed SHAs, source counts, deadline, flags and private backup reference. Live provider rehearsal/deployment require authorization for a named environment; implementation tests constitute neither step.
+
+## PNG update for an existing Presentation database
+
+Apply `drizzle/0041_pris2026_poster_png.sql` before releasing PNG-capable API/Pris/Backoffice. It expands only the two upload MIME constraints in a transaction with a five-second lock timeout; existing PDF rows and history remain. Do not rerun replacement migration 0039 on an existing database. PNG stays in R2 with its original bytes and `image/png` content type. Validation accepts a decodable PNG up to 40 million pixels; Oral remains PDF-only in Drive.
+
+After accepting PNG, keep the expanded constraints when rolling back application code. A PDF-only constraint cannot safely be restored while PNG history exists. Already queued emails retain their original rendered content; newly generated drafts include PNG.
 
 ## Routine operations
 
@@ -34,7 +40,7 @@ This is an operator procedure. Implementation tests use one isolated Docker Post
 | Initial/reminder | Preview `.../presentation-email-previews`, review recipients, confirm `.../presentation-notification-batches`. Stale queues nothing. |
 | Revision | Preview immutable details/close/proposed ID, create one active request. Cancel with reason; terminal cannot reopen. Mail failure leaves rights intact. |
 | Failed/unknown mail | Inspect stored body/attempt. Pending/sending cannot resend. Unknown requires acknowledgment/fresh preview. Ambiguous HTTP retry keeps exact key/payload. |
-| Files | Original names/current pointer/all accepted versions. Oral opens Drive; Poster renders R2 PDF. Display original names, not stored prefixes. |
+| Files | Original names/current pointer/all accepted versions. Oral opens Drive; Poster opens R2 PDF/PNG. Display original names, not stored prefixes. |
 | Pause | Independent receiving/mail flags; accepted data readable. |
 | Storage/DB uncertainty | Keep file/key; verify accepted binding before cleanup. Worker handles expired proven orphans and protects successful history. |
 | Announcement PDF | Existing approved-announcement PDF asset/button process unchanged. |

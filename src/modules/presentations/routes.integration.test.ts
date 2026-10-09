@@ -134,10 +134,11 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  };
  await upload(pdf,400,{key:'invalid'});await upload(pdf,422,{files:0});await upload(Buffer.alloc(0),422);await upload(pdf,422,{files:2});await upload(Buffer.alloc(MAX_POSTER_BYTES+1),413);
  await upload(Buffer.from('%PDF-1.7 invalid'),422);await upload(pdf,415,{filename:'poster.jpg'});await upload(pdf,415,{type:'text/plain'});
- await upload(png,415,{filename:'poster.png',type:'image/png'});await upload(png,415);assert.equal(objects.size,0);
+ await upload(png,415,{filename:'poster.png',type:'application/pdf'});await upload(png,415);assert.equal(objects.size,0);
  await upload(pdf,400,{requestId:'invalid'});await upload(pdf,403,{headers:other});
  process.env.PRESENTATION_SUBMISSIONS_ENABLED='false';await upload(pdf,503);await get(ownerUrl,owner);await get(base+'/presentation-settings');await get('/api/events/PRIS-2026/approved-abstracts',{});
- process.env.PRESENTATION_SUBMISSIONS_ENABLED='true';const uploadKey=randomUUID();const uploaded=await upload(pdf,201,{key:uploadKey});const replayed=await upload(pdf,201,{key:uploadKey});
+ process.env.PRESENTATION_SUBMISSIONS_ENABLED='true';const uploadKey=randomUUID();const uploaded=await upload(png,201,{key:uploadKey,filename:'poster.png',type:'image/png'});const replayed=await upload(png,201,{key:uploadKey,filename:'poster.png',type:'image/png'});
+ assert.equal(uploaded.data.upload.mimeType,'image/png');assert.match(uploaded.data.upload.fileUrl,/\.png$/);assert.deepEqual([...objects.values()][0],png);
  assert.deepEqual(replayed.data.upload,uploaded.data.upload);assert.equal(replayed.data.replayed,true);assert.equal(objects.size,1);await upload(pdf,409);
  const details='Improve labels';const revisionPreview=await send('POST',base+'/presentation-email-previews',{kind:'revision',abstractId:f.abstractId,details,closesAt:close},200);
  const revision=await send('POST',base+`/presentation-targets/${f.abstractId}/revision-requests`,{requestId:revisionPreview.requestId,details,closesAt:close,previewFingerprint:revisionPreview.fingerprint},201,admin,randomUUID(),true);

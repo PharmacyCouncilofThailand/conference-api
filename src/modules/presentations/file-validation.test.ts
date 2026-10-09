@@ -76,9 +76,9 @@ test('one-page PDF also accepts the exact byte ceiling and rejects one byte more
   await reject(Buffer.concat([buffer, Buffer.from([32])]), 'PRESENTATION_FILE_TOO_LARGE', 413, 'poster.pdf', 'application/pdf');
 });
 
-test('only PDF content, names and MIME are accepted; renamed PNG still rejects', async () => {
+test('PDF/PNG declarations must match actual bytes; renamed files and other images reject', async () => {
   const image = await png(), document = await pdf(1);
-  for (const [filename, mimetype] of [['poster.png', 'image/png'], ['poster.pdf', 'application/pdf'], ['poster.pdf', ''], ['poster.pdf', 'application/octet-stream']]) {
+  for (const [filename, mimetype] of [['poster.pdf', 'application/pdf'], ['poster.pdf', ''], ['poster.pdf', 'application/octet-stream'], ['poster.png', 'application/pdf']]) {
     await reject(image, 'PRESENTATION_FILE_TYPE_MISMATCH', 415, filename, mimetype);
   }
   for (const filename of ['poster.png', 'poster.jpg', 'poster.pdf.exe', 'poster']) {
@@ -91,6 +91,22 @@ test('only PDF content, names and MIME are accepted; renamed PNG still rejects',
   await reject(Buffer.alloc(0), 'PRESENTATION_FILE_INVALID');
   await reject(Buffer.from('not a pdf'), 'PRESENTATION_FILE_TYPE_MISMATCH', 415);
   await reject(await sharp(image).jpeg().toBuffer(), 'PRESENTATION_FILE_TYPE_MISMATCH', 415, 'poster.jpg', 'image/jpeg');
+});
+
+test('PNG posters retain original bytes, canonical MIME, extension and single-image identity; Oral rejects', async () => {
+  const buffer = await png();
+  for (const mimetype of ['image/png', 'IMAGE/PNG', '', 'application/octet-stream']) {
+    const result = await validate(buffer,'poster.PNG',mimetype);
+    assert.equal(result.buffer, buffer);
+    assert.equal(result.mimeType,'image/png'); assert.equal(result.extension,'png'); assert.equal(result.pageCount,1);
+    assert.equal(result.digest,createHash('sha256').update(buffer).digest('hex'));
+  }
+  await assert.rejects(validatePresentationFile({buffer,filename:'poster.png',mimetype:'image/png'},'oral'),
+    {code:'PRESENTATION_FILE_TYPE_MISMATCH',statusCode:415});
+  for (const broken of [buffer.subarray(0,8),buffer.subarray(0,buffer.length-12),Buffer.concat([buffer.subarray(0,40),buffer.subarray(-12)])]) {
+    await reject(broken,'PRESENTATION_FILE_INVALID',422,'poster.png','image/png');
+  }
+  await reject(Buffer.alloc(MAX_POSTER_BYTES+1),'PRESENTATION_FILE_TOO_LARGE',413,'poster.png','image/png');
 });
 
 test('PDF requires exactly one page, rejects malformed/truncated and encrypted documents', async () => {

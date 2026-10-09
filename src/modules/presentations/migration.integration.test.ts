@@ -4,7 +4,30 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
 import { validateSessionGrantTestDatabaseUrl } from "../session-grants/test-database.js";
-import { openPresentationTestDatabase, resetPresentationTestDatabase, seedPresentationScenario } from "./test-support.js";
+import { openPresentationTestDatabase, resetPresentationTestDatabase, seedPresentationScenario, preparePresentationScenario } from "./test-support.js";
+
+test('PNG migration preserves PDF rows and only permits image/png in R2', async t => {
+  const {client:sql,fixture:f}=await preparePresentationScenario(t);
+  const [target]=await sql`SELECT id FROM presentation_targets`;
+  const id=randomUUID();
+  await sql`INSERT INTO presentation_upload_attempts(id,target_id,user_id,operation_key,fingerprint,storage_provider,object_key,
+    original_filename,stored_filename,mime_type,size_bytes,digest,lease_until,claim_token)
+    VALUES(${id},${target.id},${f.ownerId},${randomUUID()},${'a'.repeat(64)},'r2','existing.pdf','existing.pdf','existing.pdf',
+      'application/pdf',100,${'b'.repeat(64)},clock_timestamp()+interval '1 hour',${randomUUID()})`;
+  await sql`INSERT INTO presentation_uploads(id,target_id,attempt_id,version,user_id,storage_provider,object_key,file_url,
+    original_filename,stored_filename,mime_type,size_bytes,digest,received_at)
+    SELECT id,target_id,id,1,user_id,storage_provider,object_key,'https://test.r2.dev/existing.pdf',original_filename,
+      stored_filename,mime_type,size_bytes,digest,clock_timestamp() FROM presentation_upload_attempts`;
+  const before=await sql`SELECT to_jsonb(u) AS row FROM presentation_uploads u`;
+  const migration=await readFile('drizzle/0041_pris2026_poster_png.sql','utf8');
+  await sql.unsafe(migration);await sql.unsafe(migration);
+  assert.deepEqual(await sql`SELECT to_jsonb(u) AS row FROM presentation_uploads u`,before);
+  for(const table of ['presentation_upload_attempts','presentation_uploads']){
+    await sql.unsafe(`UPDATE ${table} SET mime_type='image/png'`);
+    await assert.rejects(sql.unsafe(`UPDATE ${table} SET mime_type='image/jpeg'`),/mime_type_check/);
+    await assert.rejects(sql.unsafe(`UPDATE ${table} SET storage_provider='drive',object_key=NULL,drive_file_id='drive',drive_folder_id='folder'`),/mime_type_check/);
+  }
+});
 
 test("poster database guards reject shared and unapproved targets before connecting", () => {
   assert.throws(() => validateSessionGrantTestDatabaseUrl({

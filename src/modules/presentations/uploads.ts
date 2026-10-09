@@ -130,7 +130,9 @@ export async function finalizePresentationAttempt(database: PresentationDatabase
     if (existing) return existing;
     const gate = await readUploadGate(tx, actor, abstractId, requestId);
     if (a.storage_provider !== presentationStorageProvider(gate.presentationType) || file.presentationType !== gate.presentationType ||
-      file.sizeBytes > maxPresentationBytes(gate.presentationType) || (gate.presentationType === 'oral' ? file.pageCount < 2 : file.pageCount !== 1)) fail('PRESENTATION_ROSTER_CONFLICT');
+      file.sizeBytes > maxPresentationBytes(gate.presentationType) || (gate.presentationType === 'oral'
+        ? file.mimeType !== 'application/pdf' || file.pageCount < 2
+        : !['application/pdf','image/png'].includes(file.mimeType) || file.pageCount !== 1)) fail('PRESENTATION_ROSTER_CONFLICT');
     if (file.digest !== a.digest || file.sizeBytes !== a.size_bytes || file.filename !== a.original_filename) fail('PRESENTATION_IDEMPOTENCY_CONFLICT');
     if (a.state !== 'stored' || !isBeforeClose(await dbNow(tx), new Date(a.lease_until))) fail('PRESENTATION_UPLOAD_RETRY_REQUIRED');
     const [count] = await rows<{ n: number }>(tx,

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { PDFDocument } from 'pdf-lib';
+import sharp from 'sharp';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { sql as statement } from 'drizzle-orm';
 import { validatePresentationFile } from './file-validation.js';
@@ -24,6 +25,33 @@ function memoryStorage() {
     async deleteObject(key) { deleted.push(key); objects.delete(key); } }),drive:{rootFolderId:()=>{throw Error('Unexpected Drive');},generateId:async()=>{throw Error('Unexpected Drive');},folder:async()=>{throw Error('Unexpected Drive');},write:async()=>{throw Error('Unexpected Drive');},delete:async()=>{throw Error('Unexpected Drive');}}};
   return { storage, objects, deleted };
 }
+
+test('Highlighted Poster uploads original PNG to R2, replays once, and switches PDF/PNG on revision', async t => {
+  const { client: sql, database, fixture: f, announcement } = await preparePresentationScenario(t);
+  const { reconcilePresentations } = await import('./reconcile.js');
+  await reconcilePresentations(database,[{...announcement,presentationType:'highlighted-poster'}]);
+  const image = await sharp({create:{width:16,height:24,channels:3,background:'white'}}).png().toBuffer();
+  const input = {buffer:image,filename:'poster.png',mimetype:'image/png'};
+  const {storage,objects} = memoryStorage(); const contentTypes:string[]=[];
+  const originalR2 = storage.r2;
+  storage.r2 = () => ({...originalR2(),async putObject(value){contentTypes.push(value.contentType);await originalR2().putObject(value);}});
+  const key = randomUUID();
+  const first = await submitPresentationUpload(database,f.owner,f.abstractId,key,null,input,storage);
+  assert.equal(first.upload.mimeType,'image/png'); assert.equal(first.upload.storageProvider,'r2');
+  assert.ok(first.upload.fileUrl.endsWith('.png')); assert.equal(objects.size,1);
+  assert.deepEqual([...objects.values()][0],image); assert.deepEqual(contentTypes,['image/png']);
+  const replay = await submitPresentationUpload(database,f.owner,f.abstractId,key,null,input,storage);
+  assert.equal(replay.upload.id,first.upload.id); assert.equal(objects.size,1);
+  await assert.rejects(submitPresentationUpload(database,f.owner,f.abstractId,randomUUID(),null,input,storage),{code:'PRESENTATION_ALREADY_SUBMITTED'});
+  const request = await revision(sql,f.adminId);
+  const updated = await submitPresentationUpload(database,f.owner,f.abstractId,randomUUID(),request,await inputFile(),storage);
+  assert.equal(updated.upload.mimeType,'application/pdf'); assert.equal(updated.upload.version,2);assert.equal(objects.size,2);
+  const next = await revision(sql,f.adminId);
+  const third = await submitPresentationUpload(database,f.owner,f.abstractId,randomUUID(),next,input,storage);
+  assert.equal(third.upload.mimeType,'image/png');assert.equal(third.upload.version,3);assert.equal(objects.size,3);
+  assert.deepEqual(contentTypes,['image/png','application/pdf','image/png']);
+  await assertCounts(sql,3);
+});
 function oralStorage() {
   const files = new Map<string, Buffer>(), deleted: string[] = [], folders: string[] = [];
   const storage: PresentationStorage = {r2: () => assert.fail('Oral must never initialize R2'), drive: {
@@ -452,10 +480,10 @@ test('post-R2 owner and readiness changes reject; accepted replay binds actual a
   const entered2 = deferred(), release2 = deferred();
   const stale = submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null, file,
     {...storage,r2:()=>({ ...storage.r2(), async putObject(input) { entered2.resolve(); await release2.promise; await storage.r2().putObject(input); } })});
-  const staleRejection = assert.rejects(stale, { code: 'PRESENTATION_ROSTER_CONFLICT' });
-  await entered2.promise; await sql`UPDATE abstracts SET title='Changed title' WHERE id=${f.abstractId}`;
+  const staleRejection = assert.rejects(stale, { code: 'PRESENTATION_RECONCILE_REQUIRED' });
+  await entered2.promise; await sql`UPDATE presentation_settings SET reconcile_ready=false WHERE event_id=${f.eventId}`;
   release2.resolve(); await staleRejection; await assertCounts(sql, 0);
-  await sql`UPDATE abstracts SET title='ตัวอย่างผลงาน' WHERE id=${f.abstractId}`;
+  await sql`UPDATE presentation_settings SET reconcile_ready=true WHERE event_id=${f.eventId}`;
   const validated = await validatePresentationFile(file, 'poster'), attempt = await reserveUploadAttempt(database, f.owner, f.abstractId, randomUUID(), null, validated);
   await storePresentationAttempt(database, attempt, validated, storage);
   const accepted = await finalizePresentationAttempt(database, f.owner, f.abstractId, null, attempt, validated, storage);

@@ -19,7 +19,7 @@ export type DriveLocation = { eventCode: string; trackingId: string; categoryNam
 export type PresentationFileInput = { buffer: Buffer; filename: string; mimetype: string };
 export type StorageIdentity = { storageProvider: StorageProvider; objectKey: string | null; driveFileId: string | null;
   driveFolderId: string | null; storedFileName: string; fileUrl: string | null };
-export type UploadDto = { id: string; version: number; fileName: string; storedFileName: string; mimeType: 'application/pdf';
+export type UploadDto = { id: string; version: number; fileName: string; storedFileName: string; mimeType: 'application/pdf' | 'image/png';
   sizeBytes: number; fileUrl: string; storageProvider: StorageProvider; driveFileId: string | null;
   receivedAt: string; revisionRequestId: string | null };
 export type RevisionDto = { id: string; details: string; closesAt: string; status: RevisionStatus;

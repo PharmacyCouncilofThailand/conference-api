@@ -32,9 +32,18 @@ test('all four emails select trusted type wording, requirements and Template for
       for (const requirement of ['9:16 (แนวตั้ง)', '18 × 32 เซนติเมตร', 'ไม่มีขอบขาว', 'ไม่เกิน 3 รูป', 'ส่วนหัวกระดาษ (Header)']) {
         assert.equal(result.html.includes(requirement), posterPreparation);
       }
+      const oralRules = ['จัดทำตามรูปแบบ Header และ Footer ในไฟล์แม่แบบ (Template)',
+        'เนื้อหาไม่เกิน 10 สไลด์ และใช้รูปภาพประกอบ 1–2 รูป',
+        'เวลานำเสนอไม่เกิน 10 นาที และซักถามไม่เกิน 5 นาที',
+        'ส่งไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน 50 MB และไม่ตั้งรหัสผ่าน'];
+      for (const rule of oralRules) assert.equal(result.html.includes(rule), type === 'oral' && kind !== 'receipt');
+      if (type === 'oral' && kind !== 'receipt') {
+        const positions = oralRules.map(rule => result.html.indexOf(rule));
+        assert.ok(positions.every((position, index) => index === 0 || position > positions[index - 1]));
+      }
       if (posterPreparation) {
         const rules = ['ให้จัดทำตามรูปแบบและส่วนหัวกระดาษ', 'โปสเตอร์ต้องมีอัตราส่วน', 'สามารถใช้รูปภาพประกอบ',
-          'ไฟล์ที่ส่งต้องเป็น PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MB', 'ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน'];
+          'ส่งไฟล์ PNG หนึ่งภาพ หรือ PDF หนึ่งหน้า จำนวนหนึ่งไฟล์ ขนาดไม่เกิน 30 MB', 'ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน'];
         const positions = rules.map(rule => result.html.indexOf(rule));
         assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])));
       }
@@ -43,7 +52,7 @@ test('all four emails select trusted type wording, requirements and Template for
         assert.ok(result.html.includes('&lt;slides&gt;.pdf')); assert.ok(result.html.includes('14.12.34'));
         assert.equal(result.html.includes('Template'), false); assert.equal(result.html.includes('PRIS_'), false);
       } else {
-        assert.ok(result.html.includes(type === 'oral' ? 'ไฟล์ PDF จำนวนหนึ่งไฟล์ ขนาดไม่เกิน 50 MB' : 'หนึ่งหน้า ขนาดไม่เกิน 30 MB'));
+        assert.ok(result.html.includes(type === 'oral' ? 'ส่งไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน 50 MB' : 'ส่งไฟล์ PNG หนึ่งภาพ หรือ PDF หนึ่งหน้า จำนวนหนึ่งไฟล์ ขนาดไม่เกิน 30 MB'));
         if (type === 'oral') assert.equal(result.html.includes('อย่างน้อย 2 หน้า'), false);
         assert.ok(result.html.includes(`Presentation%20${type === 'oral' ? 'Oral' : 'Poster'}%20Template.zip`));
         assert.ok(result.html.includes('20 ตุลาคม 2569 เวลา 23.59.59'));
@@ -69,7 +78,7 @@ test('initial notification uses invitation-style paragraphs, actual lists, bold 
   assert.ok(result.html.includes('ชื่อ &amp; &quot;นามสกุล&quot;'));
   for (const text of ['30 MB', 'ไม่ตั้งรหัสผ่าน', 'abstractId=501', 'pr@pharmacycouncil.org', '15 ตุลาคม 2569 เวลา 23.59.59']) assert.ok(result.html.includes(text));
   assert.equal(result.html.includes('pharmactcouncil'), false);
-  assert.equal(result.html.includes('PNG'), false);
+  assert.equal(result.html.includes('PNG'), true);
   const changed = renderPresentationEmail({ ...payload, closesAt: '2026-10-21T05:30:00Z' });
   assert.ok(changed.html.includes('21 ตุลาคม 2569 เวลา 12.29.59'));
 });
@@ -112,8 +121,8 @@ test('revision drafts preserve details and bind their link and deadline to the r
   assert.ok(result.html.includes('<p>สภาเภสัชกรรม</p>\n    <p>(The Pharmacy Council of Thailand)</p>'));
   assert.ok(result.html.includes('<p><em>หมายเหตุ:'));
   assert.ok(!result.html.includes('<img'));
-  assert.equal(result.html.includes('PNG'), false);
-  assert.ok(result.html.includes('ไฟล์ PDF จำนวนหนึ่งไฟล์ หนึ่งหน้า ขนาดไม่เกิน 30 MB'));
+  assert.equal(result.html.includes('PNG'), true);
+  assert.ok(result.html.includes('ส่งไฟล์ PNG หนึ่งภาพ หรือ PDF หนึ่งหน้า จำนวนหนึ่งไฟล์ ขนาดไม่เกิน 30 MB'));
   assert.throws(() => renderPresentationEmail({ ...payload, kind: 'revision', revisionRequestId: requestId, closesAt: null }), /PRESENTATION_MAIL_DEADLINE_MISSING/);
 });
 

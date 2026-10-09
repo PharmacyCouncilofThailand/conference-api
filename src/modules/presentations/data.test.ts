@@ -95,10 +95,11 @@ test('loader composes official Round 1 with the current Round 2 source without c
 });
 
 test('consolidated Round 2 includes all 244 works with their final Excel groups and corrected authors', () => {
-  assert.equal(approvedRound2Abstracts.length, 244);
-  assert.equal(new Set(approvedRound2Abstracts.map(row => row.trackingId)).size, 244);
-  assert.equal(new Set(approvedRound2Abstracts.map(row => row.id)).size, 244);
-  assert.deepEqual(approvedRound2Abstracts.reduce<Record<string, number>>((counts, row) => {
+  const official = approvedRound2Abstracts.slice(0, 244);
+  assert.equal(official.length, 244);
+  assert.equal(new Set(official.map(row => row.trackingId)).size, 244);
+  assert.equal(new Set(official.map(row => row.id)).size, 244);
+  assert.deepEqual(official.reduce<Record<string, number>>((counts, row) => {
     counts[row.presentationType] = (counts[row.presentationType] ?? 0) + 1;
     return counts;
   }, {}), { oral: 41, 'highlighted-poster': 41, poster: 162 });
@@ -111,7 +112,7 @@ test('consolidated Round 2 includes all 244 works with their final Excel groups 
   assert.equal(find('P204').submitterName, 'รัชฎา ตั้งประเสริฐ');
   assert.equal(find('P201').submitterName, 'ทัณฑิมา สารทอง');
   assert.equal(find('P146').submitterName, 'นันทวรรณ ว่องไว');
-  const posters = approvedRound2Abstracts.filter(row => row.presentationType === 'poster');
+  const posters = official.filter(row => row.presentationType === 'poster');
   assert.equal(posters.at(-1)?.sequence, 164);
   assert.ok(posters.every(row => row.sequence !== 88 && row.sequence !== 97));
 });
@@ -119,7 +120,10 @@ test('consolidated Round 2 includes all 244 works with their final Excel groups 
 test('current eligibility uses the final consolidated roster while preserving Round 1 public history', () => {
   const current = loadCurrentPresentationAnnouncements();
   assert.deepEqual(current, approvedRound2Abstracts);
-  assert.equal(current.length, 244);
+  assert.equal(current.length, 246);
+  assert.deepEqual(current.slice(244).map(row => [row.trackingId, row.presentationType]), [
+    ['PRIS-2026-O079', 'poster'], ['PRIS-2026-O001', 'oral'],
+  ]);
   assert.equal(new Set(current.map(row => row.trackingId)).size, current.length);
   const overlapping = approvedRound1Abstracts.find(row => row.trackingId === 'PRIS-2026-O005')!;
   assert.ok(overlapping);
