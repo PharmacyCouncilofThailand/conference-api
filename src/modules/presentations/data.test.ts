@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { loadPresentationAnnouncements } from './data/index.js';
+import { loadCurrentPresentationAnnouncements, loadPresentationAnnouncements } from './data/index.js';
 import { approvedRound1Abstracts } from './data/approvedRound1Abstracts.js';
 import { approvedRound2Abstracts } from './data/approvedRound2Abstracts.js';
 import { publicAnnouncements } from './readers.js';
@@ -92,4 +92,48 @@ test('loader composes official Round 1 with the current Round 2 source without c
   assert.ok(approvedRound2Abstracts.every(row => row.round === 2));
   const rows = loadPresentationAnnouncements();
   assert.equal(new Set(rows.map(row => row.round + ':' + row.id)).size, rows.length);
+});
+
+test('consolidated Round 2 includes all 244 works with their final Excel groups and corrected authors', () => {
+  assert.equal(approvedRound2Abstracts.length, 244);
+  assert.equal(new Set(approvedRound2Abstracts.map(row => row.trackingId)).size, 244);
+  assert.equal(new Set(approvedRound2Abstracts.map(row => row.id)).size, 244);
+  assert.deepEqual(approvedRound2Abstracts.reduce<Record<string, number>>((counts, row) => {
+    counts[row.presentationType] = (counts[row.presentationType] ?? 0) + 1;
+    return counts;
+  }, {}), { oral: 41, 'highlighted-poster': 41, poster: 162 });
+  const find = (id: string) => approvedRound2Abstracts.find(row => row.trackingId === `PRIS-2026-${id}`)!;
+  assert.equal(find('P129').presentationType, 'oral');
+  assert.equal(find('O005').presentationType, 'highlighted-poster');
+  assert.equal(find('O095').presentationType, 'poster');
+  assert.equal(find('P142').categoryName, 'เภสัชกรรมคลินิกและการบริบาลทางเภสัชกรรม');
+  assert.equal(find('P138').submitterName, 'ไสว ตันทวุทธ');
+  assert.equal(find('P204').submitterName, 'รัชฎา ตั้งประเสริฐ');
+  assert.equal(find('P201').submitterName, 'ทัณฑิมา สารทอง');
+  assert.equal(find('P146').submitterName, 'นันทวรรณ ว่องไว');
+  const posters = approvedRound2Abstracts.filter(row => row.presentationType === 'poster');
+  assert.equal(posters.at(-1)?.sequence, 164);
+  assert.ok(posters.every(row => row.sequence !== 88 && row.sequence !== 97));
+});
+
+test('current eligibility uses the final consolidated roster while preserving Round 1 public history', () => {
+  const current = loadCurrentPresentationAnnouncements();
+  assert.deepEqual(current, approvedRound2Abstracts);
+  assert.equal(current.length, 244);
+  assert.equal(new Set(current.map(row => row.trackingId)).size, current.length);
+  const overlapping = approvedRound1Abstracts.find(row => row.trackingId === 'PRIS-2026-O005')!;
+  assert.ok(overlapping);
+  assert.equal(current.filter(row => row.trackingId === overlapping.trackingId).length, 1);
+  assert.equal(publicAnnouncements().filter(row => row.trackingId === overlapping.trackingId).length, 2);
+  assert.ok(publicAnnouncements().some(row => row.round === 1 && row.trackingId === 'PRIS-2026-O017'));
+  assert.ok(!current.some(row => row.trackingId === 'PRIS-2026-O017'));
+});
+
+test('current eligibility falls back to Round 1 before a consolidated Round 2 is published', () => {
+  const saved = approvedRound2Abstracts.splice(0);
+  try {
+    assert.deepEqual(loadCurrentPresentationAnnouncements(), approvedRound1Abstracts);
+  } finally {
+    approvedRound2Abstracts.push(...saved);
+  }
 });

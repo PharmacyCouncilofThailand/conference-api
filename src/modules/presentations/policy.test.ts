@@ -73,15 +73,29 @@ test('names normalize NFC and whitespace only', () => {
   assert.notEqual(normalizeSubmitterName('José Smith'), normalizeSubmitterName('josé Smith'));
 });
 
-test('approval never bypasses name, exact title, type, owner, or email conflicts', () => {
+test('publication titles may differ while historical identifiers still require approval', () => {
+  for (const title of ['ชื่อสำหรับประกาศ', 'PUBLICATION TITLE', `${row.title} `]) {
+    const announcement = { ...row, title };
+    const current = matchAnnouncement(announcement, [candidate], false);
+    assert.equal(current.state, 'ready');
+    assert.equal(current.abstractId, candidate.abstractId);
+    assert.equal(current.via, 'canonical');
+    assert.deepEqual(current.problems, []);
+    const historical = { ...candidate, canonicalTrackingId: 'PRIS-2026-P099', aliases: [row.trackingId!] };
+    assert.equal(matchAnnouncement(announcement, [historical], false).state, 'alias_pending');
+    assert.equal(matchAnnouncement(announcement, [historical], true).state, 'ready');
+  }
+});
+
+test('differing titles and approval never bypass name, type, owner, or email conflicts', () => {
   const cases: [Partial<DbCandidate>, string][] = [
-    [{ firstName: 'อื่น' }, 'NAME_MISMATCH'], [{ title: `${row.title} ` }, 'TITLE_MISMATCH'],
+    [{ firstName: 'อื่น' }, 'NAME_MISMATCH'],
     [{ presentationType: 'oral' }, 'TYPE_MISMATCH'], [{ userId: null }, 'OWNER_MISSING'],
     [{ firstName: null }, 'OWNER_MISSING'], [{ lastName: null }, 'OWNER_MISSING'],
     [{ email: null }, 'EMAIL_INVALID'], [{ email: 'not-an-email' }, 'EMAIL_INVALID'],
   ];
   for (const [change, problem] of cases) {
-    const result = matchAnnouncement(row, [{ ...candidate, ...change, canonicalTrackingId: 'PRIS-2026-P099', aliases: [row.trackingId!] }], true);
+    const result = matchAnnouncement(row, [{ ...candidate, title: 'ชื่อบทคัดย่อในฐานข้อมูล', ...change, canonicalTrackingId: 'PRIS-2026-P099', aliases: [row.trackingId!] }], true);
     assert.equal(result.state, 'conflict');
     assert.ok(result.problems.includes(problem), problem);
   }

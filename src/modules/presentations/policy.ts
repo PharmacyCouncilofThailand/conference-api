@@ -27,7 +27,7 @@ export function matchAnnouncement(row: Announcement, candidates: DbCandidate[], 
   const c = selected[0]; const problems: string[] = [];
   if (!c.userId || !c.firstName || !c.lastName) problems.push('OWNER_MISSING');
   if (normalizeSubmitterName(row.submitterName) !== normalizeSubmitterName(`${c.firstName ?? ''} ${c.lastName ?? ''}`)) problems.push('NAME_MISMATCH');
-  if (row.title !== c.title) problems.push('TITLE_MISMATCH');
+  // Announcement titles are publication labels, not abstract identity.
   if ((row.presentationType === 'oral' ? 'oral' : 'poster') !== c.presentationType) problems.push('TYPE_MISMATCH');
   if (!z.string().email().safeParse(c.email).success) problems.push('EMAIL_INVALID');
   if (problems.length) return result('conflict', problems, c);

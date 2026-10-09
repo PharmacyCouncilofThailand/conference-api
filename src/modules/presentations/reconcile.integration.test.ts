@@ -19,6 +19,12 @@ test('reconciliation is idempotent, preserves settings and reads fresh DB even w
   assert.equal(setting.version, 5);
   await assertInitialReady(database, target.id);
   await sql`UPDATE abstracts SET title='ขัดกันหลัง deploy' WHERE id=${f.abstractId}`;
+  await assertInitialReady(database, target.id);
+  assert.equal((await reconcilePresentations(database, [row])).counts.ready, 1);
+  const [announced] = await sql`SELECT source_row,match_snapshot FROM presentation_announcements`;
+  assert.equal(announced.source_row.title, row.title);
+  assert.equal(announced.match_snapshot.candidates[0].title, 'ขัดกันหลัง deploy');
+  await sql`UPDATE abstracts SET presentation_type='oral' WHERE id=${f.abstractId}`;
   await assert.rejects(assertInitialReady(database, target.id), { code: 'PRESENTATION_ROSTER_CONFLICT' });
   assert.equal((await reconcilePresentations(database, [row])).counts.conflict, 1);
   assert.equal((await sql`SELECT initial_enabled FROM presentation_targets`)[0].initial_enabled, false);
@@ -26,6 +32,25 @@ test('reconciliation is idempotent, preserves settings and reads fresh DB even w
   assert.equal((await sql`SELECT status FROM abstracts`)[0].status, 'pending');
   assert.equal((await sql`SELECT count(*)::integer AS n FROM presentation_email_jobs`)[0].n, 0);
   assert.equal((await sql`SELECT count(*)::integer AS n FROM users`)[0].n, 1);
+});
+
+test('reconciliation reopens an old title conflict without rewriting either title or notifying the owner', async t => {
+  const { client: sql, database, announcement: row } = await preparePresentationScenario(t);
+  const [target] = await sql`SELECT id FROM presentation_targets`;
+  await sql`UPDATE abstracts SET title='ชื่อบทคัดย่อในฐานข้อมูล'`;
+  await sql`UPDATE presentation_announcements SET match_state='conflict',
+    match_snapshot=jsonb_set(match_snapshot,'{match,problems}','["TITLE_MISMATCH"]'::jsonb)`;
+  await sql`UPDATE presentation_targets SET initial_enabled=false`;
+  await assert.rejects(assertInitialReady(database, target.id), { code: 'PRESENTATION_NOT_ELIGIBLE' });
+  assert.deepEqual((await reconcilePresentations(database, [row])).counts, { ready: 1 });
+  await assertInitialReady(database, target.id);
+  const [announced] = await sql`SELECT source_row,match_snapshot FROM presentation_announcements`;
+  assert.equal(announced.source_row.title, row.title);
+  assert.equal(announced.match_snapshot.candidates[0].title, 'ชื่อบทคัดย่อในฐานข้อมูล');
+  assert.deepEqual(announced.match_snapshot.match.problems, []);
+  assert.equal((await sql`SELECT initial_enabled FROM presentation_targets`)[0].initial_enabled, true);
+  assert.equal((await sql`SELECT title FROM abstracts`)[0].title, 'ชื่อบทคัดย่อในฐานข้อมูล');
+  assert.equal((await sql`SELECT count(*)::int AS n FROM presentation_email_jobs`)[0].n, 0);
 });
 
 test('invalid manifest fails closed without committing partial roster; missing/incomplete rows remain visible', async t => {

@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { openPresentationTestDatabase, resetPresentationTestDatabase, seedPresentationScenario } from './test-support.js';
 import { initializePresentations } from './startup.js';
-import { loadPresentationAnnouncements } from './data/index.js';
+import { loadCurrentPresentationAnnouncements } from './data/index.js';
 
 test('operational preflight, replacement migration, paused startup and compiled reconcile CLI preserve edited deadline/history', { timeout: 30000 }, async t => {
   const client = openPresentationTestDatabase(); t.after(() => client.end({ timeout: 2 }));
@@ -31,8 +31,8 @@ test('operational preflight, replacement migration, paused startup and compiled 
   const [setting] = await client`SELECT closes_at,reconcile_ready FROM presentation_settings WHERE event_id=${fixture.eventId}`;
   assert.equal(new Date(setting.closes_at).toISOString(), '2026-10-20T17:00:00.000Z'); assert.equal(setting.reconcile_ready, true);
   const counts = await client`SELECT source_row->>'presentationType' AS type,count(*)::int AS n FROM presentation_announcements WHERE present GROUP BY 1 ORDER BY 1`;
-  assert.deepEqual(Array.from(counts), ['highlighted-poster','oral','poster'].map(type => ({ type, n: loadPresentationAnnouncements().filter(row => row.presentationType === type).length })));
-  assert.equal((await client`SELECT count(*)::int AS n FROM presentation_announcements WHERE present AND source_row->>'trackingId' IS NULL`)[0].n, 2);
+  assert.deepEqual(Array.from(counts), ['highlighted-poster','oral','poster'].map(type => ({ type, n: loadCurrentPresentationAnnouncements().filter(row => row.presentationType === type).length })));
+  assert.equal((await client`SELECT count(*)::int AS n FROM presentation_announcements WHERE present AND source_row->>'trackingId' IS NULL`)[0].n, loadCurrentPresentationAnnouncements().filter(row => row.trackingId === null).length);
   assert.equal((await client`SELECT count(*)::int AS n FROM presentation_email_jobs`)[0].n, 0);
   const [target] = await client`INSERT INTO presentation_targets(event_id,abstract_id,initial_enabled) VALUES(${fixture.eventId},${fixture.abstractId},false) RETURNING id`;
   const attempt = randomUUID(), upload = randomUUID();

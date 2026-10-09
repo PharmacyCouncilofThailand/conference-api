@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { rows, fail, type PresentationDatabase, type PresentationTx } from './access.js';
 import { digest, matchAnnouncement, sourceKey } from './policy.js';
-import { loadPresentationAnnouncements } from './data/index.js';
+import { loadCurrentPresentationAnnouncements } from './data/index.js';
 import type { Announcement, DbCandidate, MatchResult } from './types.js';
 
 type Executor = Pick<PresentationDatabase, 'execute'>;
@@ -17,7 +17,7 @@ export async function readCandidates(q: Executor, eventId: number): Promise<DbCa
     WHERE a.event_id=${eventId} ORDER BY a.id`);
 }
 
-export async function reconcilePresentations(database: PresentationDatabase | PresentationTx, manifest: Announcement[] = loadPresentationAnnouncements())
+export async function reconcilePresentations(database: PresentationDatabase | PresentationTx, manifest: Announcement[] = loadCurrentPresentationAnnouncements())
   : Promise<{ eventId: number; digest: string; counts: Record<string, number> }> {
   // Freeze this invocation's source before waiting for another instance's reconciliation.
   const source = structuredClone(manifest);
