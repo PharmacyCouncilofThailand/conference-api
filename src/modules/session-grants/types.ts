@@ -147,3 +147,37 @@ export class GrantError extends Error {
     this.name = "GrantError";
   }
 }
+
+export interface GrantTrackingQuery {
+  page: number;
+  limit: number;
+  eventId?: number;
+  sessionId?: number;
+  outcome?: GrantOutcome;
+  responseStatus?: "not_required" | InvitationStatus;
+  emailStatus?: EmailStatus;
+  search?: string;
+}
+
+export interface GrantTrackingItemDto extends Omit<GrantItemDto, "registrationSessionId"> {
+  batchId: string;
+  eventId: number;
+  sessionId: number;
+  sessionName: string;
+  actorName: string;
+  createdAt: string;
+  recipientEmail: string | null;
+  sentAt: string | null;
+  lastAttemptAt: string | null;
+}
+
+export interface GrantTrackingDto {
+  items: GrantTrackingItemDto[];
+  pagination: GrantBatchDto["pagination"];
+  summary: {
+    total: number;
+    outcomeCounts: Record<GrantOutcome, number>;
+    invitationCounts: Record<InvitationStatus, number>;
+    emailCounts: Record<EmailStatus, number>;
+  };
+}
