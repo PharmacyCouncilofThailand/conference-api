@@ -95,7 +95,7 @@ test('loader composes official Round 1 with the current Round 2 source without c
 });
 
 test('consolidated Round 2 includes all 244 works with their final Excel groups and corrected authors', () => {
-  const official = approvedRound2Abstracts.slice(0, 244);
+  const official = approvedRound2Abstracts;
   assert.equal(official.length, 244);
   assert.equal(new Set(official.map(row => row.trackingId)).size, 244);
   assert.equal(new Set(official.map(row => row.id)).size, 244);
@@ -120,10 +120,8 @@ test('consolidated Round 2 includes all 244 works with their final Excel groups 
 test('current eligibility uses the final consolidated roster while preserving Round 1 public history', () => {
   const current = loadCurrentPresentationAnnouncements();
   assert.deepEqual(current, approvedRound2Abstracts);
-  assert.equal(current.length, 246);
-  assert.deepEqual(current.slice(244).map(row => [row.trackingId, row.presentationType]), [
-    ['PRIS-2026-O079', 'poster'], ['PRIS-2026-O001', 'oral'],
-  ]);
+  assert.equal(current.length, 244);
+  assert.ok(!current.some(row => ['PRIS-2026-O079', 'PRIS-2026-O001'].includes(row.trackingId ?? '')));
   assert.equal(new Set(current.map(row => row.trackingId)).size, current.length);
   const overlapping = approvedRound1Abstracts.find(row => row.trackingId === 'PRIS-2026-O005')!;
   assert.ok(overlapping);
