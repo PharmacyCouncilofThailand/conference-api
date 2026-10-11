@@ -130,7 +130,7 @@ test("invitation email validates and escapes response URL and deadline", () => {
   assert.match(rendered.html, /เวลาประเทศไทย/);
 });
 
-test("invitation email matches the requested formal copy with six plain bullets and a scoped link", () => {
+test("invitation email matches the requested formal copy with seven plain bullets and a scoped link", () => {
   const responseUrl = "https://pris.example.com/th/sessions/confirm?token=" + "c".repeat(64);
   const rendered = renderInvitationEmail({
     ...baseSnapshot,
@@ -145,17 +145,18 @@ test("invitation email matches the requested formal copy with six plain bullets 
   assert.equal(rendered.subject, "คำเชิญเข้าร่วมเซสชัน Policy Innovation Workshop ในงาน PRIS 2026");
   for (const copy of [
     "เรียน คุณณัฐกานต์ กลองกระโทก",
-    "สภาเภสัชกรรมขอเรียนเชิญท่านเข้าร่วมเซสชันดังรายละเอียดต่อไปนี้",
+    "สภาเภสัชกรรมขอเรียนเชิญท่านเข้าร่วมเซสชัน โดยไม่มีค่าใช้จ่ายเพิ่มเติม ทั้งนี้ มีรายละเอียดดังนี้",
     "สถานที่จัดงาน: Impact Challenger Jupiter Room 4-13",
     "วันและเวลา: วันที่ 29 ตุลาคม 2569 เวลา 13.00 – 17.00 น. (เวลาประเทศไทย)",
-    "กำหนดตอบรับภายใน: วันที่ 29 ตุลาคม 2569 เวลา 13.00 น. (เวลาประเทศไทย)",
+    "ค่าใช้จ่าย: ไม่มีค่าใช้จ่ายเพิ่มเติม",
+    "กรุณาตอบรับภายใน: วันที่ 29 ตุลาคม 2569 เวลา 13.00 น. (เวลาประเทศไทย)",
     "และเมื่อส่งคำตอบแล้วจะถือเป็นที่สิ้นสุด หากประสงค์จะแก้ไขคำตอบ กรุณาติดต่อผู้จัดงานโดยตรง",
     "จึงเรียนมาเพื่อโปรดพิจารณา",
     "ขอแสดงความนับถือ",
     "(The Pharmacy Council of Thailand)",
     "หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้",
   ]) assert.ok(rendered.html.includes(copy), copy);
-  assert.equal((rendered.html.match(/<li>/g) ?? []).length, 6);
+  assert.equal((rendered.html.match(/<li>/g) ?? []).length, 7);
   assert.equal((rendered.html.match(/href=/g) ?? []).length, 1);
   assert.ok(rendered.html.includes(`href="${responseUrl}">ตอบรับคำเชิญเข้าร่วมเซสชัน</a>`));
   assert.doesNotMatch(rendered.html, /style=|<strong>|<button|conference\.example\.com/);

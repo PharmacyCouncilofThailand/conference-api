@@ -108,14 +108,15 @@ export function renderInvitationEmail(
 <html lang="th">
   <body>
     <p>เรียน คุณ${escapeHtml(personName)}</p>
-    <p>สภาเภสัชกรรมขอเรียนเชิญท่านเข้าร่วมเซสชันดังรายละเอียดต่อไปนี้</p>
+    <p>สภาเภสัชกรรมขอเรียนเชิญท่านเข้าร่วมเซสชัน โดยไม่มีค่าใช้จ่ายเพิ่มเติม ทั้งนี้ มีรายละเอียดดังนี้</p>
     <ul>
       <li>งาน: ${escapeHtml(snapshot.eventName)}</li>
       <li>สถานที่จัดงาน: ${escapeHtml(venue)}</li>
       <li>เซสชัน: ${escapeHtml(snapshot.sessionName)}</li>
       <li>วันและเวลา: ${escapeHtml(formattedTime)} (เวลาประเทศไทย)</li>
       <li>ห้อง: ${escapeHtml(room)}</li>
-      <li>กำหนดตอบรับภายใน: ${escapeHtml(formattedDeadline)} (เวลาประเทศไทย)</li>
+      <li>ค่าใช้จ่าย: ไม่มีค่าใช้จ่ายเพิ่มเติม</li>
+      <li>กรุณาตอบรับภายใน: ${escapeHtml(formattedDeadline)} (เวลาประเทศไทย)</li>
     </ul>
     <p>ทั้งนี้ สิทธิ์เข้าร่วมเซสชันจะมีผลก็ต่อเมื่อท่านยืนยันการเข้าร่วมผ่านหน้าตอบรับเท่านั้น และเมื่อส่งคำตอบแล้วจะถือเป็นที่สิ้นสุด หากประสงค์จะแก้ไขคำตอบ กรุณาติดต่อผู้จัดงานโดยตรง</p>
     <p><a href="${escapeHtml(responsePageUrl)}">ตอบรับคำเชิญเข้าร่วมเซสชัน</a></p>
