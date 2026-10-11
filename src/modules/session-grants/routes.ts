@@ -24,6 +24,7 @@ import {
   effectiveInvitationStatus,
 } from "./invitation-policy.js";
 import { createGrant, getGrantBatch } from "./service.js";
+import { previewGrantEmails } from "./email-preview.js";
 import type { GrantDatabase, InvitationStatus } from "./types.js";
 import { GrantError } from "./types.js";
 
@@ -39,6 +40,7 @@ export interface SessionGrantRouteOptions {
   getGrantBatchFn?: typeof getGrantBatch;
   getGrantTrackingFn?: typeof getGrantTracking;
   retryGrantEmailsFn?: typeof retryGrantEmails;
+  previewGrantEmailsFn?: typeof previewGrantEmails;
 }
 
 function featureEnabled(): boolean {
@@ -99,6 +101,24 @@ export default async function sessionGrantRoutes(
     const actor = adminActor(request, reply);
     if (!actor) return;
     return reply.send({ enabled: featureEnabled() });
+  });
+
+  fastify.post("/preview", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    if (!adminActor(request, reply)) return;
+    if (!featureEnabled()) {
+      return reply.status(503).send({ error: "Admin Session Grants are temporarily disabled", code: "ADMIN_SESSION_GRANTS_DISABLED" });
+    }
+    const parsed = createGrantSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "Invalid session grant request", code: "INVALID_SESSION_GRANT_REQUEST" });
+    }
+    try {
+      return reply.send(await (options.previewGrantEmailsFn ?? previewGrantEmails)(database, parsed.data));
+    } catch (error) {
+      fastify.log.error({ err: error instanceof GrantError ? error.code : "SESSION_GRANT_PREVIEW_FAILED" });
+      return sendGrantError(reply, error);
+    }
   });
 
   fastify.post("/", async (request, reply) => {

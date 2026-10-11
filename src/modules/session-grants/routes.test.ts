@@ -45,9 +45,15 @@ test("session grant routes enforce auth/admin/flag/validation and preserve repla
   let createCalls = 0;
   let retryCalls = 0;
   let lastActorId: number | null = null;
+  let previewCalls = 0;
 
   const options: SessionGrantRouteOptions = {
     database: {} as GrantDatabase,
+    previewGrantEmailsFn: async (_database, input) => {
+      previewCalls++;
+      assert.deepEqual(input, { sessionId: 12, registrationIds: [1] });
+      return { emails: [], skipped: [] };
+    },
     createGrantFn: async (_database, input) => {
       createCalls += 1;
       lastActorId = input.actorId;
@@ -78,6 +84,18 @@ test("session grant routes enforce auth/admin/flag/validation and preserve repla
   await app.register(sessionGrantRoutes, options);
   await app.ready();
 
+  for (const [role, expected] of [[undefined, 401], ["editor", 403], ["admin", 200]] as const) {
+    const preview = await app.inject({ method: "POST", url: "/preview",
+      headers: role ? { "x-test-role": role } : {}, payload: { sessionId: 12, registrationIds: [1] } });
+    assert.equal(preview.statusCode, expected);
+    assert.equal(preview.headers["cache-control"], "no-store");
+  }
+  const badPreview = await app.inject({ method: "POST", url: "/preview", headers: { "x-test-role": "admin" },
+    payload: { sessionId: 12, registrationIds: [], actorId: 999 } });
+  assert.equal(badPreview.statusCode, 400);
+  assert.equal(previewCalls, 1);
+  assert.equal(createCalls, 0);
+
   t.after(async () => {
     if (originalFlag === undefined) delete process.env.ADMIN_SESSION_GRANTS_ENABLED;
     else process.env.ADMIN_SESSION_GRANTS_ENABLED = originalFlag;
@@ -104,6 +122,10 @@ test("session grant routes enforce auth/admin/flag/validation and preserve repla
   assert.equal(createCalls, 0);
 
   process.env.ADMIN_SESSION_GRANTS_ENABLED = "false";
+  const disabledPreview = await app.inject({ method: "POST", url: "/preview", headers: { "x-test-role": "admin" },
+    payload: { sessionId: 12, registrationIds: [1] } });
+  assert.equal(disabledPreview.statusCode, 503);
+  assert.equal(previewCalls, 1);
   const disabled = await app.inject({
     method: "POST",
     url: "/",
