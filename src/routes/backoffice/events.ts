@@ -56,6 +56,25 @@ function normalizeAllowedRoles(raw: string | undefined | null): string | undefin
   return raw;
 }
 
+async function invalidTicketSessionIds(
+  eventId: number,
+  data: { sessionIds?: number[]; sessionId?: number },
+): Promise<number[]> {
+  const requestedIds = [
+    ...new Set([
+      ...(data.sessionIds ?? []),
+      ...(data.sessionId !== undefined ? [data.sessionId] : []),
+    ]),
+  ];
+  if (requestedIds.length === 0) return [];
+  const matchingSessions = await db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(and(eq(sessions.eventId, eventId), inArray(sessions.id, requestedIds)));
+  const validIds = new Set(matchingSessions.map((session) => session.id));
+  return requestedIds.filter((id) => !validIds.has(id));
+}
+
 /**
  * Priority weight map for auto-calculating displayOrder.
  * Lower weight = higher priority = shown first on frontend.
@@ -1106,6 +1125,15 @@ export default async function (fastify: FastifyInstance) {
         return reply.status(404).send({ error: "Event not found" });
       }
 
+      const invalidIds = await invalidTicketSessionIds(parseInt(eventId), data);
+      if (invalidIds.length > 0) {
+        return reply.status(400).send({
+          error: "Selected sessions must belong to the ticket event",
+          code: "INVALID_TICKET_SESSIONS",
+          details: { sessionIds: invalidIds },
+        });
+      }
+
       // Start transaction
       const newTicket = await db.transaction(async (tx) => {
         const [ticket] = await tx
@@ -1166,7 +1194,7 @@ export default async function (fastify: FastifyInstance) {
 
   // Update Ticket Type
   fastify.patch("/:eventId/tickets/:ticketId", async (request, reply) => {
-    const { ticketId } = request.params as {
+    const { eventId, ticketId } = request.params as {
       eventId: string;
       ticketId: string;
     };
@@ -1194,30 +1222,51 @@ export default async function (fastify: FastifyInstance) {
       updates.saleStartDate = new Date(data.saleStartDate);
     if (data.saleEndDate) updates.saleEndDate = new Date(data.saleEndDate);
 
-    // Auto-recalculate displayOrder when priority or saleStartDate changes
-    if (data.priority !== undefined || data.saleStartDate !== undefined) {
+    try {
       const [existing] = await db
         .select({
           priority: ticketTypes.priority,
           saleStartDate: ticketTypes.saleStartDate,
         })
         .from(ticketTypes)
-        .where(eq(ticketTypes.id, parseInt(ticketId)))
+        .where(
+          and(
+            eq(ticketTypes.id, parseInt(ticketId)),
+            eq(ticketTypes.eventId, parseInt(eventId)),
+          ),
+        )
         .limit(1);
 
-      if (existing) {
+      if (!existing) {
+        return reply.status(404).send({ error: "Ticket not found" });
+      }
+
+      const invalidIds = await invalidTicketSessionIds(parseInt(eventId), data);
+      if (invalidIds.length > 0) {
+        return reply.status(400).send({
+          error: "Selected sessions must belong to the ticket event",
+          code: "INVALID_TICKET_SESSIONS",
+          details: { sessionIds: invalidIds },
+        });
+      }
+
+      // Auto-recalculate displayOrder when priority or saleStartDate changes
+      if (data.priority !== undefined || data.saleStartDate !== undefined) {
         const newPriority = data.priority || existing.priority || "regular";
         const newSaleStart = data.saleStartDate || existing.saleStartDate;
         updates.displayOrder = calculateDisplayOrder(newPriority, newSaleStart);
       }
-    }
 
-    try {
       const updatedTicket = await db.transaction(async (tx) => {
         const [ticket] = await tx
           .update(ticketTypes)
           .set(updates)
-          .where(eq(ticketTypes.id, parseInt(ticketId)))
+          .where(
+            and(
+              eq(ticketTypes.id, parseInt(ticketId)),
+              eq(ticketTypes.eventId, parseInt(eventId)),
+            ),
+          )
           .returning();
 
         if (!ticket) return null;

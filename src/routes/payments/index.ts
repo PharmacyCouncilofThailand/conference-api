@@ -1537,6 +1537,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             ticketTypeId: ticketTypes.id,
             orderId: orders.id,
             orderStatus: orders.status,
+            orderTotalAmount: orders.totalAmount,
           })
           .from(registrations)
           .innerJoin(events, eq(registrations.eventId, events.id))
@@ -1616,6 +1617,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
               priority: reg.ticketPriority,
               purchasedAt: reg.purchasedAt?.toISOString() || null,
               amount: reg.ticketPrice,
+              paidAmount: reg.orderStatus === "paid" ? reg.orderTotalAmount : null,
               currency: reg.ticketCurrency,
               includes: Array.isArray(reg.ticketFeatures) ? reg.ticketFeatures : [],
               receiptUrl,
