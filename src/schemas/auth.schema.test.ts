@@ -4,7 +4,12 @@ import { registerBodySchema } from "./auth.schema.js";
 
 const common = { firstName: "First", lastName: "Last", email: "test@example.invalid", password: "test1234", phone: "0812345678" };
 const healthhack = { ...common, accountType: "healthhack", organization: "Test School", healthHackLevel: "m1" };
-const booth = { ...common, accountType: "booth", boothName: "Test Booth" };
+const booth = {
+  ...common,
+  accountType: "booth",
+  boothId: "1",
+  eventCode: "BOOTH-TEST",
+};
 
 test("special accounts accept only complete personal data and supported levels", () => {
   for (const level of ["m1", "m2", "m3", "m4", "m5", "m6", "undergraduate"]) {
@@ -28,8 +33,11 @@ test("special accounts accept only complete personal data and supported levels",
   for (const healthHackLevel of [undefined, "", "m7", "postgraduate"]) {
     assert.equal(registerBodySchema.safeParse({ ...healthhack, healthHackLevel }).success, false);
   }
-  for (const boothName of [undefined, "", "   ", "x".repeat(256)]) {
-    assert.equal(registerBodySchema.safeParse({ ...booth, boothName }).success, false);
+  for (const boothId of [undefined, "", "   ", "1x", "-1"]) {
+    assert.equal(
+      registerBodySchema.safeParse({ ...booth, boothId }).success,
+      false,
+    );
   }
 });
 

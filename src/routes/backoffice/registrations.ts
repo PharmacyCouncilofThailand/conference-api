@@ -12,6 +12,12 @@ import {
 } from "../../schemas/registrations.schema.js";
 import { eq, desc, ilike, and, count, sql, or, inArray, exists } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import {
+  lockBoothMembers,
+  recordBoothTicketConfirmation,
+  assertRegistrationChangeAllowed,
+} from "../../modules/booths/registration.service.js";
+import { BoothError } from "../../modules/booths/policy.js";
 import { registrationBlock, sessionBlock } from "../../modules/session-grants/policy.js";
 import { effectiveDeadline, effectiveInvitationStatus } from "../../modules/session-grants/invitation-policy.js";
 import type { InvitationStatus } from "../../modules/session-grants/types.js";
@@ -523,8 +529,8 @@ export default async function (fastify: FastifyInstance) {
         }
     });
 
-    // Update Registration
-    fastify.patch("/:id", async (request, reply) => {
+  // Update Registration
+  fastify.patch("/:id", async (request, reply) => {
         const { id } = request.params as { id: string };
         const staffUser = (request as any).user;
         if (staffUser.role !== "admin") {
@@ -536,23 +542,62 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid input", details: result.error.flatten() });
         }
 
-        try {
-            const [updatedReg] = await db
-                .update(registrations)
-                .set(result.data)
-                .where(eq(registrations.id, parseInt(id)))
-                .returning();
+    try {
+      const updatedReg = await db.transaction(async (tx) => {
+        const [discovered] = await tx
+          .select()
+          .from(registrations)
+          .where(eq(registrations.id, parseInt(id)));
+        if (!discovered)
+          throw new BoothError(
+            404,
+            "REGISTRATION_NOT_FOUND",
+            "Registration not found",
+          );
+        const affected = [discovered.userId, result.data.userId].filter(
+          (x): x is number => x !== null && x !== undefined,
+        );
+        const locks = await lockBoothMembers(tx, discovered.eventId, affected);
+        const [current] = await tx
+          .select()
+          .from(registrations)
+          .where(eq(registrations.id, discovered.id))
+          .for("update");
+        if (
+          current.userId !== discovered.userId ||
+          current.eventId !== discovered.eventId
+        )
+          throw new BoothError(
+            409,
+            "BOOTH_REGISTRATION_CHANGED",
+            "Registration changed; retry",
+          );
+        await assertRegistrationChangeAllowed(tx, current.id, result.data);
+        const [updated] = await tx
+          .update(registrations)
+          .set(result.data)
+          .where(eq(registrations.id, current.id))
+          .returning();
+        const member = locks.find((x) => x.userId === updated.userId);
+        if (member && updated.status === "confirmed")
+          await recordBoothTicketConfirmation(tx, member, updated.id);
+        return updated;
+      });
 
             if (!updatedReg) return reply.status(404).send({ error: "Registration not found" });
             return reply.send({ registration: updatedReg });
-        } catch (error) {
+    } catch (error) {
             fastify.log.error(error);
+      if (error instanceof BoothError)
+        return reply
+          .code(error.statusCode)
+          .send({ error: error.message, code: error.code });
             return reply.status(500).send({ error: "Failed to update registration" });
-        }
-    });
+    }
+  });
 
-    // ── Manual Add Registration ──────────────────────────
-    fastify.post("/manual", async (request, reply) => {
+  // ── Manual Add Registration ──────────────────────────
+  fastify.post("/manual", async (request, reply) => {
         const staffUser = (request as any).user;
         if (staffUser.role !== "admin") {
             return reply.status(403).send({ error: "Admin access required" });
@@ -564,8 +609,8 @@ export default async function (fastify: FastifyInstance) {
 
         const { userId, eventId, ticketTypeId, sessionIds, note } = result.data;
 
-        try {
-            const registration = await db.transaction(async (tx) => {
+    try {
+      const registration = await db.transaction(async (tx) => {
                 // 1. Validate user exists
                 const [user] = await tx
                     .select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName })
@@ -669,6 +714,9 @@ export default async function (fastify: FastifyInstance) {
                     }
                 }
 
+        // 6. Generate regCode & insert registration
+        const [boothMember] = await lockBoothMembers(tx, eventId, [userId]);
+
                 // 6. Generate regCode & insert registration
                 const regCode = generateRegCode();
                 const [newReg] = await tx.insert(registrations).values({
@@ -684,6 +732,8 @@ export default async function (fastify: FastifyInstance) {
                     addedBy: staffUser.id,
                     addedNote: note || null,
                 }).returning();
+        if (boothMember)
+          await recordBoothTicketConfirmation(tx, boothMember, newReg.id);
 
                 // 7. Insert registration_sessions
                 const sessionsLinked: number[] = [];
@@ -728,7 +778,7 @@ export default async function (fastify: FastifyInstance) {
                     userFirstName: user.firstName,
                     userLastName: user.lastName,
                 };
-            });
+      });
 
             reply.status(201).send({
                 success: true,
@@ -762,7 +812,7 @@ export default async function (fastify: FastifyInstance) {
             });
 
             return;
-        } catch (error: any) {
+    } catch (error: any) {
             const knownErrors: Record<string, { status: number; message: string }> = {
                 USER_NOT_FOUND: { status: 404, message: "User not found" },
                 EVENT_NOT_FOUND: { status: 404, message: "Event not found" },
@@ -780,8 +830,8 @@ export default async function (fastify: FastifyInstance) {
 
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to create manual registration" });
-        }
-    });
+    }
+  });
 
     // ── Add Sessions to Existing Registration ────────────
     fastify.post("/:id/sessions", async (request, reply) => {
@@ -1006,8 +1056,8 @@ export default async function (fastify: FastifyInstance) {
         }
     });
 
-    // ── Batch Manual Add Registration ─────────────────────
-    fastify.post("/manual/batch", async (request, reply) => {
+  // ── Batch Manual Add Registration ─────────────────────
+  fastify.post("/manual/batch", async (request, reply) => {
         const staffUser = (request as any).user;
         if (staffUser.role !== "admin") {
             return reply.status(403).send({ error: "Admin access required" });
@@ -1019,8 +1069,8 @@ export default async function (fastify: FastifyInstance) {
 
         const { userIds, eventId, ticketTypeId, sessionIds, note } = result.data;
 
-        try {
-            const results = await db.transaction(async (tx) => {
+    try {
+      const results = await db.transaction(async (tx) => {
                 // 1. Validate event exists
                 const [event] = await tx
                     .select({
@@ -1168,12 +1218,15 @@ export default async function (fastify: FastifyInstance) {
                     }
                 }
 
+        // 6. Process each user
+        const boothLocks = await lockBoothMembers(tx, eventId, userIds);
+
                 // 6. Process each user
                 const successList: any[] = [];
                 const skippedList: { userId: number; reason: string }[] = [];
                 let addedCount = 0;
 
-                for (const userId of userIds) {
+        for (const userId of userIds) {
                     const user = userMap.get(userId);
                     if (!user) {
                         skippedList.push({ userId, reason: "USER_NOT_FOUND" });
@@ -1205,6 +1258,9 @@ export default async function (fastify: FastifyInstance) {
                         addedBy: staffUser.id,
                         addedNote: note || null,
                     }).returning();
+          const boothMember = boothLocks.find((x) => x.userId === userId);
+          if (boothMember)
+            await recordBoothTicketConfirmation(tx, boothMember, newReg.id);
 
                     // Insert registration_sessions
                     for (const sid of [...new Set(sessionsToLink)].sort((a, b) => a - b)) {
@@ -1236,7 +1292,7 @@ export default async function (fastify: FastifyInstance) {
                         firstName: user.firstName,
                         lastName: user.lastName,
                     });
-                }
+        }
 
                 // 7. Update soldCount
                 if (addedCount > 0) {
@@ -1247,7 +1303,7 @@ export default async function (fastify: FastifyInstance) {
                 }
 
                 return { successList, skippedList, addedCount, sessionsToLink, eventRow: event };
-            });
+      });
 
             reply.status(201).send({
                 success: true,
@@ -1306,7 +1362,7 @@ export default async function (fastify: FastifyInstance) {
             }
 
             return;
-        } catch (error: any) {
+    } catch (error: any) {
             const knownErrors: Record<string, { status: number; message: string }> = {
                 EVENT_NOT_FOUND: { status: 404, message: "Event not found" },
                 TICKET_NOT_FOUND: { status: 404, message: "Ticket type not found or does not belong to event" },
@@ -1321,6 +1377,6 @@ export default async function (fastify: FastifyInstance) {
 
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to create batch registrations" });
-        }
-    });
+    }
+  });
 }

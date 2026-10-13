@@ -967,4 +967,13 @@ Self-review before implementation handoff:
 
 ## Execution handoff
 
-Plan complete; implementation is not authorized in this turn. The latest user instruction is “ดำเนินการเขียน plan ต่อให้เสร็จเรียบร้อยแต่ยังไม่ต้องดำเนินการ implement”. Deliver the completed plan and stop before source edits, migration execution, implementation tests, deployment or subagent implementation work. Keep all implementation checkboxes unchecked. A future explicit request to implement can choose the appropriate execution workflow; do not request another execution choice while the user has expressly deferred implementation.
+The user subsequently authorized implementation in this chat with checkpoints and one disposable local Docker database. Implementation is complete on `codex/booth-directory-coupons`. No deployment is performed. The detailed steps above preserve the original plan; the execution checklist below records actual deliverables and substitutions rather than asserting that every proposed command/file was used verbatim.
+
+- [x] Tasks 1–3: additive schema, contracts, quotas and atomic confirmed-ticket allocation.
+- [x] Tasks 4–5: atomic signup and account/qualifying-ticket mutation protections.
+- [x] Tasks 6–8: Event-scoped readers, complete daily report, public/owner/Admin APIs and authorized staff scan notes.
+- [x] Tasks 9–10: PRIS database selector and fresh owner notes on profile/ticket.
+- [x] Tasks 11–12: Admin Booth management/report/Excel and staff scan/list notes.
+- [x] Task 13: local database acceptance, migration constraints, existing flow regressions, builds and browser verification.
+
+Tests for migration, services, guards, readers, routes and the complete lifecycle are consolidated in `src/modules/booths/acceptance.integration.test.ts`; pure policy/schema tests remain separate. Backoffice reuses existing server error displays for blocked edits/deletes. Existing `conference-web` needs no edits. Changes are checkpointed per repository rather than creating thirteen partial commits. See [verification record](../../booth-verification.md) and [API/rollout instructions](../../booth-api.md) for evidence and the local build limitations.

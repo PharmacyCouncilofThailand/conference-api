@@ -212,6 +212,11 @@ import backofficeSessionsRoutes from "./routes/backoffice/sessions.js";
 import backofficePromoCodesRoutes from "./routes/backoffice/promoCodes.js";
 import backofficePromoCodeAbstractsReportRoutes from "./routes/backoffice/promo-code-abstracts-report.js";
 import backofficeMembersRoutes from "./routes/backoffice/members.js";
+import {
+  boothPublicRoutes,
+  boothOwnerRoutes,
+  boothAdminRoutes,
+} from "./modules/booths/routes.js";
 import backofficeAbstractCategoriesRoutes from "./routes/backoffice/abstractCategories.js";
 import backofficeEmailRetrosendRoutes from "./routes/backoffice/email-retrosend.js";
 import backofficeEmailManualRoutes from "./routes/backoffice/email-manual.js";
@@ -291,6 +296,8 @@ fastify.register(abstractConfirmRoutes, { prefix: "/api/abstracts/confirm" });
 fastify.register(invitationRoutes, { prefix: "/api/session-invitations" });
 fastify.register(abstractAcceptedRoutes, { prefix: "/api/abstracts" });
 fastify.register(userProfileRoutes, { prefix: "/api/users" });
+fastify.register(boothPublicRoutes, { prefix: "/api/public" });
+fastify.register(boothOwnerRoutes, { prefix: "/api/users" });
 fastify.register(userAbstractsRoutes, { prefix: "/api/abstracts/user" });
 fastify.register(publicWorkshopsRoutes, { prefix: "/api/workshops" });
 fastify.register(publicTicketsRoutes, { prefix: "/api/tickets" });
@@ -312,7 +319,8 @@ fastify.register(async (protectedLuckyWheelRoutes) => {
 // ============================================================================
 // Protected Backoffice Routes (Auth Required)
 // ============================================================================
-fastify.register(async (protectedRoutes) => {
+fastify.register(
+  async (protectedRoutes) => {
   // Add authentication hook to all routes in this plugin
   protectedRoutes.addHook("preHandler", fastify.authenticate);
   protectedRoutes.register(presentationBackofficeRoutes, { database: db });
@@ -333,13 +341,16 @@ fastify.register(async (protectedRoutes) => {
   protectedRoutes.register(backofficePromoCodesRoutes, { prefix: "/promo-codes" });
   protectedRoutes.register(backofficePromoCodeAbstractsReportRoutes, { prefix: "/reports/promo-code-abstracts" });
   protectedRoutes.register(backofficeMembersRoutes, { prefix: "/members" });
+    protectedRoutes.register(boothAdminRoutes);
   protectedRoutes.register(backofficeAbstractCategoriesRoutes, { prefix: "/abstract-categories" });
   protectedRoutes.register(backofficeEmailRetrosendRoutes, { prefix: "/email-retrosend" });
   protectedRoutes.register(backofficeEmailManualRoutes, { prefix: "/email-manual" });
   protectedRoutes.register(backofficeStudentEligibilityRequestsRoutes, { prefix: "/student-eligibility-requests" });
   protectedRoutes.register(backofficeSponsorRoutes);
   protectedRoutes.register(teamRegistrationBackofficeRoutes);
-}, { prefix: "/api/backoffice" });
+  },
+  { prefix: "/api/backoffice" },
+);
 
 // ============================================================================
 // Health Check & Root
