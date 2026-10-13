@@ -512,7 +512,7 @@ return reply.code(409).send({
 ```
 
 `registrationResponse.booth` is assigned only from the authorized server reader; keep other existing response fields used by the scanner. The note remains on a picker even if every listed session is already checked in. Undo scan only modifies attendance; never call allocation or alter coupon eligibility.
-- [ ] Verify scoped list enrichment works for daily and single branches but exposes no new PII outside existing access. Run checkin.integration.test.ts plus existing attendance/check-in integration cases, then build. Commit `feat(checkin): expose booth coupon eligibility to authorized staff`.
+- [ ] In the legacy list branch without an explicit Event/Session, apply the authenticated staff's assigned Event/Session filter before counting/selecting/enriching rows; Admin is unrestricted. A row with no matching assignment gets no result, not an eligibility note joined before filtering. Verify daily and single branches expose no new PII outside existing access. Run checkin.integration.test.ts plus existing attendance/check-in integration cases, then build. Commit `feat(checkin): expose booth coupon eligibility to authorized staff`.
 
 ## Task 9: Replace free-text Booth signup with the directory selector (PRIS)
 
@@ -767,7 +767,7 @@ try {
 } finally { setExporting(false); }
 ```
 
-Each page uses its own `useAuth` token and validates admin before rendering/fetching; server authorization remains authoritative. Table body JSX for state labels must be shared with the export mapping rather than separate contradictory wording; export `boothEligibilityLabel` and `dailyAttendanceLabel` from boothExcel.ts or a small `boothLabels.ts` and update imports together.
+Each page uses its own `useAuth` token and validates admin before rendering/fetching; server authorization remains authoritative. Table body JSX for state labels must be shared with the export mapping rather than separate contradictory wording; export `boothEligibilityLabel` and `dailyAttendanceLabel` from boothExcel.ts and import them in BoothMembersTable.tsx.
 
 - [ ] Add sidebar item `/booths` adjacent to members; exclude before non-admin role-specific branches. AuthContext's admin wildcard already admits pages; confirm other roles lack a `/booths` prefix and add an explicit non-admin guard if existing prefix behavior would allow it. Do not change unrelated role access.
 - [ ] Run `& ../conference-api/node_modules/.bin/tsx.cmd --test src/lib/boothExcel.test.ts`, typecheck/build, then browser smoke Admin CRUD/type lock, Event switching, two member pages, no-ticket member, two daily columns, staff deep-link denial and workbook download. Commit `feat(backoffice): manage booth directory and export daily member report`.
@@ -961,10 +961,10 @@ Self-review before implementation handoff:
 - [x] DTO names, nullable eligibility and sequence semantics match between API/PRIS/BO.
 - [x] Exact mutation error codes are preserved end-to-end; duplicate scan details stay out of toast JSON.
 - [x] No allocation on signup/manual/free-no-promo; no accidental mutable quota or member transfer endpoint.
-- [x] Migration number checked again before execution; no false assumption that old Drizzle journal deploys new SQL.
+- [x] Migration number checked during planning; the execution task explicitly rechecks it before creating SQL and does not assume the old Drizzle journal deploys new SQL.
 - [x] Daily reader/export has no hidden 500/1000-row cutoff; columns retain Session identity.
 - [x] Every source change belongs to its own repository; planned tests are not reported as executed.
 
 ## Execution handoff
 
-Execution authorized: the user subsequently instructed “ดำเนินการต่อให้เสร็จ” while the plan was being completed. Continue implementation in this chat without another execution-choice gate. The executing-plans skill directs using subagent-driven-development when subagents are available, so use that process with per-task review.
+Plan complete; implementation is not authorized in this turn. The latest user instruction is “ดำเนินการเขียน plan ต่อให้เสร็จเรียบร้อยแต่ยังไม่ต้องดำเนินการ implement”. Deliver the completed plan and stop before source edits, migration execution, implementation tests, deployment or subagent implementation work. Keep all implementation checkboxes unchecked. A future explicit request to implement can choose the appropriate execution workflow; do not request another execution choice while the user has expressly deferred implementation.
