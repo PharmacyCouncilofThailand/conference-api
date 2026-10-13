@@ -1,9 +1,10 @@
 import { FastifyInstance } from "fastify";
 import { registerBodySchema } from "../../schemas/auth.schema.js";
 import { db } from "../../database/index.js";
-import { users, events } from "../../database/schema.js";
+import { users, events, booths, boothMembers } from "../../database/schema.js";
+import { BoothError } from "../../modules/booths/policy.js";
 import bcrypt from "bcryptjs";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { uploadToGoogleDrive } from "../../services/googleDrive.js";
 import { sendPendingApprovalEmail, sendSignupNotificationEmail } from "../../services/emailService.js";
 import { sendEventSignupNotificationEmail, sendEventPendingApprovalEmail } from "../../services/emailTemplates.js";
@@ -107,6 +108,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         phone,
         healthHackLevel,
         boothName,
+        boothId,
         recaptchaToken,
         source,
         eventCode,
@@ -233,29 +235,71 @@ export async function authRoutes(fastify: FastifyInstance) {
       const initialStatus = isAutoApprovedRole ? "active" : "pending_approval";
 
       // 7. Insert user
-      const [newUser] = await db
-        .insert(users)
-        .values({
-          email,
-          passwordHash,
-          role,
-          firstName: isSpecialRole ? firstName.trim() : firstName,
-          lastName: isSpecialRole ? lastName.trim() : lastName,
-          country: userCountry,
-          institution: accountType === "healthhack" ? organization!.trim() : organization || null,
-          university: university || null,
-          phone: isSpecialRole ? phone!.trim() : phone || null,
-          healthHackLevel: accountType === "healthhack" ? healthHackLevel! : null,
-          boothName: accountType === "booth" ? boothName!.trim() : null,
-          thaiIdCard: idCard || null,
-          passportId: passportId || null,
-          pharmacyLicenseId: pharmacyLicenseId || null,
-          verificationDocUrl,
-          status: initialStatus,
-          studentLevel: studentLevel,
-          registeredFromEvent: eventCode || null,
-        })
-        .returning();
+      const newUser = await db.transaction(async (tx) => {
+        const booth =
+          accountType === "booth"
+            ? (
+                await tx
+                  .select({
+                    id: booths.id,
+                    eventId: booths.eventId,
+                    name: booths.name,
+                  })
+                  .from(booths)
+                  .innerJoin(events, eq(events.id, booths.eventId))
+                  .where(
+                    and(
+                      eq(booths.id, boothId!),
+                      eq(events.eventCode, eventCode!.trim()),
+                    ),
+                  )
+                  .for("update", { of: booths })
+                  .limit(1)
+              )[0]
+            : null;
+        if (accountType === "booth" && !booth)
+          throw new BoothError(
+            404,
+            "BOOTH_NOT_FOUND",
+            "Booth not found in this event",
+          );
+        const [created] = await tx
+          .insert(users)
+          .values({
+            email,
+            passwordHash,
+            role,
+            firstName: isSpecialRole ? firstName.trim() : firstName,
+            lastName: isSpecialRole ? lastName.trim() : lastName,
+            country: userCountry,
+            institution:
+              accountType === "healthhack"
+                ? organization!.trim()
+                : organization || null,
+            university: university || null,
+            phone: isSpecialRole ? phone!.trim() : phone || null,
+            healthHackLevel:
+              accountType === "healthhack" ? healthHackLevel! : null,
+            boothName: booth?.name ?? null,
+            thaiIdCard: idCard || null,
+            passportId: passportId || null,
+            pharmacyLicenseId: pharmacyLicenseId || null,
+            verificationDocUrl,
+            status: initialStatus,
+            studentLevel: studentLevel,
+            registeredFromEvent: eventCode || null,
+          })
+          .returning();
+        if (booth)
+          await tx
+            .insert(boothMembers)
+            .values({
+              eventId: booth.eventId,
+              boothId: booth.id,
+              userId: created.id,
+            });
+        return created;
+      });
 
       // 8. Send auto-reply emails (generic templates with event context)
       if (eventCode) {
@@ -312,6 +356,20 @@ export async function authRoutes(fastify: FastifyInstance) {
         },
       });
     } catch (error) {
+      if (error instanceof BoothError)
+        return reply
+          .code(error.statusCode)
+          .send({ success: false, code: error.code, error: error.message });
+      if (
+        (error as { code?: string; constraint_name?: string }).code ===
+          "23505" &&
+        (error as { constraint_name?: string }).constraint_name?.includes(
+          "email",
+        )
+      )
+        return reply
+          .code(409)
+          .send({ success: false, error: "Email already exists" });
       fastify.log.error(error);
       return reply.status(500).send({
         success: false,

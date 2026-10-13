@@ -17,6 +17,7 @@ import {
   bigint,
   primaryKey,
   uniqueIndex,
+  unique,
   index,
   check,
   foreignKey,
@@ -1482,6 +1483,83 @@ export const registrationAddons = pgTable("registration_addons", {
   status: varchar("status").default("active"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+export const boothTypeEnum = pgEnum("booth_type", [
+  "symposium",
+  "premium",
+  "standard",
+]);
+export const booths = pgTable(
+  "booths",
+  {
+    id: serial("id").primaryKey(),
+    eventId: integer("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "restrict" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    type: boothTypeEnum("type").notNull(),
+    lastQualificationSequence: integer("last_qualification_sequence")
+      .notNull()
+      .default(0),
+    typeLockedAt: timestamp("type_locked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("booths_id_event_unique").on(t.id, t.eventId),
+    index("booths_event_id_idx").on(t.eventId, t.id),
+    check("booths_name_check", sql`length(btrim(${t.name})) > 0`),
+    check("booths_sequence_check", sql`${t.lastQualificationSequence} >= 0`),
+  ],
+);
+export const boothMembers = pgTable(
+  "booth_members",
+  {
+    id: serial("id").primaryKey(),
+    eventId: integer("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "restrict" }),
+    boothId: integer("booth_id").notNull(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    joinedAt: timestamp("joined_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    firstTicketConfirmedAt: timestamp("first_ticket_confirmed_at", {
+      withTimezone: true,
+    }),
+    qualifyingRegistrationId: integer("qualifying_registration_id")
+      .unique()
+      .references(() => registrations.id, { onDelete: "restrict" }),
+    qualifyingOrderId: integer("qualifying_order_id")
+      .unique()
+      .references(() => orders.id, { onDelete: "restrict" }),
+    qualifiedAt: timestamp("qualified_at", { withTimezone: true }),
+    qualificationSequence: integer("qualification_sequence"),
+    mealCouponEligible: boolean("meal_coupon_eligible"),
+  },
+  (t) => [
+    uniqueIndex("booth_members_event_user_unique").on(t.eventId, t.userId),
+    uniqueIndex("booth_members_booth_sequence_unique").on(
+      t.boothId,
+      t.qualificationSequence,
+    ),
+    index("booth_members_booth_id_idx").on(t.boothId, t.id),
+    foreignKey({
+      columns: [t.boothId, t.eventId],
+      foreignColumns: [booths.id, booths.eventId],
+    }).onDelete("restrict"),
+    check(
+      "booth_members_qualification_check",
+      sql`num_nonnulls(${t.qualifyingRegistrationId},${t.qualifyingOrderId},${t.qualifiedAt},${t.qualificationSequence},${t.mealCouponEligible}) = 0 OR (num_nonnulls(${t.qualifyingRegistrationId},${t.qualifyingOrderId},${t.qualifiedAt},${t.qualificationSequence},${t.mealCouponEligible}) = 5 AND ${t.qualificationSequence} > 0 AND ${t.firstTicketConfirmedAt} IS NOT NULL)`,
+    ),
+  ],
+);
 
 export const checkIns = pgTable("check_ins", {
   id: serial("id").primaryKey(),

@@ -5,6 +5,11 @@ import { normalizePromoCode } from "../../utils/promoCodeNormalization.js";
 import { reservePromoUsageLocked, settlePromoUsageInTransaction } from "./promo-usage.service.js";
 import { processSuccessfulPaymentInTransaction } from "./registration-settlement.service.js";
 import type { PaymentLogger } from "./types.js";
+import { isCouponCheckout } from "../booths/policy.js";
+import {
+  lockBoothMembers,
+  allocateBoothCoupon,
+} from "../booths/registration.service.js";
 
 export interface FreeCheckoutOrderItemInput {
   itemType: "ticket" | "addon";
@@ -67,7 +72,9 @@ export class FreeCheckoutError extends Error {
   }
 }
 
-export async function completeFreeCheckout(input: FreeCheckoutInput): Promise<FreeCheckoutResult> {
+export async function completeFreeCheckout(
+  input: FreeCheckoutInput,
+): Promise<FreeCheckoutResult> {
   return db.transaction(async (tx) => {
     const canonicalPromoCode = input.promoCode ? normalizePromoCode(input.promoCode) : null;
 
@@ -184,6 +191,26 @@ export async function completeFreeCheckout(input: FreeCheckoutInput): Promise<Fr
 
     if (promo) {
       await settlePromoUsageInTransaction(tx, order.id);
+    }
+
+    if (
+      isCouponCheckout({
+        primary: input.items.some((x) => x.itemType === "ticket"),
+        discountType: promo?.discountType ?? null,
+        discountValue: promo?.discountValue ?? null,
+        netAmount: authoritativeNet,
+      })
+    ) {
+      const [member] = await lockBoothMembers(tx, input.eventId, [
+        input.userId,
+      ]);
+      if (member)
+        await allocateBoothCoupon(
+          tx,
+          member,
+          settlement.registrationId,
+          order.id,
+        );
     }
 
     return {

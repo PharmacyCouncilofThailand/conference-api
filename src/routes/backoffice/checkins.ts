@@ -23,11 +23,18 @@ import {
     readAttendanceSummary,
 } from "../../modules/attendance/readers.js";
 import { lockAttendanceCutover } from "../../modules/attendance/cutover-lock.js";
+import {
+  readCheckinBooth,
+  enrichCheckins,
+} from "../../modules/booths/readers.js";
 
-export default async function (fastify: FastifyInstance, options: { database?: typeof defaultDatabase }) {
+export default async function (
+  fastify: FastifyInstance,
+  options: { database?: typeof defaultDatabase },
+) {
     const db = options.database ?? defaultDatabase;
-    // List Check-ins (reads from registration_sessions WHERE checkedInAt IS NOT NULL)
-    fastify.get("", async (request, reply) => {
+  // List Check-ins (reads from registration_sessions WHERE checkedInAt IS NOT NULL)
+  fastify.get("", async (request, reply) => {
         const queryResult = checkinListSchema.safeParse(request.query);
         if (!queryResult.success) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
@@ -36,8 +43,8 @@ export default async function (fastify: FastifyInstance, options: { database?: t
         const { page, limit, search, eventId, sessionId, university, date, history } = queryResult.data;
         const offset = (page - 1) * limit;
 
-        try {
-            if (eventId && sessionId) {
+    try {
+      if (eventId && sessionId) {
                 const actor = {
                     id: Number((request as any).user?.id),
                     role: (request as any).user?.role as string | undefined,
@@ -53,15 +60,20 @@ export default async function (fastify: FastifyInstance, options: { database?: t
                     limit,
                     actor,
                 });
-                return reply.send({
-                    checkins: result.rows,
-                    pagination: result.pagination,
-                    serverNow: result.serverNow,
-                    serverDate: result.serverDate,
-                    selectedDate: result.selectedDate,
-                });
-            }
+        return reply.send({
+          checkins: await enrichCheckins(db, result.rows),
+          pagination: result.pagination,
+          serverNow: result.serverNow,
+          serverDate: result.serverDate,
+          selectedDate: result.selectedDate,
+        });
+      }
             const conditions: any[] = [isNotNull(registrationSessions.checkedInAt)];
+      const actor = (request as any).user;
+      if (actor.role !== "admin")
+        conditions.push(
+          sql`EXISTS(SELECT 1 FROM staff_event_assignments a WHERE a.staff_id=${actor.id} AND a.event_id=${registrations.eventId} AND (a.session_id IS NULL OR a.session_id=${registrationSessions.sessionId}))`,
+        );
             if (eventId) conditions.push(eq(registrations.eventId, eventId));
             if (sessionId) conditions.push(eq(registrationSessions.sessionId, sessionId));
             if (university) conditions.push(eq(users.university, university));
@@ -85,56 +97,66 @@ export default async function (fastify: FastifyInstance, options: { database?: t
                 .leftJoin(users, eq(registrations.userId, users.id))
                 .where(whereClause);
 
-            // Fetch data
-            const checkinList = await db
-                .select({
-                    id: registrationSessions.id,
-                    scannedAt: registrationSessions.checkedInAt,
-                    regCode: registrations.regCode,
-                    firstName: registrations.firstName,
-                    lastName: registrations.lastName,
-                    email: registrations.email,
-                    university: users.university,
-                    institution: users.institution,
-                    ticketName: ticketTypes.name,
-                    source: registrationSessions.source,
-                    addedAt: registrationSessions.createdAt,
-                    sessionName: sessions.sessionName,
-                    eventName: events.eventName,
-                    scannedBy: {
-                        firstName: backofficeUsers.firstName,
-                        lastName: backofficeUsers.lastName,
-                    }
-                })
-                .from(registrationSessions)
-                .innerJoin(registrations, eq(registrationSessions.registrationId, registrations.id))
-                .leftJoin(users, eq(registrations.userId, users.id))
-                .leftJoin(ticketTypes, eq(registrationSessions.ticketTypeId, ticketTypes.id))
-                .leftJoin(sessions, eq(registrationSessions.sessionId, sessions.id))
-                .leftJoin(events, eq(registrations.eventId, events.id))
-                .leftJoin(backofficeUsers, eq(registrationSessions.checkedInBy, backofficeUsers.id))
-                .where(whereClause)
-                .orderBy(desc(registrationSessions.checkedInAt))
-                .limit(limit)
-                .offset(offset);
+      // Fetch data
+      const checkinList = await db
+        .select({
+          id: registrationSessions.id,
+          registrationId: registrations.id,
+          scannedAt: registrationSessions.checkedInAt,
+          regCode: registrations.regCode,
+          firstName: registrations.firstName,
+          lastName: registrations.lastName,
+          email: registrations.email,
+          university: users.university,
+          institution: users.institution,
+          ticketName: ticketTypes.name,
+          source: registrationSessions.source,
+          addedAt: registrationSessions.createdAt,
+          sessionName: sessions.sessionName,
+          eventName: events.eventName,
+          scannedBy: {
+            firstName: backofficeUsers.firstName,
+            lastName: backofficeUsers.lastName,
+          },
+        })
+        .from(registrationSessions)
+        .innerJoin(
+          registrations,
+          eq(registrationSessions.registrationId, registrations.id),
+        )
+        .leftJoin(users, eq(registrations.userId, users.id))
+        .leftJoin(
+          ticketTypes,
+          eq(registrationSessions.ticketTypeId, ticketTypes.id),
+        )
+        .leftJoin(sessions, eq(registrationSessions.sessionId, sessions.id))
+        .leftJoin(events, eq(registrations.eventId, events.id))
+        .leftJoin(
+          backofficeUsers,
+          eq(registrationSessions.checkedInBy, backofficeUsers.id),
+        )
+        .where(whereClause)
+        .orderBy(desc(registrationSessions.checkedInAt))
+        .limit(limit)
+        .offset(offset);
 
-            return reply.send({
-                checkins: checkinList,
-                pagination: {
-                    page,
-                    limit,
-                    total: totalCount,
-                    totalPages: Math.ceil(totalCount / limit),
-                },
-            });
-        } catch (error) {
+      return reply.send({
+        checkins: await enrichCheckins(db, checkinList),
+        pagination: {
+          page,
+          limit,
+          total: totalCount,
+          totalPages: Math.ceil(totalCount / limit),
+        },
+      });
+    } catch (error) {
             if (error instanceof AttendanceReaderError) {
                 return reply.status(error.statusCode).send({ error: error.message, code: error.code });
             }
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to fetch check-ins" });
-        }
-    });
+    }
+  });
 
     // Distinct universities of registrants for an event (for filter dropdown)
     fastify.get("/universities", async (request, reply) => {
@@ -271,10 +293,10 @@ export default async function (fastify: FastifyInstance, options: { database?: t
         }
     });
 
-    // Create Check-in (Scan)
-    // Supports picker, specific session, all entitled sessions, and staff-assigned fast scan.
-    // Every actual write routes through the shared attendance service.
-    fastify.post("", async (request, reply) => {
+  // Create Check-in (Scan)
+  // Supports picker, specific session, all entitled sessions, and staff-assigned fast scan.
+  // Every actual write routes through the shared attendance service.
+  fastify.post("", async (request, reply) => {
         const bodyResult = createCheckinSchema.safeParse(request.body);
         if (!bodyResult.success) {
             return reply.status(400).send({ error: "Invalid body", details: bodyResult.error.flatten() });
@@ -286,41 +308,45 @@ export default async function (fastify: FastifyInstance, options: { database?: t
             role: (request as any).user?.role as string | undefined,
         };
 
-        try {
-            const registration = await db.query.registrations.findFirst({
-                where: ilike(registrations.regCode, regCode),
+    if (!["admin", "staff", "organizer"].includes(actor.role || ""))
+      return reply.code(403).send({ error: "Staff check-in access required" });
+
+    try {
+      const registration = await db.query.registrations.findFirst({
+        where: ilike(registrations.regCode, regCode),
+        columns: {
+          id: true,
+          eventId: true,
+          regCode: true,
+          status: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+        with: {
+          event: { columns: { eventName: true } },
+          ticketType: { columns: { name: true } },
+          registrationSessions: {
+            columns: {
+              id: true,
+              sessionId: true,
+              checkedInAt: true,
+              source: true,
+            },
+            with: {
+              session: {
                 columns: {
-                    id: true,
-                    regCode: true,
-                    status: true,
-                    firstName: true,
-                    lastName: true,
-                    email: true,
+                  sessionName: true,
+                  sessionType: true,
+                  startTime: true,
+                  endTime: true,
                 },
-                with: {
-                    event: { columns: { eventName: true } },
-                    ticketType: { columns: { name: true } },
-                    registrationSessions: {
-                        columns: {
-                            id: true,
-                            sessionId: true,
-                            checkedInAt: true,
-                            source: true,
-                        },
-                        with: {
-                            session: {
-                                columns: {
-                                    sessionName: true,
-                                    sessionType: true,
-                                    startTime: true,
-                                    endTime: true,
-                                },
-                            },
-                            ticketType: { columns: { name: true } },
-                        },
-                    },
-                },
-            });
+              },
+              ticketType: { columns: { name: true } },
+            },
+          },
+        },
+      });
 
             if (!registration) {
                 return reply.status(404).send({ error: "Registration not found", code: "NOT_FOUND" });
@@ -333,39 +359,67 @@ export default async function (fastify: FastifyInstance, options: { database?: t
                 });
             }
 
-            const regSessions = registration.registrationSessions || [];
-            const registrationResponse = {
-                id: registration.id,
-                regCode: registration.regCode,
-                firstName: registration.firstName,
-                lastName: registration.lastName,
-                ticketName: (registration as any).ticketType?.name,
-                eventName: (registration as any).event?.eventName,
-            };
+      let regSessions = registration.registrationSessions || [];
+      if (actor.role !== "admin") {
+        const assigned = (await db.execute(
+          sql`SELECT session_id FROM staff_event_assignments WHERE staff_id=${actor.id} AND event_id=${registration.eventId}`,
+        )) as unknown as Array<{ session_id: number | null }>;
+        regSessions = regSessions.filter((rs) =>
+          assigned.some(
+            (x) => x.session_id === null || x.session_id === rs.sessionId,
+          ),
+        );
+        if (
+          !regSessions.length ||
+          ((assignedSessionId || sessionId) &&
+            !regSessions.some(
+              (rs) => rs.sessionId === (assignedSessionId || sessionId),
+            ))
+        )
+          return reply
+            .code(403)
+            .send({
+              error: "Session not assigned",
+              code: "SESSION_NOT_ASSIGNED",
+            });
+      }
+      const registrationResponse = {
+        id: registration.id,
+        regCode: registration.regCode,
+        firstName: registration.firstName,
+        lastName: registration.lastName,
+        ticketName: (registration as any).ticketType?.name,
+        eventName: (registration as any).event?.eventName,
+        booth: await readCheckinBooth(db, registration.id),
+      };
 
-            const checkOne = async (regSession: any) => {
+      const checkOne = async (regSession: any) => {
                 const result = await checkInSession(db, {
                     registrationSessionId: regSession.id,
                     actor,
                 });
-                if (!result.created) {
-                    return reply.status(409).send({
-                        error: result.state.mode === "daily" ? "เช็คอินวันนี้แล้ว" : "เช็คอินแล้ว",
-                        code: "ALREADY_CHECKED_IN",
-                        attendanceMode: result.state.mode,
-                        attendanceId: result.state.attendanceId,
-                        attendanceDate: result.state.attendanceDate,
-                        checkedInAt: result.state.checkedInAt,
-                        details: {
-                            attendanceMode: result.state.mode,
-                            attendanceId: result.state.attendanceId,
-                            attendanceDate: result.state.attendanceDate,
-                            checkedInAt: result.state.checkedInAt,
-                        },
-                        sessionName: regSession.session?.sessionName,
-                        registration: registrationResponse,
-                    });
-                }
+        if (!result.created) {
+          return reply.status(409).send({
+            error:
+              result.state.mode === "daily"
+                ? "เช็คอินวันนี้แล้ว"
+                : "เช็คอินแล้ว",
+            code: "ALREADY_CHECKED_IN",
+            attendanceMode: result.state.mode,
+            attendanceId: result.state.attendanceId,
+            attendanceDate: result.state.attendanceDate,
+            checkedInAt: result.state.checkedInAt,
+            details: {
+              registration: registrationResponse,
+              attendanceMode: result.state.mode,
+              attendanceId: result.state.attendanceId,
+              attendanceDate: result.state.attendanceDate,
+              checkedInAt: result.state.checkedInAt,
+            },
+            sessionName: regSession.session?.sessionName,
+            registration: registrationResponse,
+          });
+        }
                 return reply.send({
                     success: true,
                     checkedInSession: {
@@ -380,7 +434,7 @@ export default async function (fastify: FastifyInstance, options: { database?: t
                     },
                     registration: registrationResponse,
                 });
-            };
+      };
 
             if (assignedSessionId) {
                 const regSession = regSessions.find((rs: any) => rs.sessionId === assignedSessionId);
@@ -394,7 +448,7 @@ export default async function (fastify: FastifyInstance, options: { database?: t
                 return checkOne(regSession);
             }
 
-            if (checkInAll) {
+      if (checkInAll) {
                 const checked: any[] = [];
                 const skipped: any[] = [];
                 for (const regSession of regSessions as any[]) {
@@ -436,13 +490,19 @@ export default async function (fastify: FastifyInstance, options: { database?: t
                     }
                 }
 
-                if (checked.length === 0 && skipped.length > 0 && skipped.every((item) => item.code === "ALREADY_CHECKED_IN")) {
-                    return reply.status(409).send({
-                        error: "All sessions already checked in",
-                        code: "ALREADY_CHECKED_IN",
-                        skippedSessions: skipped,
-                    });
-                }
+        if (
+          checked.length === 0 &&
+          skipped.length > 0 &&
+          skipped.every((item) => item.code === "ALREADY_CHECKED_IN")
+        ) {
+          return reply.status(409).send({
+            error: "All sessions already checked in",
+            code: "ALREADY_CHECKED_IN",
+            registration: registrationResponse,
+            details: { registration: registrationResponse },
+            skippedSessions: skipped,
+          });
+        }
                 if (checked.length === 0) {
                     return reply.status(400).send({
                         error: "No sessions are currently available for check-in",
@@ -460,7 +520,7 @@ export default async function (fastify: FastifyInstance, options: { database?: t
                 return skipped.length > 0
                     ? reply.status(207).send({ ...response, skippedSessions: skipped })
                     : reply.send(response);
-            }
+      }
 
             if (sessionId) {
                 const regSession = regSessions.find((rs: any) => rs.sessionId === sessionId);
@@ -500,17 +560,17 @@ export default async function (fastify: FastifyInstance, options: { database?: t
                     };
                 }),
             });
-        } catch (error) {
+    } catch (error) {
             if (error instanceof AttendanceError) {
                 return reply.status(error.statusCode).send({ error: error.message, code: error.code });
             }
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to process check-in" });
-        }
-    });
+    }
+  });
 
-    // Daily undo targets immutable attendance evidence; legacy undo remains registrationSessionId-based.
-    fastify.post("/undo", async (request, reply) => {
+  // Daily undo targets immutable attendance evidence; legacy undo remains registrationSessionId-based.
+  fastify.post("/undo", async (request, reply) => {
         const bodyResult = undoCheckinSchema.safeParse(request.body);
         if (!bodyResult.success) {
             return reply.status(400).send({ error: "Invalid body", details: bodyResult.error.flatten() });
@@ -521,7 +581,7 @@ export default async function (fastify: FastifyInstance, options: { database?: t
             role: (request as any).user?.role as string | undefined,
         };
 
-        try {
+    try {
             if ("attendanceId" in bodyResult.data) {
                 const state = await cancelDailyCheckin(db, {
                     attendanceId: bodyResult.data.attendanceId,
@@ -541,20 +601,20 @@ export default async function (fastify: FastifyInstance, options: { database?: t
             }
 
             const { registrationSessionId } = bodyResult.data;
-            const undone = await db.transaction(async (tx) => {
+      const undone = await db.transaction(async (tx) => {
             const txDb = tx as unknown as typeof db;
-            const targets = await tx.execute(sql`
+        const targets = (await tx.execute(sql`
                 SELECT r.event_id, rs.session_id FROM registration_sessions rs
                 JOIN registrations r ON r.id=rs.registration_id WHERE rs.id=${registrationSessionId}
-            `) as unknown as Array<{ event_id: number; session_id: number }>;
+            `)) as unknown as Array<{ event_id: number; session_id: number }>;
             const target = targets[0];
             if (!target) throw new AttendanceError(404, "ATTENDANCE_NOT_FOUND", "Registration session not found");
             await lockAttendanceCutover(txDb, target.event_id, target.session_id, "shared");
-            const locked = await tx.execute(sql`
+        const locked = (await tx.execute(sql`
                 SELECT r.event_id,rs.session_id FROM registration_sessions rs
                 JOIN registrations r ON r.id=rs.registration_id WHERE rs.id=${registrationSessionId}
                 FOR UPDATE OF rs
-            `) as unknown as Array<{ event_id: number; session_id: number }>;
+            `)) as unknown as Array<{ event_id: number; session_id: number }>;
             if (locked[0]?.event_id !== target.event_id || locked[0]?.session_id !== target.session_id) {
                 throw new AttendanceError(409, "ATTENDANCE_CONFLICT", "Attendance target changed; retry");
             }
@@ -602,15 +662,14 @@ export default async function (fastify: FastifyInstance, options: { database?: t
                     regCode: rs.regCode,
                     name: `${rs.firstName} ${rs.lastName}`,
             };
-            });
+      });
             return reply.send({ success: true, undone });
-        } catch (error) {
+    } catch (error) {
             if (error instanceof AttendanceError) {
                 return reply.status(error.statusCode).send({ error: error.message, code: error.code });
             }
             fastify.log.error(error);
             return reply.status(500).send({ error: "Failed to undo check-in" });
-        }
-    });
-
+    }
+  });
 }

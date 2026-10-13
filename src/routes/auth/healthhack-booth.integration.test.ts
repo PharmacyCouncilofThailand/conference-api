@@ -7,9 +7,12 @@ import multipart from "@fastify/multipart";
 import jwt from "@fastify/jwt";
 import { openPaymentsTestDatabase, validatePaymentsTestDatabaseUrl } from "../../modules/payments/test-database.js";
 
-test("new roles survive register/login/SSO/profile", {
-  skip: !process.env.TEST_DATABASE_URL,
-}, async () => {
+test(
+  "new roles survive register/login/SSO/profile",
+  {
+    skip: !process.env.TEST_DATABASE_URL,
+  },
+  async () => {
   const testUrl = validatePaymentsTestDatabaseUrl({ ...process.env,
     PAYMENTS_ALLOW_SHARED_TEST_DATABASE: "false", PAYMENTS_ALLOW_UNMARKED_TEST_DATABASE: "false" });
   const sql = await openPaymentsTestDatabase();
@@ -18,8 +21,9 @@ test("new roles survive register/login/SSO/profile", {
   process.env.DATABASE_URL = testUrl;
   for (const key of keys.slice(1)) delete process.env[key];
   const prefix = `hhb-${randomUUID()}-`;
+    const eventCode = prefix.slice(0, 48);
   const app = Fastify({ logger: false });
-  try {
+    try {
     const migrationClient = await sql.reserve();
     try {
       await migrationClient.unsafe(await readFile("drizzle/0040_healthhack_booth_roles.sql", "utf8"));
@@ -46,6 +50,10 @@ test("new roles survive register/login/SSO/profile", {
     }, { prefix: "/api/backoffice" });
     await app.ready();
     const admin = { authorization: `Bearer ${app.jwt.sign({ id: 7, email: "admin@example.invalid", role: "admin" })}` };
+      const [event] =
+        await sql`INSERT INTO events(event_code,event_name,event_type,start_date,end_date,status) VALUES(${eventCode},'Signup Test','single_room',now(),now()+interval '1 day','published') RETURNING id`;
+      const [booth] =
+        await sql`INSERT INTO booths(event_id,name,type) VALUES(${event.id},'Test Booth','premium') RETURNING id`;
     const register = (fields: Record<string,string>) => {
       const boundary = "hhb-boundary";
       const body = Object.entries(fields).map(([key,value]) =>
@@ -53,9 +61,20 @@ test("new roles survive register/login/SSO/profile", {
       ).join("") + `--${boundary}--\r\n`;
       return app.inject({ method: "POST", url: "/auth/register", headers: { "content-type": `multipart/form-data; boundary=${boundary}` }, payload: body });
     };
-    for (const role of ["healthhack","booth"]) {
-      const fields = { firstName: "First", lastName: "Last", email: `${prefix}${role}@example.invalid`, password: "test1234", accountType: role,
-        phone: "0812345678", country: "United States", organization: "Test School", healthHackLevel: "m1", boothName: "Test Booth" };
+      for (const role of ["healthhack", "booth"]) {
+        const fields = {
+          firstName: "First",
+          lastName: "Last",
+          email: `${prefix}${role}@example.invalid`,
+          password: "test1234",
+          accountType: role,
+          phone: "0812345678",
+          country: "United States",
+          organization: "Test School",
+          healthHackLevel: "m1",
+          boothName: "Test Booth",
+          ...(role === "booth" ? { boothId: String(booth.id), eventCode } : {}),
+        };
       const invalid = await register({ ...fields, phone: "   " });
       assert.equal(invalid.statusCode, 400);
       const response = await register(fields);
@@ -67,7 +86,12 @@ test("new roles survive register/login/SSO/profile", {
       assert.equal(created.user.studentLevel, null);
       assert.equal(created.user.healthHackLevel, role === "healthhack" ? "m1" : null);
       assert.equal(created.user.boothName, role === "booth" ? "Test Booth" : null);
-      const duplicate = await register({ ...fields, accountType: role === "booth" ? "healthhack" : "booth" });
+        const duplicate = await register({
+          ...fields,
+          boothId: String(booth.id),
+          eventCode,
+          accountType: role === "booth" ? "healthhack" : "booth",
+        });
       assert.equal(duplicate.statusCode, 409);
       const login = await app.inject({ method: "POST", url: "/auth/login", payload: { email: fields.email, password: fields.password } });
       assert.equal(login.statusCode, 200);
@@ -97,16 +121,19 @@ test("new roles survive register/login/SSO/profile", {
         assert.equal(member.healthHackLevel, created.user.healthHackLevel);
         assert.equal(member.boothName, created.user.boothName);
       }
-    }
+      }
     const student = await register({ firstName: "Student", lastName: "Test", email: `${prefix}student@example.invalid`, password: "test1234", accountType: "undergraduateStudent" });
     assert.equal(student.statusCode, 201);
     assert.equal(student.json().user.status, "pending_approval");
     const pending = await app.inject({ method: "POST", url: "/auth/login", payload: { email: `${prefix}student@example.invalid`, password: "test1234" } });
     assert.equal(pending.statusCode, 403);
     assert.equal(pending.json().error, "ACCOUNT_PENDING");
-  } finally {
+    } finally {
     await app.close();
     await sql`DELETE FROM sso_tokens WHERE user_id IN (SELECT id FROM users WHERE email LIKE ${prefix + '%'})`;
+      await sql`DELETE FROM booth_members WHERE user_id IN (SELECT id FROM users WHERE email LIKE ${prefix + "%"})`;
+      await sql`DELETE FROM booths WHERE event_id IN (SELECT id FROM events WHERE event_code=${eventCode})`;
+      await sql`DELETE FROM events WHERE event_code=${eventCode}`;
     await sql`DELETE FROM users WHERE email LIKE ${prefix + '%'}`;
     await sql.end({ timeout: 2 });
     const { closeDatabase } = await import("../../database/index.js");
@@ -115,5 +142,6 @@ test("new roles survive register/login/SSO/profile", {
       if (original[key] === undefined) delete process.env[key];
       else process.env[key] = original[key];
     }
-  }
-});
+    }
+  },
+);

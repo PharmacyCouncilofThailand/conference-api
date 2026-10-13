@@ -13,6 +13,10 @@ import { eq, and, sql, desc, count } from "drizzle-orm";
 import { freeRegistrationSchema } from "../../schemas/freeRegistration.schema.js";
 import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
 import { resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
+import {
+  lockBoothMembers,
+  recordBoothTicketConfirmation,
+} from "../../modules/booths/registration.service.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -349,6 +353,7 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
 
         // 6. Create registration + sessions in transaction
         const result = await db.transaction(async (tx) => {
+          const [boothMember] = await lockBoothMembers(tx, eventId, [userId]);
           // Insert registration (no orderId — this is a free registration)
           const regCode = generateRegCode();
           const [newReg] = await tx.insert(registrations).values({
@@ -362,6 +367,8 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
             status: "confirmed",
             source: "free",
           }).returning();
+          if (boothMember)
+            await recordBoothTicketConfirmation(tx, boothMember, newReg.id);
 
           // Determine sessions to link (from ticket_sessions junction)
           let sessionIdsToLink: number[] = [];
@@ -539,6 +546,6 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
           error: "Failed to process free registration",
         });
       }
-    }
+    },
   );
 }

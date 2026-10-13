@@ -19,6 +19,8 @@ import {
 import { eq, desc, ilike, or, count, and, SQL, inArray, exists, sql } from "drizzle-orm";
 import { z } from "zod";
 import { appendTrackingAuditEvent } from "../../modules/abstracts/tracking.repository.js";
+import { assertAccountCanBeDeleted } from "../../modules/booths/registration.service.js";
+import { BoothError } from "../../modules/booths/policy.js";
 
 // Query schema for listing members
 const listMembersQuerySchema = z.object({
@@ -364,6 +366,7 @@ export default async function (fastify: FastifyInstance) {
       // Execute cleanup in one transaction. Abstracts are archived/unlinked,
       // never deleted, so issued tracking IDs remain reserved forever.
       const archivedAbstractCount = await db.transaction(async (tx) => {
+        await assertAccountCanBeDeleted(tx, userId);
         // 1. Verification rejection history
         await tx.delete(verificationRejectionHistory).where(eq(verificationRejectionHistory.userId, userId));
 
@@ -471,6 +474,10 @@ export default async function (fastify: FastifyInstance) {
         identifiersPreserved: true,
       });
     } catch (error) {
+      if (error instanceof BoothError)
+        return reply
+          .code(error.statusCode)
+          .send({ success: false, error: error.message, code: error.code });
       fastify.log.error(error);
       return reply.status(500).send({
         success: false,

@@ -12,6 +12,10 @@ import {
   users,
 } from "../../database/schema.js";
 import type { PaymentLogger, PaymentProvider, PaymentTransaction } from "./types.js";
+import {
+  lockBoothMembers,
+  recordBoothTicketConfirmation,
+} from "../booths/registration.service.js";
 
 export interface SuccessfulPaymentInput {
   orderId: number;
@@ -29,6 +33,7 @@ export interface SuccessfulPaymentResult {
   order: typeof orders.$inferSelect & { status: string };
   user: { email: string; firstName: string; lastName: string };
   regCode: string;
+  registrationId: number;
 }
 
 export class RegistrationSettlementError extends Error {
@@ -48,9 +53,15 @@ function parseOptionalSessionIdsFromDetails(details: unknown): number[] {
   if (!details || typeof details !== "object" || Array.isArray(details)) return [];
   const raw = (details as Record<string, unknown>).optionalSessionIds;
   if (!Array.isArray(raw)) return [];
-  return [...new Set(raw
-    .map((value) => (typeof value === "number" ? value : parseInt(String(value), 10)))
-    .filter((value) => Number.isInteger(value) && value > 0))];
+  return [
+    ...new Set(
+      raw
+        .map((value) =>
+          typeof value === "number" ? value : parseInt(String(value), 10),
+        )
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  ];
 }
 
 async function findConfirmedRegistrationForEvent(
@@ -149,11 +160,20 @@ export async function processSuccessfulPaymentInTransaction(
     quantity: orderItems.quantity,
   }).from(orderItems).where(eq(orderItems.orderId, input.orderId));
 
+  const orderEventId = await resolveOrderEventId(tx, order);
+  if (!orderEventId)
+    throw new RegistrationSettlementError("ORDER_EVENT_UNRESOLVED", "Unable to resolve event scope for order");
+  const primaryItem = items.find((item) => item.itemType === "ticket");
+  const [boothMember] = primaryItem
+    ? await lockBoothMembers(tx, orderEventId, [order.userId])
+    : [];
+
   const existingRegCount = await tx.select({ count: count() })
     .from(registrations)
     .where(eq(registrations.orderId, input.orderId));
   if (existingRegCount[0].count > 0) {
-    const [existingReg] = await tx.select({ regCode: registrations.regCode })
+    const [existingReg] = await tx
+      .select({ id: registrations.id, regCode: registrations.regCode })
       .from(registrations)
       .where(eq(registrations.orderId, input.orderId))
       .limit(1);
@@ -164,19 +184,20 @@ export async function processSuccessfulPaymentInTransaction(
       await tx.update(orders).set({ status: "paid" }).where(eq(orders.id, input.orderId));
     }
     logger.info(`Registration already exists for order ${input.orderId}, skipping creation`);
-    return { order: { ...order, status: "paid" }, user, regCode: existingReg.regCode };
-  }
-
-  const orderEventId = await resolveOrderEventId(tx, order);
-  if (!orderEventId) {
-    throw new RegistrationSettlementError("ORDER_EVENT_UNRESOLVED", "Unable to resolve event scope for order");
+    if (boothMember)
+      await recordBoothTicketConfirmation(tx, boothMember, existingReg.id);
+    return {
+      order: { ...order, status: "paid" },
+      user,
+      regCode: existingReg.regCode,
+      registrationId: existingReg.id,
+    };
   }
   if (!order.eventId) {
     logger.warn?.(`Order ${input.orderId} is missing eventId; using derived eventId=${orderEventId}`);
   }
 
   const optionalSessionIds = parseOptionalSessionIdsFromDetails(input.paymentDetails);
-  const primaryItem = items.find((item) => item.itemType === "ticket");
   const isAddonOnlyOrder = !primaryItem;
 
   let registration: { id: number };
@@ -371,7 +392,14 @@ export async function processSuccessfulPaymentInTransaction(
   await tx.update(orders).set({ status: "paid" }).where(eq(orders.id, input.orderId));
   logger.info(`${isAddonOnlyOrder ? "Addon-only" : "Created 1 registration"} + ${totalSessionLinks} session links + updated soldCount for order ${input.orderId}`);
 
-  return { order: { ...order, status: "paid" }, user, regCode };
+  if (boothMember)
+    await recordBoothTicketConfirmation(tx, boothMember, registration.id);
+  return {
+    order: { ...order, status: "paid" },
+    user,
+    regCode,
+    registrationId: registration.id,
+  };
 }
 
 export async function processSuccessfulPayment(
