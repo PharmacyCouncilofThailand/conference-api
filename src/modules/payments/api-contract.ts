@@ -51,3 +51,14 @@ export function promoReservationConflictResponse(error: PromoConflictLike) {
     },
   };
 }
+
+export function paymentMethodRequiredResponse() {
+  return {
+    statusCode: 409 as const,
+    body: {
+      success: false as const,
+      code: 'PAYMENT_METHOD_REQUIRED' as const,
+      error: 'Checkout total requires payment; refresh pricing and choose a payment method',
+    },
+  };
+}

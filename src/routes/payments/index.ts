@@ -66,7 +66,7 @@ import { validatePromoCode, settlePromoUsageSuccess, cancelPromoUsage } from "..
 import { processSuccessfulPayment as processSuccessfulPaymentService } from "../../modules/payments/registration-settlement.service.js";
 import { completeFreeCheckout, FreeCheckoutError } from "../../modules/payments/free-checkout.service.js";
 import { PromoReservationConflict, reservePromoUsageLocked } from "../../modules/payments/promo-usage.service.js";
-import { freeCheckoutResponse, promoReservationConflictResponse } from "../../modules/payments/api-contract.js";
+import { freeCheckoutResponse, promoReservationConflictResponse, paymentMethodRequiredResponse } from "../../modules/payments/api-contract.js";
 import { resolvePris2026Pricing } from "../../modules/pris2026/pricing-policy.js";
 import { authorizePrimaryTicketCandidates } from "../../modules/payments/primary-ticket-authorization.js";
 
@@ -1700,6 +1700,13 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
       const { eventId, packageId, addOnIds, currency, paymentMethod, promoCode } = parsed.data;
       const userId = request.user.id;
       const isAddonOnly = !packageId || packageId === "";
+      if (isAddonOnly && addOnIds.length === 0) {
+        return reply.status(400).send({
+          success: false,
+          code: 'EMPTY_CHECKOUT',
+          error: 'Please select a package or at least one add-on.',
+        });
+      }
 
       try {
         const [eventState] = await db
@@ -1770,11 +1777,16 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
         let subtotal = primaryTicket ? Number(primaryTicket.price) : 0;
         const resolvedAddOns: ResolvedTicket[] = [];
         for (const addOnId of addOnIds) {
-          const addon = await resolveTicketId(addOnId, eventId, currency, "addon");
-          if (addon) {
-            subtotal += Number(addon.price);
-            resolvedAddOns.push(addon);
+          const addon = await resolveTicketId(addOnId, eventId, currency, 'addon');
+          if (!addon) {
+            return reply.status(400).send({
+              success: false,
+              code: 'EVENT_TICKET_MISMATCH',
+              error: `Add-on "${addOnId}" is not available for event ${eventId}`,
+            });
           }
+          subtotal += Number(addon.price);
+          resolvedAddOns.push(addon);
         }
 
         // Collect all selected ticket type IDs for rule-set validation
@@ -2317,15 +2329,15 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
               workshopSessionId: workshopSessionId || null,
               optionalSessionIds: validatedOptionalSessionIds,
               taxInvoice: {
-                needTaxInvoice: taxInvoice.needTaxInvoice,
-                taxName: taxInvoice.taxName ?? null,
-                taxId: taxInvoice.taxId ?? null,
-                taxAddress: taxInvoice.taxAddress ?? null,
-                taxSubDistrict: taxInvoice.taxSubDistrict ?? null,
-                taxDistrict: taxInvoice.taxDistrict ?? null,
-                taxProvince: taxInvoice.taxProvince ?? null,
-                taxPostalCode: taxInvoice.taxPostalCode ?? null,
-                taxFullAddress: taxInvoice.taxFullAddress ?? null,
+                needTaxInvoice: false,
+                taxName: null,
+                taxId: null,
+                taxAddress: null,
+                taxSubDistrict: null,
+                taxDistrict: null,
+                taxProvince: null,
+                taxPostalCode: null,
+                taxFullAddress: null,
               },
             });
 
@@ -2365,13 +2377,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
                 0,
                 currency,
                 receiptDownloadUrl,
-                taxInvoice.needTaxInvoice
-                  ? {
-                      taxName: taxInvoice.taxName || "",
-                      taxId: taxInvoice.taxId || "",
-                      taxFullAddress: taxInvoice.taxFullAddress || "",
-                    }
-                  : undefined,
+                undefined,
                 freeResult.regCode,
                 {
                   discount: freeResult.discountAmount,
@@ -2406,6 +2412,11 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
             }
             throw error;
           }
+        }
+
+        if (!paymentMethod) {
+          const conflict = paymentMethodRequiredResponse();
+          return reply.status(conflict.statusCode).send(conflict.body);
         }
 
         // 7. Create Order record (paid flow only, chargeAmount > 0)
