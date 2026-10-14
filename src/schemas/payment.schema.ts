@@ -5,7 +5,7 @@ export const createPaymentIntentSchema = z.object({
   packageId: z.string().optional().default(""),
   addOnIds: z.array(z.string()).optional().default([]),
   currency: z.enum(["THB", "USD"]),
-  paymentMethod: z.enum(["qr", "card"]).optional().default("card"),
+  paymentMethod: z.enum(["qr", "card"]).optional(),
   promoCode: z.string().optional(),
   workshopSessionId: z.number().int().positive().optional(),
   optionalSessionIds: z.array(z.coerce.number().int().positive()).optional().default([]),

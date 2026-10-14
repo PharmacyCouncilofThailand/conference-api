@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { freeCheckoutResponse, promoReservationConflictResponse } from "./api-contract.js";
+import { freeCheckoutResponse, promoReservationConflictResponse, paymentMethodRequiredResponse } from "./api-contract.js";
 
 test("free checkout response keeps the stable zero-total API contract", () => {
   const response = freeCheckoutResponse({
@@ -51,5 +51,16 @@ test("promo reservation conflict keeps HTTP 409 and stable error body", () => {
     success: false,
     code: "PROMO_USER_LIMIT_REACHED",
     error: "You have already used this promo code",
+  });
+});
+
+test('missing method conflict preserves the existing error envelope', () => {
+  assert.deepEqual(paymentMethodRequiredResponse(), {
+    statusCode: 409,
+    body: {
+      success: false,
+      code: 'PAYMENT_METHOD_REQUIRED',
+      error: 'Checkout total requires payment; refresh pricing and choose a payment method',
+    },
   });
 });
