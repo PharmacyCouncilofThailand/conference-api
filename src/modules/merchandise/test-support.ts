@@ -10,7 +10,41 @@ import postgres from "postgres";
 import * as schemaTables from "../../database/schema.js";
 import { validatePaymentsTestDatabaseUrl } from "../payments/test-database.js";
 import type { MerchDb } from "./db.js";
+import type { CreateQrInput, CreateQrResult, InquiryResult, PaysoClient } from "./payments/payso-client.js";
+import { buildPromptPayPayload } from "./payments/qr-fixture.js";
 import type { MerchRouteOptions } from "./types.js";
+
+/** Scriptable provider fake; defaults: createQr issues a valid payload for the amount, inquire returns not_found. */
+export function fakePayso(
+  script: Partial<{
+    createQr: (input: CreateQrInput) => CreateQrResult | Promise<CreateQrResult>;
+    inquire: (referenceNo: string, amountMinor: number) => InquiryResult | Promise<InquiryResult>;
+  }> = {},
+): PaysoClient & { calls: { createQr: CreateQrInput[]; inquire: string[] } } {
+  const calls = { createQr: [] as CreateQrInput[], inquire: [] as string[] };
+  return {
+    calls,
+    async createQr(input) {
+      calls.createQr.push(input);
+      if (script.createQr) return script.createQr(input);
+      const bangkok = (ms: number) =>
+        new Date(ms + 7 * 3600_000).toISOString().slice(0, 19).replace("T", " ");
+      const created = Date.now();
+      return {
+        kind: "issued",
+        providerOrderNo: `PO${input.referenceNo}`,
+        createdRaw: bangkok(created),
+        expiresRaw: bangkok(created + 10 * 60_000),
+        payload: buildPromptPayPayload(input.amountMinor),
+      };
+    },
+    async inquire(referenceNo, amountMinor) {
+      calls.inquire.push(referenceNo);
+      if (script.inquire) return script.inquire(referenceNo, amountMinor);
+      return { kind: "not_found" };
+    },
+  };
+}
 
 export type MerchTestDb = {
   db: MerchDb;
