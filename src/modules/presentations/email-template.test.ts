@@ -14,6 +14,49 @@ const payload: MailPayload = {
 };
 const requestId = '11111111-1111-4111-8111-111111111111';
 
+test('all four student email kinds identify the group, retain Oral PDF rules and use the student ten-minute slot', () => {
+ for(const kind of ['initial','reminder','revision','receipt'] as const){
+  const input={...payload,kind,participantGroup:'student' as const,presentationType:'oral' as const,
+   revisionRequestId:kind==='revision'?requestId:null,revisionDetails:'Fix <title>',upload:kind==='receipt'?{
+    id:requestId,version:1,fileName:'student.pdf',storedFileName:'student.pdf',mimeType:'application/pdf' as const,
+    sizeBytes:100,fileUrl:'https://example.invalid/student.pdf',storageProvider:'drive' as const,driveFileId:'file',
+    receivedAt:'2026-10-09T07:12:34Z',revisionRequestId:null}:null};
+  const rendered=renderPresentationEmail(input);
+  assert.ok(rendered.subject.includes('Oral (ผลงานนักศึกษา)'));
+  assert.ok(rendered.html.includes('Oral (ผลงานนักศึกษา)'));
+  assert.equal(rendered.templateVersion,`presentation-${kind}-student-v1`);
+  assert.ok(rendered.html.includes('abstractId=501'));
+  assert.ok(rendered.html.includes('&lt;script&gt;x&lt;/script&gt;'));
+  assert.equal(rendered.html.includes('ซักถามไม่เกิน 5 นาที'),false);
+  if(kind!=='receipt'){
+   assert.ok(rendered.html.includes('เวลานำเสนอไม่เกิน 10 นาที ตามช่วงเวลาในประกาศผลงานนักศึกษา'));
+   assert.ok(rendered.html.includes('ส่งไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน 100 MB'));
+   assert.ok(rendered.html.includes('Presentation%20Oral%20Template.zip'));
+  }
+ }
+ assert.deepEqual(renderPresentationEmail({...payload,participantGroup:'general'} as MailPayload),renderPresentationEmail(payload));
+});
+
+test('mail payload reads student group from the active announcement for every kind and preserves legacy general shape',async()=>{
+ const dialect=new PgDialect();
+ for(const group of [null,'general','student'] as const){
+  for(const kind of ['initial','reminder','revision','receipt'] as const){
+   const queries:string[]=[];
+   const tx={execute:async(statement:SQL)=>{
+    const {sql}=dialect.sqlToQuery(statement);queries.push(sql);
+    if(sql.includes('FROM presentation_targets t JOIN abstracts'))return [{...payload,participantGroup:group}];
+    if(sql.includes('SELECT source_row,verified_fingerprint'))return [];
+    throw Error('Unexpected query: '+sql);
+   }} as unknown as Pick<PresentationDatabase,'execute'>;
+   const result=await buildMailPayload(tx,requestId,kind);
+   if(group==='student')assert.equal(result.participantGroup,'student');
+   else assert.equal(Object.hasOwn(result,'participantGroup'),false);
+   assert.ok(queries[0].includes("pa.source_row->>'participantGroup'='student'"));
+   assert.ok(queries[0].includes('pa.target_id=t.id AND pa.present'));
+  }
+ }
+});
+
 test('all four emails select trusted type wording, requirements and Template for all three types', () => {
   for (const type of ['oral', 'poster', 'highlighted-poster'] as const) {
     const label = type === 'oral' ? 'Oral' : type === 'highlighted-poster' ? 'Highlighted Poster' : 'Poster';
@@ -35,7 +78,7 @@ test('all four emails select trusted type wording, requirements and Template for
       const oralRules = ['จัดทำตามรูปแบบ Header และ Footer ในไฟล์แม่แบบ (Template)',
         'เนื้อหาไม่เกิน 10 สไลด์ และใช้รูปภาพประกอบ 1–2 รูป',
         'เวลานำเสนอไม่เกิน 10 นาที และซักถามไม่เกิน 5 นาที',
-        'ส่งไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน 50 MB และไม่ตั้งรหัสผ่าน'];
+        'ส่งไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน 100 MB และไม่ตั้งรหัสผ่าน'];
       for (const rule of oralRules) assert.equal(result.html.includes(rule), type === 'oral' && kind !== 'receipt');
       if (type === 'oral' && kind !== 'receipt') {
         const positions = oralRules.map(rule => result.html.indexOf(rule));
@@ -52,7 +95,7 @@ test('all four emails select trusted type wording, requirements and Template for
         assert.ok(result.html.includes('&lt;slides&gt;.pdf')); assert.ok(result.html.includes('14.12.34'));
         assert.equal(result.html.includes('Template'), false); assert.equal(result.html.includes('PRIS_'), false);
       } else {
-        assert.ok(result.html.includes(type === 'oral' ? 'ส่งไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน 50 MB' : 'ส่งไฟล์ PNG หนึ่งภาพ หรือ PDF หนึ่งหน้า จำนวนหนึ่งไฟล์ ขนาดไม่เกิน 30 MB'));
+        assert.ok(result.html.includes(type === 'oral' ? 'ส่งไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน 100 MB' : 'ส่งไฟล์ PNG หนึ่งภาพ หรือ PDF หนึ่งหน้า จำนวนหนึ่งไฟล์ ขนาดไม่เกิน 30 MB'));
         if (type === 'oral') assert.equal(result.html.includes('อย่างน้อย 2 หน้า'), false);
         assert.ok(result.html.includes(`Presentation%20${type === 'oral' ? 'Oral' : 'Poster'}%20Template.zip`));
         assert.ok(result.html.includes('20 ตุลาคม 2569 เวลา 23.59.59'));

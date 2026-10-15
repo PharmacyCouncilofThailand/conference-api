@@ -33,8 +33,10 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
   if (!z.string().email().safeParse(p.recipient).success) throw Error('PRESENTATION_EMAIL_INVALID');
   if (!['oral', 'poster', 'highlighted-poster'].includes(p.presentationType)) throw Error('PRESENTATION_TYPE_INVALID');
   const oral = p.presentationType === 'oral';
+  const student = p.participantGroup === 'student';
   const maxMB = maxPresentationBytes(oral ? 'oral' : 'poster') / (1024 * 1024);
-  const type = oral ? 'Oral' : p.presentationType === 'highlighted-poster' ? 'Highlighted Poster' : 'Poster';
+  const type = (oral ? 'Oral' : p.presentationType === 'highlighted-poster' ? 'Highlighted Poster' : 'Poster') + (student ? ' (ผลงานนักศึกษา)' : '');
+  const templateVersion = student ? `presentation-${p.kind}-student-v1` : `presentation-${p.kind}-v1`;
   const template = oral ? 'Oral' : 'Poster';
   const preparationNotice = p.kind === 'initial' || p.kind === 'reminder';
   if (p.kind !== 'receipt') {
@@ -50,14 +52,14 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
       <li><strong>ชื่อผลงาน:</strong> ${escape(p.title)}</li>${p.kind === 'revision' ? `\n      <li><strong>รายละเอียดการแก้ไข:</strong> ${escape(p.revisionDetails ?? '').replace(/\r?\n/g, '<br>')}</li>` : ''}
       <li><strong>กำหนดส่ง:</strong> วันที่ ${escape(dateTime(p.closesAt, 'th', -1000).replace(/:/g, '.'))} น. (เวลาประเทศไทย)</li>
     </ul>
-    <p><strong>${preparationNotice ? oral ? 'ข้อกำหนดการจัดทำไฟล์นำเสนอ Oral' : 'ข้อกำหนดการจัดทำโปสเตอร์' : 'ข้อกำหนดของไฟล์'}</strong></p>
+    <p><strong>${preparationNotice ? oral ? `ข้อกำหนดการจัดทำไฟล์นำเสนอ ${type}` : 'ข้อกำหนดการจัดทำโปสเตอร์' : 'ข้อกำหนดของไฟล์'}</strong></p>
     <ul>
       ${preparationNotice && !oral ? `<li>ให้จัดทำตามรูปแบบและส่วนหัวกระดาษ (Header) ที่กำหนดในไฟล์แม่แบบ (Template) โดยสามารถดูตัวอย่างได้จากไฟล์ดังกล่าว</li>
       <li>โปสเตอร์ต้องมีอัตราส่วน 9:16 (แนวตั้ง) หรือขนาด 18 × 32 เซนติเมตร และไม่เว้นขอบกระดาษ (ไม่มีขอบขาว)</li>
       <li>สามารถใช้รูปภาพประกอบได้ไม่เกิน 3 รูป</li>
       <li>ส่งไฟล์ PNG หนึ่งภาพ หรือ PDF หนึ่งหน้า จำนวนหนึ่งไฟล์ ขนาดไม่เกิน ${maxMB} MB</li>` : oral ? `<li>จัดทำตามรูปแบบ Header และ Footer ในไฟล์แม่แบบ (Template)</li>
       <li>เนื้อหาไม่เกิน 10 สไลด์ และใช้รูปภาพประกอบ 1–2 รูป</li>
-      <li>เวลานำเสนอไม่เกิน 10 นาที และซักถามไม่เกิน 5 นาที</li>
+      <li>${student ? 'เวลานำเสนอไม่เกิน 10 นาที ตามช่วงเวลาในประกาศผลงานนักศึกษา' : 'เวลานำเสนอไม่เกิน 10 นาที และซักถามไม่เกิน 5 นาที'}</li>
       <li>ส่งไฟล์ PDF หนึ่งไฟล์ ขนาดไม่เกิน ${maxMB} MB และไม่ตั้งรหัสผ่าน</li>` : `<li>ส่งไฟล์ PNG หนึ่งภาพ หรือ PDF หนึ่งหน้า จำนวนหนึ่งไฟล์ ขนาดไม่เกิน ${maxMB} MB</li>`}
       ${!oral ? '<li>ไฟล์ PDF ต้องไม่ตั้งรหัสผ่าน</li>' : ''}
     </ul>
@@ -77,7 +79,7 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
     <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
   </body>
 </html>`;
-    return { subject: `${p.kind === 'revision' ? 'แจ้งขอแก้ไข' : p.kind === 'reminder' ? 'เตือนส่ง' : 'แจ้งส่ง'}ไฟล์นำเสนอ ${type} รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion: `presentation-${p.kind}-v1` };
+    return { subject: `${p.kind === 'revision' ? 'แจ้งขอแก้ไข' : p.kind === 'reminder' ? 'เตือนส่ง' : 'แจ้งส่ง'}ไฟล์นำเสนอ ${type} รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion };
   }
   if (!p.upload) throw Error('PRESENTATION_RECEIPT_UPLOAD_MISSING');
   const href = escape(buildSubmissionUrl(p.websiteOrigin, p.abstractId, p.revisionRequestId ?? p.upload.revisionRequestId ?? undefined));
@@ -103,5 +105,5 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
     <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
   </body>
 </html>`;
-  return { subject: `แจ้งการได้รับไฟล์นำเสนอ ${type} รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion: 'presentation-receipt-v1' };
+  return { subject: `แจ้งการได้รับไฟล์นำเสนอ ${type} รหัส ${p.trackingId} ในงาน PRIS 2026`, html, templateVersion };
 }

@@ -4,7 +4,8 @@ import type { Announcement } from './types.js';
 export function publicAnnouncements(): Announcement[] {
   return loadPresentationAnnouncements().map(r => ({ id: r.id, sequence: r.sequence, trackingId: r.trackingId,
     title: r.title, presentationType: r.presentationType, categoryId: r.categoryId,
-    categoryName: r.categoryName, submitterName: r.submitterName, affiliation: r.affiliation, round: r.round }));
+    categoryName: r.categoryName, submitterName: r.submitterName, affiliation: r.affiliation, round: r.round,
+    ...(r.participantGroup ? { participantGroup: r.participantGroup } : {}) }));
 }
 
 import { ApiError } from '../../errors/ApiError.js';
@@ -108,6 +109,7 @@ export async function readPresentationList(database:PresentationDatabase,actor:P
  if(!setting)fail('PRESENTATION_RECONCILE_REQUIRED',503);
  const all=await readRosterRows(database,eventId,now,grants.manage?null:grants.types);const term=normalizeSubmitterName(query.search??'').toLowerCase();
  const filtered=all.filter(r=>((actor.role==='admin'&&!query.received)||!!r.currentUpload)
+  &&(!query.participantGroup||(r.announcement.participantGroup??'general')===query.participantGroup)
   &&(!query.round||String(r.announcement.round)===query.round)&&(!query.presentationType||r.announcement.presentationType===query.presentationType)
   &&(actor.role!=='admin'||!query.matchState||r.matchState===query.matchState)&&(!query.status||r.progress===query.status)
   &&(!term||normalizeSubmitterName([r.announcement.title,r.announcement.submitterName,r.announcement.trackingId,r.submitterEmail].filter(Boolean).join(' ')).toLowerCase().includes(term)));
