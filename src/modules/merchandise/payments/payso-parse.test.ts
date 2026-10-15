@@ -226,6 +226,34 @@ test("classifyInquiry HTTP 500 and invalid JSON are errors", () => {
   assert.deepEqual(inq("{not json"), { kind: "error", code: "INQUIRY_PARSE_ERROR" });
 });
 
+test("classifyInquiry fails closed on unexpected 2xx bodies", () => {
+  for (const b of ['{"message":"x"}', '"x"', "true", "[{}]", "[1]"]) {
+    assert.deepEqual(inq(b), { kind: "error", code: "INQUIRY_UNEXPECTED_RESPONSE" }, b);
+  }
+});
+test("classifyInquiry test markers are paid only in development or test", () => {
+  for (const env of ["", "Production", "prod", "staging"]) {
+    const r = inq([rec({ Status: "TC" })], { ...ctx, nodeEnv: env });
+    assert.equal(r.kind === "mismatch" && r.reason, "test_status_in_production", env);
+  }
+  assert.equal(inq([rec({ Status: "TC" })], { ...ctx, nodeEnv: " Test " }).kind, "paid");
+  const named = inq([rec({ Status: "CP", StatusName: "Test Complete" })]);
+  assert.equal(named.kind === "mismatch" && named.reason, "test_status_in_production");
+  assert.equal(inq([rec({ Status: "CP", StatusName: "TEST COMPLETED" })], { ...ctx, nodeEnv: "test" }).kind, "paid");
+});
+test("classifyInquiry considers all matching records", () => {
+  assert.equal(inq([rec({ Status: "PE" }), rec()]).kind, "paid");
+  const dup = inq([rec({ OrderNo: "1" }), rec({ OrderNo: "2" })]);
+  assert.equal(dup.kind === "mismatch" && dup.reason, "duplicate_payment");
+  assert.equal(inq([rec(), rec()]).kind, "paid");
+  const bad = inq([rec({ Status: "PE" }), rec({ Total: 1 })]);
+  assert.equal(bad.kind === "mismatch" && bad.reason, "amount_mismatch");
+});
+test("classifyInquiry empty PaidDate falls back to PaymentDate", () => {
+  const r = inq([rec({ PaidDate: "", PaymentDate: "2026-10-16 10:00:00" })]);
+  assert.equal(r.kind === "paid" && r.evidence.paidAt?.toISOString(), "2026-10-16T03:00:00.000Z");
+});
+
 test("computeExpiresAt uses provider expiry when close to the cap", () => {
   const r = computeExpiresAt({
     createdRaw: "2026-10-14 13:40:00",

@@ -1,5 +1,5 @@
 import { parseProviderTotal } from "../money.js";
-import type { CreateQrInput, CreateQrResult, InquiryEvidence, InquiryResult } from "./payso-client.js";
+import type { CreateQrInput, CreateQrResult, InquiryEvidence, InquiryResult, ReviewReason } from "./payso-client.js";
 
 const MINUTE_MS = 60_000;
 const QR_LIFETIME_MS = 10 * MINUTE_MS;
@@ -120,27 +120,17 @@ export function classifyCreateQr(status: number, body: string, input: CreateQrIn
   };
 }
 
-export function classifyInquiry(
-  status: number,
-  body: string,
-  ctx: { referenceNo: string; amountMinor: number; merchantId: string; nodeEnv: string },
-): InquiryResult {
-  if (status < 200 || status >= 300) return { kind: "error", code: "INQUIRY_HTTP_ERROR" };
-  if (body.trim() === "") return { kind: "not_found" };
-  let json: unknown;
-  try {
-    json = JSON.parse(body);
-  } catch {
-    return { kind: "error", code: "INQUIRY_PARSE_ERROR" };
-  }
-  const candidates: unknown[] = Array.isArray(json) ? json : [json];
-  const record = candidates.find(
-    (c): c is Record<string, unknown> =>
-      isRecord(c) && (typeof c.ReferenceNo === "string" || typeof c.ReferenceNo === "number") && String(c.ReferenceNo) === ctx.referenceNo,
-  );
-  if (!record) return { kind: "not_found" };
+function isTestMarker(evidence: InquiryEvidence): boolean {
+  const name = evidence.statusName.trim().toUpperCase();
+  return evidence.status === "TC" || name === "TEST COMPLETE" || name === "TEST COMPLETED";
+}
 
-  const paidAt = parseBangkokTime(text(record.PaidDate) ?? text(record.PaymentDate));
+function classifyRecord(
+  record: Record<string, unknown>,
+  ctx: { referenceNo: string; amountMinor: number; merchantId: string; nodeEnv: string },
+): { verdict: "paid" | "mismatch" | "not_paid"; reason?: ReviewReason; evidence: InquiryEvidence } {
+  const paidRaw = text(record.PaidDate);
+  const paidAt = parseBangkokTime(paidRaw ? paidRaw : text(record.PaymentDate));
   const evidence: InquiryEvidence = {
     referenceNo: ctx.referenceNo,
     orderNo: text(record.OrderNo),
@@ -155,20 +145,58 @@ export function classifyInquiry(
       .slice(0, 50)
       .map((k) => k.slice(0, 64)),
   };
-
-  if (evidence.merchantId !== ctx.merchantId) return { kind: "mismatch", reason: "merchant_mismatch", evidence };
+  if (evidence.merchantId !== ctx.merchantId) return { verdict: "mismatch", reason: "merchant_mismatch", evidence };
   if (!CURRENCY_OK.has(evidence.currencyCode.toUpperCase())) {
-    return { kind: "mismatch", reason: "currency_mismatch", evidence };
+    return { verdict: "mismatch", reason: "currency_mismatch", evidence };
   }
-  if (evidence.totalMinor !== ctx.amountMinor) return { kind: "mismatch", reason: "amount_mismatch", evidence };
-  if (PAID_STATUSES.has(evidence.status)) return { kind: "paid", evidence };
-  if (evidence.status === "TC") {
-    return ctx.nodeEnv === "production"
-      ? { kind: "mismatch", reason: "test_status_in_production", evidence }
-      : { kind: "paid", evidence };
-  }
-  return { kind: "not_paid_status", evidence };
+  if (evidence.totalMinor !== ctx.amountMinor) return { verdict: "mismatch", reason: "amount_mismatch", evidence };
+  const testMarker = isTestMarker(evidence);
+  const env = ctx.nodeEnv.trim().toLowerCase();
+  const testAllowed = env === "development" || env === "test";
+  if (testMarker && !testAllowed) return { verdict: "mismatch", reason: "test_status_in_production", evidence };
+  if (PAID_STATUSES.has(evidence.status) || testMarker) return { verdict: "paid", evidence };
+  return { verdict: "not_paid", evidence };
 }
+
+export function classifyInquiry(
+  status: number,
+  body: string,
+  ctx: { referenceNo: string; amountMinor: number; merchantId: string; nodeEnv: string },
+): InquiryResult {
+  if (status < 200 || status >= 300) return { kind: "error", code: "INQUIRY_HTTP_ERROR" };
+  if (body.trim() === "") return { kind: "not_found" };
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    return { kind: "error", code: "INQUIRY_PARSE_ERROR" };
+  }
+  if (json === null) return { kind: "not_found" };
+  const candidates: unknown[] = Array.isArray(json) ? json : [json];
+  if (candidates.length === 0) return { kind: "not_found" };
+  const records: Record<string, unknown>[] = [];
+  for (const c of candidates) {
+    if (!isRecord(c) || (typeof c.ReferenceNo !== "string" && typeof c.ReferenceNo !== "number")) {
+      return { kind: "error", code: "INQUIRY_UNEXPECTED_RESPONSE" };
+    }
+    records.push(c);
+  }
+  const matches = records.filter((r) => String(r.ReferenceNo) === ctx.referenceNo).map((r) => classifyRecord(r, ctx));
+  if (matches.length === 0) return { kind: "not_found" };
+
+  const paid = new Map<string, InquiryEvidence>();
+  for (const m of matches) {
+    if (m.verdict === "paid") paid.set(`${m.evidence.orderNo ?? ""}|${m.evidence.transactionId ?? ""}`, m.evidence);
+  }
+  if (paid.size === 1) return { kind: "paid", evidence: [...paid.values()][0]! };
+  if (paid.size > 1) {
+    return { kind: "mismatch", reason: "duplicate_payment", evidence: [...paid.values()][0]! };
+  }
+  const bad = matches.find((m) => m.verdict === "mismatch");
+  if (bad) return { kind: "mismatch", reason: bad.reason!, evidence: bad.evidence };
+  return { kind: "not_paid_status", evidence: matches[0]!.evidence };
+}
+
 
 const POSTBACK_KEEP = new Set([
   "refno",

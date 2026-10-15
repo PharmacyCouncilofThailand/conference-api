@@ -25,7 +25,7 @@ export function readPaysoConfig(env: NodeJS.ProcessEnv = process.env): PaysoConf
   const qrPayloadKey = get("MERCHANDISE_QR_PAYLOAD_KEY");
   if (!merchantId || !authKey || !apiKey || !secretKey || !qrPayloadKey) return null;
   if (!/^\d{8}$/.test(merchantId)) return null;
-  return { merchantId, authKey, apiKey, secretKey, qrPayloadKey, nodeEnv: get("NODE_ENV") || "development" };
+  return { merchantId, authKey, apiKey, secretKey, qrPayloadKey, nodeEnv: get("NODE_ENV") };
 }
 
 export type PaysoTransport = (req: {
