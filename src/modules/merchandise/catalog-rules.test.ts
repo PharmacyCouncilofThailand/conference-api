@@ -176,3 +176,49 @@ test("validateSelection bundle", () => {
     { productId: mug.id, variantId: mv.id, quantityPerBundle: 2, nameTh: "แก้ว", sizeTh: null, colorTh: "แดง" },
   ]);
 });
+
+test("validateSelection never returns null price without an issue code", () => {
+  const p = product({ basePrice: null });
+  const bad = variant(p.id, { sizeTh: "S", price: 0 });
+  const nullPrice = variant(p.id, { sizeTh: "M" });
+  const good = variant(p.id, { sizeTh: "L", price: 100 });
+  const c = catalog([p], [bad, nullPrice, good]);
+  for (const v of [bad, nullPrice]) {
+    const r = validateSelection(p.id, { variantId: v.id, bundleSelections: [] }, c, "open");
+    assert.ok(r.issueCodes.includes("VARIANT_DISABLED"));
+    assert.equal(r.unitPriceMinor, null);
+  }
+  const okR = validateSelection(p.id, { variantId: good.id, bundleSelections: [] }, c, "open");
+  assert.deepEqual(okR.issueCodes, []);
+  assert.equal(okR.unitPriceMinor, 100);
+
+  const shirt = product({ basePrice: 100 });
+  const sv = variant(shirt.id, { sizeTh: "S" });
+  const b = product({ kind: "bundle", basePrice: 0 });
+  const k = component(b.id, shirt.id, { fixedVariantId: sv.id });
+  const r = validateSelection(b.id, { variantId: null, bundleSelections: [] }, catalog([b, shirt], [sv], [k]), "open");
+  assert.deepEqual(r.issueCodes, ["PRODUCT_DISABLED"]);
+  assert.equal(r.unitPriceMinor, null);
+});
+
+test("validateSelection rejects foreign variant and disabled component variant", () => {
+  const p = product({ basePrice: 100 });
+  const other = product({ basePrice: 100 });
+  const ov = variant(other.id);
+  const c = catalog([p, other], [variant(p.id, { sizeTh: "S" }), ov]);
+  assert.deepEqual(validateSelection(p.id, { variantId: ov.id, bundleSelections: [] }, c, "open").issueCodes, ["VARIANT_NOT_ALLOWED"]);
+
+  const shirt = product({ basePrice: 100 });
+  const sS = variant(shirt.id, { sizeTh: "S", saleEnabled: false });
+  const sM = variant(shirt.id, { sizeTh: "M" });
+  const b = product({ kind: "bundle", basePrice: 120 });
+  const sel = component(b.id, shirt.id, { mode: "selectable", allowedVariantIds: [sS.id, sM.id] });
+  const r = validateSelection(
+    b.id,
+    { variantId: null, bundleSelections: [{ componentId: sel.id, variantId: sS.id }] },
+    catalog([b, shirt], [sS, sM], [sel]),
+    "open",
+  );
+  assert.deepEqual(r.issueCodes, ["VARIANT_DISABLED"]);
+  assert.equal(r.unitPriceMinor, null);
+});

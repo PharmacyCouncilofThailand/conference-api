@@ -36,6 +36,10 @@ function usablePrice(product: ProductRow, variant: VariantRow): number | null {
   return price !== null && price > 0 ? price : null;
 }
 
+function bundleUnitPrice(product: ProductRow): number | null {
+  return product.basePrice !== null && product.basePrice > 0 ? product.basePrice : null;
+}
+
 function isSellable(product: ProductRow | undefined): product is ProductRow {
   return !!product && product.publishState === "published" && product.saleEnabled;
 }
@@ -62,7 +66,7 @@ export function publishIssues(productId: string, catalog: CatalogSnapshot): stri
     return issues;
   }
 
-  if (product.basePrice === null || product.basePrice <= 0) issues.push("BUNDLE_PRICE_REQUIRED");
+  if (bundleUnitPrice(product) === null) issues.push("BUNDLE_PRICE_REQUIRED");
   const components = catalog.componentsByBundle.get(productId) ?? [];
   if (components.length === 0) issues.push("COMPONENT_REQUIRED");
   if (components.some((c) => catalog.products.get(c.componentProductId)?.kind !== "single")) {
@@ -154,7 +158,10 @@ export function validateSelection(
       const variant = (catalog.variantsByProduct.get(productId) ?? []).find((v) => v.id === input.variantId);
       if (!variant) issues.add("VARIANT_NOT_ALLOWED");
       else if (!variant.saleEnabled) issues.add("VARIANT_DISABLED");
-      else unit = usablePrice(product, variant);
+      else {
+        unit = usablePrice(product, variant);
+        if (unit === null) issues.add("VARIANT_DISABLED");
+      }
     }
   } else if (product?.kind === "bundle") {
     if (input.variantId !== null) issues.add("VARIANT_NOT_ALLOWED");
@@ -196,7 +203,8 @@ export function validateSelection(
         colorTh: variant.colorTh,
       });
     }
-    unit = product.basePrice !== null && product.basePrice > 0 ? product.basePrice : null;
+    unit = bundleUnitPrice(product);
+    if (unit === null) issues.add("PRODUCT_DISABLED");
   }
 
   const issueCodes = [...issues];
