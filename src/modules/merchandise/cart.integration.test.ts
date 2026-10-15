@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { after, before, test } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { merchandiseAdminRoutes } from "./routes.admin.catalog.js";
@@ -271,10 +272,27 @@ test("bundle: selection key merges regardless of selection order", { skip }, asy
   assert.equal(again.json().data.amounts.totalMinor, 27000 + 5000);
 });
 
-test("rate limit: 61st cart request in a minute returns 429", { skip }, async () => {
-  const headers = tokenFor(await t.createUser({ email: "limited@x.test" }));
-  let last = 0;
-  for (let i = 0; i < 61; i += 1) last = (await call("GET", "", undefined, headers)).statusCode;
-  assert.equal(last, 429);
+function forgedToken(id: number): string {
+  const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const head = enc({ alg: "HS256", typ: "JWT" });
+  const body = enc({ id, email: "victim@x.test", role: "general" });
+  const sig = createHmac("sha256", "some-other-secret").update(head + "." + body).digest("base64url");
+  return head + "." + body + "." + sig;
+}
+
+test("rate limit: enveloped no-store 429 on the 61st request; forged tokens do not drain a victim bucket", { skip }, async () => {
+  const victim = await t.createUser({ email: "limited@x.test" });
+  const headers = tokenFor(victim);
+  const forged = { authorization: "Bearer " + forgedToken(victim) };
+  for (let i = 0; i < 70; i += 1) await call("GET", "", undefined, forged);
+  let last = await call("GET", "", undefined, headers);
+  for (let i = 0; i < 59; i += 1) last = await call("GET", "", undefined, headers);
+  assert.equal(last.statusCode, 200, "forged requests did not consume the victim's 60 requests");
+  last = await call("GET", "", undefined, headers);
+  assert.equal(last.statusCode, 429);
+  assert.equal(last.json().success, false);
+  assert.equal(last.json().code, "MERCH_RATE_LIMITED");
+  assert.ok(last.json().requestId);
+  assert.equal(last.headers["cache-control"], "no-store");
   assert.equal((await call("GET", "")).statusCode, 200, "other buyers are unaffected");
 });

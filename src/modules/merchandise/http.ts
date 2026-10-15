@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import { ZodError } from "zod";
 import { WheelImageError } from "../lucky-wheel/images.js";
 import { MerchError } from "./errors.js";
@@ -58,4 +58,48 @@ export function sendMerchFailure(
     error: "เกิดข้อผิดพลาดภายในระบบ กรุณาลองใหม่อีกครั้ง",
     requestId: request.id,
   });
+}
+
+// Rate-limit key: the verified token's user id, else the client IP. Tokens are
+// verified so a forged id can neither drain another user's bucket nor rotate
+// ids to dodge the limit.
+function rateKey(app: FastifyInstance, groupId: string) {
+  return (request: FastifyRequest): string => {
+    const header = request.headers.authorization;
+    if (typeof header === "string" && header.startsWith("Bearer ")) {
+      try {
+        const claims = app.jwt.verify<{ id?: unknown }>(header.slice(7));
+        if (Number.isInteger(claims?.id) && Number(claims.id) > 0) {
+          return `${groupId}:user:${claims.id}`;
+        }
+      } catch {
+        // unverifiable token: fall through to IP
+      }
+    }
+    return `${groupId}:ip:${request.ip}`;
+  };
+}
+
+type LimiterFn = (this: FastifyInstance, request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+
+export function merchRateLimit(
+  app: FastifyInstance,
+  opts: { max: number; groupId: string },
+): preHandlerAsyncHookHandler {
+  const inner = app.rateLimit({
+    max: opts.max,
+    timeWindow: "1 minute",
+    keyGenerator: rateKey(app, opts.groupId),
+    groupId: opts.groupId,
+    errorResponseBuilder: () =>
+      new MerchError(429, "MERCH_RATE_LIMITED", "มีการเรียกใช้งานถี่เกินไป กรุณาลองใหม่อีกครั้ง"),
+  }) as unknown as LimiterFn;
+  return async function (this: FastifyInstance, request, reply) {
+    try {
+      await inner.call(this, request, reply);
+    } catch (error) {
+      if (error instanceof MerchError) return sendMerchFailure(reply, request, error);
+      throw error;
+    }
+  };
 }

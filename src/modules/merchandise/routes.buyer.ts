@@ -3,42 +3,22 @@ import { z } from "zod";
 import { requireBuyer, type Buyer } from "./access.js";
 import { addCartItem, addCartItemInput, readCart, removeCartItem, updateCartItem, updateCartItemInput } from "./cart.js";
 import { MerchError } from "./errors.js";
-import { noStore, ok, sendMerchFailure } from "./http.js";
+import { merchRateLimit, noStore, ok, sendMerchFailure } from "./http.js";
 import { eventByCode } from "./store-window.js";
 import type { MerchRouteOptions } from "./types.js";
 
 const itemIdSchema = z.string().uuid();
-
-// The token is only decoded (not verified) to key the limiter; requireBuyer
-// verifies it. Unverifiable tokens fall back to the client IP.
-function buyerRateKey(app: FastifyInstance) {
-  return (request: FastifyRequest): string => {
-    const header = request.headers.authorization;
-    if (typeof header === "string" && header.startsWith("Bearer ")) {
-      try {
-        const decoded = app.jwt.decode<{ id?: unknown }>(header.slice(7));
-        if (decoded && Number.isInteger(decoded.id) && Number(decoded.id) > 0) {
-          return `merchandise:buyer:${decoded.id}`;
-        }
-      } catch {
-        // fall through to IP
-      }
-    }
-    return `merchandise:ip:${request.ip}`;
-  };
-}
 
 export async function merchandiseBuyerRoutes(
   app: FastifyInstance,
   options: MerchRouteOptions,
 ): Promise<void> {
   const db = options.database;
-  const cartRateLimit = app.rateLimit({
-    max: 60,
-    timeWindow: "1 minute",
-    keyGenerator: buyerRateKey(app),
-    groupId: "merchandise-cart",
+  app.addHook("onSend", async (_request, reply, payload) => {
+    reply.header("Cache-Control", "no-store");
+    return payload;
   });
+  const cartRateLimit = merchRateLimit(app, { max: 60, groupId: "merchandise-cart" });
   const routeOptions = { config: { rateLimit: false as const }, preHandler: cartRateLimit };
 
   const route =
