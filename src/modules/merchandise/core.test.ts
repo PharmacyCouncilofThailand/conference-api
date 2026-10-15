@@ -16,6 +16,17 @@ test("parseProviderTotal accepts numbers and strings, rejects junk", () => {
   assert.equal(parseProviderTotal(-1), null);
   assert.equal(parseProviderTotal(null), null);
 });
+test("parseProviderTotal rejects malformed strings and numbers", () => {
+  assert.equal(parseProviderTotal(""), null);
+  assert.equal(parseProviderTotal("  "), null);
+  assert.equal(parseProviderTotal(Number.NaN), null);
+  assert.equal(parseProviderTotal(Number.POSITIVE_INFINITY), null);
+  assert.equal(parseProviderTotal("1e3"), null);
+  assert.equal(parseProviderTotal("0x10"), null);
+  assert.equal(parseProviderTotal("1.005"), null);
+  assert.equal(parseProviderTotal(1.005), null);
+  assert.equal(parseProviderTotal(" 150.00 "), 15000);
+});
 test("storeState transitions", () => {
   const now = new Date("2026-11-01T05:00:00Z");
   assert.equal(storeState(null, now), "disabled");
