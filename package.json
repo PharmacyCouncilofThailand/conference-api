@@ -44,7 +44,9 @@
     "presentations:worker": "node dist/modules/presentations/jobs-runner.js",
     "presentations:worker:health": "node dist/modules/presentations/jobs-runner.js --healthcheck",
     "presentations:reconcile": "node dist/modules/presentations/startup.js --reconcile",
-    "test:checkout-flow:integration": "tsx --test --test-concurrency=1 src/modules/payments/checkout-flow.integration.test.ts"
+    "test:checkout-flow:integration": "tsx --test --test-concurrency=1 src/modules/payments/checkout-flow.integration.test.ts",
+    "test:merchandise": "tsx --test src/modules/merchandise/**/*.test.ts",
+    "test:merchandise:integration": "tsx --test --test-concurrency=1 src/modules/merchandise/**/*.integration.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",

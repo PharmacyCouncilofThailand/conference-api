@@ -21,6 +21,7 @@ import {
   index,
   check,
   foreignKey,
+  customType,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
@@ -2574,3 +2575,361 @@ export const sponsorApplicationItemsRelations = relations(sponsorApplicationItem
     references: [sponsorPackages.id],
   }),
 }));
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+// --------------------------------------------------------------------------
+// MERCHANDISE PREORDER (drizzle/0043_merchandise.sql)
+// --------------------------------------------------------------------------
+export const merchStores = pgTable(
+  "merch_stores",
+  {
+    eventId: integer("event_id").primaryKey().references(() => events.id),
+    enabled: boolean("enabled").notNull().default(false),
+    opensAt: timestamp("opens_at", { withTimezone: true }),
+    closesAt: timestamp("closes_at", { withTimezone: true }),
+    productionInfoTh: text("production_info_th"),
+    shippingInfoTh: text("shipping_info_th"),
+    nextOrderSeq: integer("next_order_seq").notNull().default(1),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    windowCheck: check("merch_stores_window_check", sql`${table.opensAt} IS NULL OR ${table.closesAt} IS NULL OR ${table.opensAt} < ${table.closesAt}`),
+    nextOrderSeqCheck: check("merch_stores_next_order_seq_check", sql`${table.nextOrderSeq} >= 1`),
+  }),
+);
+
+export const merchCategories = pgTable(
+  "merch_categories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    nameTh: text("name_th").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    visible: boolean("visible").notNull().default(true),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    eventIdx: index("merch_categories_event_idx").on(table.eventId, table.sortOrder),
+  }),
+);
+
+export const merchImages = pgTable(
+  "merch_images",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    objectKey: text("object_key").notNull(),
+    publicUrl: text("public_url").notNull(),
+    mimeType: text("mime_type").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    uploadedBy: integer("uploaded_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    objectKeyUnique: unique("merch_images_object_key_unique").on(table.objectKey),
+    sizeCheck: check("merch_images_size_check", sql`${table.width} > 0 AND ${table.height} > 0 AND ${table.byteSize} >= 0`),
+    eventIdx: index("merch_images_event_idx").on(table.eventId, table.createdAt),
+  }),
+);
+
+export const merchBanners = pgTable(
+  "merch_banners",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    imageId: uuid("image_id").notNull().references(() => merchImages.id),
+    linkUrl: text("link_url"),
+    active: boolean("active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    eventIdx: index("merch_banners_event_idx").on(table.eventId, table.sortOrder),
+  }),
+);
+
+export const merchProducts = pgTable(
+  "merch_products",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    kind: text("kind").notNull(),
+    nameTh: text("name_th").notNull(),
+    descriptionTh: text("description_th"),
+    sizeChartTh: text("size_chart_th"),
+    imageIds: uuid("image_ids").array().notNull().default(sql`'{}'`),
+    categoryId: uuid("category_id").references(() => merchCategories.id, { onDelete: "set null" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+    publishState: text("publish_state").notNull().default("draft"),
+    saleEnabled: boolean("sale_enabled").notNull().default(false),
+    basePrice: integer("base_price"),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    kindCheck: check("merch_products_kind_check", sql`${table.kind} IN ('single', 'bundle')`),
+    publishStateCheck: check("merch_products_publish_state_check", sql`${table.publishState} IN ('draft', 'published')`),
+    basePriceCheck: check("merch_products_base_price_check", sql`${table.basePrice} IS NULL OR ${table.basePrice} >= 0`),
+    eventIdx: index("merch_products_event_idx").on(table.eventId, table.sortOrder),
+  }),
+);
+
+export const merchVariants = pgTable(
+  "merch_variants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id").notNull().references(() => merchProducts.id, { onDelete: "cascade" }),
+    sizeTh: text("size_th"),
+    colorTh: text("color_th"),
+    price: integer("price"),
+    saleEnabled: boolean("sale_enabled").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    priceCheck: check("merch_variants_price_check", sql`${table.price} IS NULL OR ${table.price} >= 0`),
+    optionUnique: uniqueIndex("merch_variants_product_option_unique").on(
+      table.productId,
+      sql`coalesce(${table.sizeTh}, '')`,
+      sql`coalesce(${table.colorTh}, '')`,
+    ),
+  }),
+);
+
+export const merchBundleComponents = pgTable(
+  "merch_bundle_components",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    bundleProductId: uuid("bundle_product_id").notNull().references(() => merchProducts.id, { onDelete: "cascade" }),
+    componentProductId: uuid("component_product_id").notNull().references(() => merchProducts.id),
+    quantityPerBundle: integer("quantity_per_bundle").notNull().default(1),
+    mode: text("mode").notNull(),
+    fixedVariantId: uuid("fixed_variant_id"),
+    allowedVariantIds: uuid("allowed_variant_ids").array().notNull().default(sql`'{}'`),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    quantityCheck: check("merch_bundle_components_quantity_check", sql`${table.quantityPerBundle} >= 1`),
+    modeCheck: check("merch_bundle_components_mode_check", sql`${table.mode} IN ('fixed', 'selectable')`),
+    bundleIdx: index("merch_bundle_components_bundle_idx").on(table.bundleProductId, table.sortOrder),
+  }),
+);
+
+export const merchCartItems = pgTable(
+  "merch_cart_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    userId: integer("user_id").notNull().references(() => users.id),
+    productId: uuid("product_id").notNull(),
+    variantId: uuid("variant_id"),
+    bundleSelections: jsonb("bundle_selections").notNull().default(sql`'[]'::jsonb`),
+    selectionKey: text("selection_key").notNull(),
+    quantity: integer("quantity").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    quantityCheck: check("merch_cart_items_quantity_check", sql`${table.quantity} BETWEEN 1 AND 9999`),
+    selectionUnique: unique("merch_cart_items_selection_unique").on(table.userId, table.eventId, table.productId, table.selectionKey),
+  }),
+);
+
+export const merchOrders = pgTable(
+  "merch_orders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    orderNumber: text("order_number").notNull(),
+    buyerUserId: integer("buyer_user_id").notNull().references(() => users.id),
+    buyerName: text("buyer_name").notNull(),
+    buyerEmail: text("buyer_email").notNull(),
+    buyerPhone: text("buyer_phone"),
+    recipientName: text("recipient_name").notNull(),
+    recipientPhone: text("recipient_phone").notNull(),
+    addressLine: text("address_line").notNull(),
+    subdistrict: text("subdistrict").notNull(),
+    district: text("district").notNull(),
+    province: text("province").notNull(),
+    postalCode: text("postal_code").notNull(),
+    company: text("company"),
+    deliveryNote: text("delivery_note"),
+    subtotal: integer("subtotal").notNull(),
+    shippingFee: integer("shipping_fee").notNull().default(5000),
+    total: integer("total").notNull(),
+    paymentStatus: text("payment_status").notNull().default("pending"),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    paidAtSource: text("paid_at_source"),
+    paidAttemptId: uuid("paid_attempt_id"),
+    shippingStatus: text("shipping_status").notNull().default("not_shipped"),
+    carrier: text("carrier"),
+    trackingId: text("tracking_id"),
+    shippedAt: timestamp("shipped_at", { withTimezone: true }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    idempotencyFingerprint: text("idempotency_fingerprint").notNull(),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    orderNumberUnique: unique("merch_orders_order_number_unique").on(table.orderNumber),
+    idempotencyUnique: unique("merch_orders_idempotency_unique").on(table.buyerUserId, table.idempotencyKey),
+    moneyCheck: check("merch_orders_money_check", sql`${table.subtotal} >= 0 AND ${table.shippingFee} >= 0 AND ${table.total} >= 0`),
+    paymentStatusCheck: check("merch_orders_payment_status_check", sql`${table.paymentStatus} IN ('pending', 'paid')`),
+    paidAtSourceCheck: check("merch_orders_paid_at_source_check", sql`${table.paidAtSource} IS NULL OR ${table.paidAtSource} IN ('provider', 'first_seen')`),
+    shippingStatusCheck: check("merch_orders_shipping_status_check", sql`${table.shippingStatus} IN ('not_shipped', 'shipped')`),
+    eventCreatedIdx: index("merch_orders_event_created_idx").on(table.eventId, table.createdAt),
+    buyerIdx: index("merch_orders_buyer_idx").on(table.buyerUserId, table.createdAt),
+  }),
+);
+
+export const merchOrderItems = pgTable(
+  "merch_order_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").notNull().references(() => merchOrders.id, { onDelete: "cascade" }),
+    productId: uuid("product_id").notNull(),
+    variantId: uuid("variant_id"),
+    kind: text("kind").notNull(),
+    nameTh: text("name_th").notNull(),
+    sizeTh: text("size_th"),
+    colorTh: text("color_th"),
+    quantity: integer("quantity").notNull(),
+    unitPrice: integer("unit_price").notNull(),
+    lineTotal: integer("line_total").notNull(),
+    components: jsonb("components").notNull().default(sql`'[]'::jsonb`),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    quantityCheck: check("merch_order_items_quantity_check", sql`${table.quantity} BETWEEN 1 AND 9999`),
+    moneyCheck: check("merch_order_items_money_check", sql`${table.unitPrice} >= 0 AND ${table.lineTotal} >= 0`),
+    kindCheck: check("merch_order_items_kind_check", sql`${table.kind} IN ('single', 'bundle')`),
+    orderIdx: index("merch_order_items_order_idx").on(table.orderId, table.sortOrder),
+  }),
+);
+
+export const merchPaymentAttempts = pgTable(
+  "merch_payment_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").notNull().references(() => merchOrders.id),
+    referenceNo: char("reference_no", { length: 12 }).notNull(),
+    amount: integer("amount").notNull(),
+    status: text("status").notNull(),
+    providerOrderNo: text("provider_order_no"),
+    transactionId: text("transaction_id"),
+    providerCreatedRaw: text("provider_created_raw"),
+    providerExpiresRaw: text("provider_expires_raw"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    qrPayloadEnc: bytea("qr_payload_enc"),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    paidAtSource: text("paid_at_source"),
+    lastCheckAt: timestamp("last_check_at", { withTimezone: true }),
+    lastCheckResult: text("last_check_result"),
+    nextCheckAt: timestamp("next_check_at", { withTimezone: true }),
+    checkCount: integer("check_count").notNull().default(0),
+    claimedUntil: timestamp("claimed_until", { withTimezone: true }),
+    reviewReason: text("review_reason"),
+    reviewResolvedAt: timestamp("review_resolved_at", { withTimezone: true }),
+    reviewResolvedBy: integer("review_resolved_by"),
+    reviewNote: text("review_note"),
+    failureCode: text("failure_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    referenceUnique: unique("merch_payment_attempts_reference_unique").on(table.referenceNo),
+    amountCheck: check("merch_payment_attempts_amount_check", sql`${table.amount} >= 0`),
+    statusCheck: check("merch_payment_attempts_status_check", sql`${table.status} IN ('creating', 'active', 'create_failed', 'create_unknown', 'expired', 'paid')`),
+    paidAtSourceCheck: check("merch_payment_attempts_paid_at_source_check", sql`${table.paidAtSource} IS NULL OR ${table.paidAtSource} IN ('provider', 'first_seen')`),
+    lastCheckResultCheck: check("merch_payment_attempts_last_check_result_check", sql`${table.lastCheckResult} IS NULL OR ${table.lastCheckResult} IN ('paid', 'not_found', 'not_paid_status', 'mismatch', 'error')`),
+    reviewReasonCheck: check("merch_payment_attempts_review_reason_check", sql`${table.reviewReason} IS NULL OR ${table.reviewReason} IN ('duplicate_payment', 'amount_mismatch', 'merchant_mismatch', 'currency_mismatch', 'test_status_in_production')`),
+    oneOpen: uniqueIndex("merch_payment_attempts_one_open").on(table.orderId).where(sql`${table.status} IN ('creating', 'active')`),
+    dueIdx: index("merch_payment_attempts_due_idx").on(table.nextCheckAt).where(sql`${table.nextCheckAt} IS NOT NULL`),
+    orderIdx: index("merch_payment_attempts_order_idx").on(table.orderId, table.createdAt),
+  }),
+);
+
+export const merchPaymentEvents = pgTable(
+  "merch_payment_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    attemptId: uuid("attempt_id").references(() => merchPaymentAttempts.id),
+    kind: text("kind").notNull(),
+    referenceNo: text("reference_no").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    sanitized: jsonb("sanitized").notNull().default(sql`'{}'::jsonb`),
+    result: text("result").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    kindCheck: check("merch_payment_events_kind_check", sql`${table.kind} IN ('postback', 'inquiry')`),
+    referenceIdx: index("merch_payment_events_reference_idx").on(table.referenceNo, table.receivedAt),
+  }),
+);
+
+export const merchEmailOutbox = pgTable(
+  "merch_email_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").notNull().references(() => merchOrders.id),
+    type: text("type").notNull(),
+    status: text("status").notNull().default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+    claimedUntil: timestamp("claimed_until", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    orderTypeUnique: unique("merch_email_outbox_order_type_unique").on(table.orderId, table.type),
+    typeCheck: check("merch_email_outbox_type_check", sql`${table.type} IN ('paid', 'shipped')`),
+    statusCheck: check("merch_email_outbox_status_check", sql`${table.status} IN ('queued', 'sending', 'sent', 'failed', 'unknown')`),
+    dueIdx: index("merch_email_outbox_due_idx").on(table.status, table.nextAttemptAt),
+  }),
+);
+
+export const merchAuditLog = pgTable(
+  "merch_audit_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: integer("event_id").notNull().references(() => events.id),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    action: text("action").notNull(),
+    actorBackofficeUserId: integer("actor_backoffice_user_id"),
+    reason: text("reason"),
+    contactConfirmed: boolean("contact_confirmed"),
+    contactNote: text("contact_note"),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    entityIdx: index("merch_audit_log_entity_idx").on(table.entityType, table.entityId, table.createdAt),
+  }),
+);
