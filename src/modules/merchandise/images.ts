@@ -14,7 +14,7 @@ import type { ImageAsset } from "./types.js";
 
 function toMerchImageError(error: unknown): unknown {
   if (error instanceof WheelImageError) {
-    return new MerchError(error.statusCode, error.code, error.message, error.details);
+    return new MerchError(error.statusCode, error.code, error.message, error.details, error);
   }
   return error;
 }
@@ -42,8 +42,8 @@ export async function uploadMerchImage(
         contentType: normalized.mimeType,
         cacheControl: "public, max-age=31536000, immutable",
       });
-    } catch {
-      throw new WheelImageError(502, "IMAGE_STORAGE_FAILED", "อัปโหลดรูปไม่สำเร็จ");
+    } catch (cause) {
+      throw new MerchError(502, "IMAGE_STORAGE_FAILED", "อัปโหลดรูปไม่สำเร็จ", undefined, cause);
     }
 
     try {
@@ -58,13 +58,13 @@ export async function uploadMerchImage(
         byteSize: normalized.sizeBytes,
         uploadedBy: admin.id,
       });
-    } catch {
+    } catch (cause) {
       try {
         await store.deleteObject(key);
       } catch {
         // best effort; an orphaned object is harmless
       }
-      throw new WheelImageError(500, "IMAGE_RECORD_FAILED", "บันทึกข้อมูลรูปไม่สำเร็จ");
+      throw new MerchError(500, "IMAGE_RECORD_FAILED", "บันทึกข้อมูลรูปไม่สำเร็จ", undefined, cause);
     }
     return { id, url, width: normalized.width, height: normalized.height };
   } catch (error) {

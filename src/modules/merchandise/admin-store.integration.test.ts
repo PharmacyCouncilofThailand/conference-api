@@ -279,3 +279,27 @@ test("non-admin and missing token are rejected", { skip }, async () => {
   const none = await app.inject({ method: "GET", url: `${base()}/store` });
   assert.equal(none.statusCode, 401);
 });
+
+test("images: client errors map to 400", { skip }, async () => {
+  const url = `${base()}/images`;
+  const boundary = "----merchtest";
+  const noFile = await app.inject({
+    method: "POST", url,
+    headers: { ...auth, "content-type": `multipart/form-data; boundary=${boundary}` },
+    payload: Buffer.from(`--${boundary}--
+`),
+  });
+  assert.equal(noFile.statusCode, 400, noFile.body);
+  assert.equal(noFile.json().code, "IMAGE_INVALID");
+
+  const big = multipart("big.png", "image/png", Buffer.alloc(5 * 1024 * 1024 + 10, 1));
+  const tooLarge = await app.inject({
+    method: "POST", url, headers: { ...auth, ...big.headers }, payload: big.payload,
+  });
+  assert.equal(tooLarge.statusCode, 400, tooLarge.body);
+  assert.equal(tooLarge.json().code, "IMAGE_TOO_LARGE");
+
+  const json = await app.inject({ method: "POST", url, headers: auth, payload: { a: 1 } });
+  assert.equal(json.statusCode, 400, json.body);
+  assert.equal(json.json().code, "IMAGE_INVALID");
+});

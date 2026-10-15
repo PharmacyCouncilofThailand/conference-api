@@ -85,26 +85,15 @@ export async function merchandiseAdminRoutes(
     route(async ({ admin, eventId, request }) => {
       const data = await request.file({
         limits: { fileSize: MAX_WHEEL_IMAGE_BYTES, files: 1, fields: 0, parts: 1 },
+        throwFileSizeLimit: true,
       });
       if (!data) throw new WheelImageError(400, "IMAGE_INVALID", "ต้องแนบไฟล์รูปภาพ");
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of data.file) {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += buffer.length;
-        if (size > MAX_WHEEL_IMAGE_BYTES) {
-          throw new MerchError(400, "IMAGE_TOO_LARGE", "รูปภาพต้องมีขนาดไม่เกิน 5 MB");
-        }
-        chunks.push(buffer);
-      }
-      if (data.file.truncated) {
-        throw new MerchError(400, "IMAGE_TOO_LARGE", "รูปภาพต้องมีขนาดไม่เกิน 5 MB");
-      }
+      const buffer = await data.toBuffer();
       const image = await uploadMerchImage(
         db,
         admin,
         eventId,
-        { buffer: Buffer.concat(chunks), filename: data.filename, mimetype: data.mimetype },
+        { buffer, filename: data.filename, mimetype: data.mimetype },
         options.imageStorage,
         options.nodeEnv,
       );

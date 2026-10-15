@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
+import { WheelImageError } from "../lucky-wheel/images.js";
 import { MerchError } from "./errors.js";
 
 export function noStore(reply: FastifyReply): FastifyReply {
@@ -16,7 +17,23 @@ export function sendMerchFailure(
   error: unknown,
 ): FastifyReply {
   noStore(reply);
+  if (error instanceof WheelImageError) {
+    error = new MerchError(error.statusCode, error.code, error.message, error.details, error);
+  }
+  const fastifyCode = (error as { code?: unknown } | null)?.code;
+  if (fastifyCode === "FST_REQ_FILE_TOO_LARGE") {
+    error = new MerchError(400, "IMAGE_TOO_LARGE", "รูปภาพต้องมีขนาดไม่เกิน 5 MB");
+  } else if (
+    fastifyCode === "FST_INVALID_MULTIPART_CONTENT_TYPE" ||
+    fastifyCode === "FST_FILES_LIMIT" ||
+    fastifyCode === "FST_PARTS_LIMIT"
+  ) {
+    error = new MerchError(400, "IMAGE_INVALID", "ต้องแนบไฟล์รูปภาพแบบ multipart");
+  }
   if (error instanceof MerchError) {
+    if (error.statusCode >= 500) {
+      request.log.error({ err: error, cause: error.cause, code: error.code }, "merchandise request failed");
+    }
     return reply.status(error.statusCode).send({
       success: false,
       code: error.code,
