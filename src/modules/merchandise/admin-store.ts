@@ -4,6 +4,7 @@ import {
   merchBanners,
   merchCategories,
   merchImages,
+  merchProducts,
   merchStores,
 } from "../../database/schema.js";
 import { writeAudit } from "./audit.js";
@@ -224,7 +225,7 @@ export async function orderCategories(db: MerchDb, eventId: number, ids: string[
 
 // ---- banners ----
 
-async function assertEventImage(db: MerchDb, eventId: number, imageId: string): Promise<void> {
+export async function assertEventImage(db: MerchDb, eventId: number, imageId: string): Promise<void> {
   const [img] = await db
     .select({ id: merchImages.id })
     .from(merchImages)
@@ -327,9 +328,9 @@ export async function orderBanners(db: MerchDb, eventId: number, ids: string[]):
 
 // ---- shared ----
 
-async function applyOrder(
+export async function applyOrder(
   db: MerchDb,
-  table: typeof merchCategories | typeof merchBanners,
+  table: typeof merchCategories | typeof merchBanners | typeof merchProducts,
   eventId: number,
   ids: string[],
 ): Promise<void> {

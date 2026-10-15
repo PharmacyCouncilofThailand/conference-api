@@ -5,6 +5,28 @@ import { events } from "../../database/schema.js";
 import { MAX_WHEEL_IMAGE_BYTES, WheelImageError } from "../lucky-wheel/images.js";
 import { requireAdmin } from "./access.js";
 import {
+  bulkInput,
+  bulkUpdateProducts,
+  componentsInput,
+  createProduct,
+  getAdminProduct,
+  listAdminProducts,
+  orderProducts,
+  previewProduct,
+  previewStore,
+  productCreateInput,
+  productListQuery,
+  productOrderInput,
+  productPatchInput,
+  publishProduct,
+  replaceComponents,
+  replaceVariants,
+  transitionInput,
+  unpublishProduct,
+  updateProduct,
+  variantsInput,
+} from "./admin-catalog.js";
+import {
   bannerCreateInput,
   bannerPatchInput,
   categoryCreateInput,
@@ -163,5 +185,86 @@ export async function merchandiseAdminRoutes(
       await deleteBanner(db, eventId, idParam(request));
       return { data: { deleted: true } };
     }),
+  );
+
+  const P = "/merchandise/events/:eventId";
+  app.get(
+    `${P}/products`,
+    route(async ({ eventId, request }) => ({
+      data: await listAdminProducts(db, eventId, productListQuery.parse(request.query)),
+    })),
+  );
+  app.post(
+    `${P}/products`,
+    route(async ({ admin, eventId, request }) => ({
+      data: await createProduct(db, admin, eventId, productCreateInput.parse(request.body)),
+      status: 201,
+    })),
+  );
+  app.put(
+    `${P}/products/order`,
+    route(async ({ eventId, request }) => {
+      await orderProducts(db, eventId, productOrderInput.parse(request.body).ids);
+      return { data: await listAdminProducts(db, eventId, {}) };
+    }),
+  );
+  app.post(
+    `${P}/products/bulk`,
+    route(async ({ admin, eventId, request }) => ({
+      data: await bulkUpdateProducts(db, admin, eventId, bulkInput.parse(request.body)),
+    })),
+  );
+  app.get(
+    `${P}/products/:id`,
+    route(async ({ eventId, request }) => ({
+      data: await getAdminProduct(db, eventId, idParam(request)),
+    })),
+  );
+  app.patch(
+    `${P}/products/:id`,
+    route(async ({ admin, eventId, request }) => ({
+      data: await updateProduct(db, admin, eventId, idParam(request), productPatchInput.parse(request.body)),
+    })),
+  );
+  app.put(
+    `${P}/products/:id/variants`,
+    route(async ({ admin, eventId, request }) => ({
+      data: await replaceVariants(db, admin, eventId, idParam(request), variantsInput.parse(request.body)),
+    })),
+  );
+  app.put(
+    `${P}/products/:id/components`,
+    route(async ({ admin, eventId, request }) => ({
+      data: await replaceComponents(db, admin, eventId, idParam(request), componentsInput.parse(request.body)),
+    })),
+  );
+  app.post(
+    `${P}/products/:id/publish`,
+    route(async ({ admin, eventId, request }) => ({
+      data: await publishProduct(
+        db, admin, eventId, idParam(request),
+        transitionInput.parse(request.body ?? {}).expectedVersion,
+      ),
+    })),
+  );
+  app.post(
+    `${P}/products/:id/unpublish`,
+    route(async ({ admin, eventId, request }) => ({
+      data: await unpublishProduct(
+        db, admin, eventId, idParam(request),
+        transitionInput.parse(request.body ?? {}).expectedVersion,
+      ),
+    })),
+  );
+
+  app.get(
+    `${P}/preview/store`,
+    route(async ({ eventId }) => ({ data: await previewStore(db, eventId) })),
+  );
+  app.get(
+    `${P}/preview/products/:id`,
+    route(async ({ eventId, request }) => ({
+      data: await previewProduct(db, eventId, idParam(request)),
+    })),
   );
 }
