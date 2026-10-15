@@ -10,6 +10,7 @@ import postgres from "postgres";
 import * as schemaTables from "../../database/schema.js";
 import { validatePaymentsTestDatabaseUrl } from "../payments/test-database.js";
 import type { MerchDb } from "./db.js";
+import type { MerchRouteOptions } from "./types.js";
 
 export type MerchTestDb = {
   db: MerchDb;
@@ -117,9 +118,8 @@ export async function openMerchTestDatabase(): Promise<MerchTestDb> {
   };
 }
 
-// MerchRouteOptions is introduced in Task 2; until then the options are typed structurally.
 export async function buildMerchTestApp(
-  options: { database: MerchDb } & { register: (app: FastifyInstance) => Promise<void> },
+  options: Pick<MerchRouteOptions, "database"> & Partial<MerchRouteOptions> & { register: (app: FastifyInstance) => Promise<void> },
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(jwt, { secret: "test-secret" });
