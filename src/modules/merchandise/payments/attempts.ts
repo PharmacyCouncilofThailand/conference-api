@@ -8,20 +8,38 @@ import { decryptPayload, encryptPayload } from "./payload-crypto.js";
 import type { CreateQrResult, PaysoClient, PaysoConfig } from "./payso-client.js";
 import { computeExpiresAt, productDetailFor, sanitizeProviderText } from "./payso-parse.js";
 
+export interface MerchLogger {
+  error(obj: object, msg?: string): void;
+}
+
 export interface MerchContext {
   db: MerchDb;
   payso: PaysoClient | null;
   paysoConfig: PaysoConfig | null;
   nodeEnv: string;
+  log?: MerchLogger;
 }
 
-export function contextFrom(options: MerchRouteOptions): MerchContext {
+export function contextFrom(options: MerchRouteOptions, log?: MerchLogger): MerchContext {
   return {
     db: options.database,
     payso: options.payso,
     paysoConfig: options.paysoConfig,
     nodeEnv: options.nodeEnv,
+    log,
   };
+}
+
+/**
+ * Logs only an error's name and code: messages can carry provider URLs (customer data),
+ * payloads or keys, so they are never logged (§14).
+ */
+export function logMerchError(log: MerchLogger | undefined, error: unknown, msg: string): void {
+  if (!log) return;
+  const name = error instanceof Error ? error.name : typeof error;
+  const rawCode = (error as { code?: unknown } | null)?.code;
+  const code = typeof rawCode === "string" || typeof rawCode === "number" ? String(rawCode) : null;
+  log.error({ errorName: name, errorCode: code }, msg);
 }
 
 const QR_LIFETIME_MS = 10 * 60_000;
@@ -69,7 +87,8 @@ export async function issueQrForAttempt(ctx: MerchContext, attemptId: string): P
       customerName: sanitizeProviderText(row.buyerName, 100),
       customerEmail: row.buyerEmail,
     });
-  } catch {
+  } catch (error) {
+    logMerchError(ctx.log, error, "merchandise createQr failed");
     result = { kind: "unknown", code: "QR_CLIENT_ERROR" };
   }
 
@@ -78,7 +97,8 @@ export async function issueQrForAttempt(ctx: MerchContext, attemptId: string): P
     let encrypted: Buffer | null = null;
     try {
       encrypted = encryptPayload(issued.payload, ctx.paysoConfig.qrPayloadKey);
-    } catch {
+    } catch (error) {
+      logMerchError(ctx.log, error, "merchandise QR payload encryption failed");
       result = { kind: "unknown", code: "QR_PAYLOAD_KEY_INVALID" };
     }
     if (encrypted) {
@@ -160,7 +180,7 @@ export async function loadAttempts(db: MerchDb, orderId: string): Promise<Attemp
 export function derivePaymentView(
   order: { paymentStatus: string; paidAttemptId: string | null },
   attempts: AttemptRow[],
-  opts: { forOwner: boolean; storeState: StoreState; now: Date; payloadKey: string | null },
+  opts: { forOwner: boolean; storeState: StoreState; now: Date; payloadKey: string | null; log?: MerchLogger },
 ): PaymentView {
   const { now } = opts;
   const storeOpen = opts.storeState === "open";
@@ -199,7 +219,8 @@ export function derivePaymentView(
     if (opts.forOwner && opts.payloadKey && latest.qrPayloadEnc) {
       try {
         qrPayload = decryptPayload(Buffer.from(latest.qrPayloadEnc), opts.payloadKey);
-      } catch {
+      } catch (error) {
+        logMerchError(opts.log, error, "merchandise QR payload decryption failed");
         qrPayload = null;
       }
     }
@@ -225,7 +246,7 @@ export function derivePaymentView(
 export async function buildPaymentView(
   db: MerchDb,
   orderId: string,
-  opts: { forOwner: boolean; storeState: StoreState; now: Date; payloadKey: string | null },
+  opts: { forOwner: boolean; storeState: StoreState; now: Date; payloadKey: string | null; log?: MerchLogger },
 ): Promise<PaymentView> {
   const [order] = await db
     .select({ paymentStatus: merchOrders.paymentStatus, paidAttemptId: merchOrders.paidAttemptId })

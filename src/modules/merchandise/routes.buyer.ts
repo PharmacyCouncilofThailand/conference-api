@@ -2,10 +2,14 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireBuyer, type Buyer } from "./access.js";
 import { addCartItem, addCartItemInput, readCart, removeCartItem, updateCartItem, updateCartItemInput } from "./cart.js";
+import { and, eq } from "drizzle-orm";
+import { merchOrders } from "../../database/schema.js";
+import type { MerchDb } from "./db.js";
 import { MerchError } from "./errors.js";
 import { merchRateLimit, noStore, ok, sendMerchFailure } from "./http.js";
 import { confirmOrder, listBuyerOrders, readOrderDetail } from "./orders.js";
 import { contextFrom } from "./payments/attempts.js";
+import { checkOrderPayments, ownerPaymentView, requestNewQr } from "./payments/settlement.js";
 import { recipientSchema } from "./recipient.js";
 import { eventByCode } from "./store-window.js";
 import type { MerchRouteOptions } from "./types.js";
@@ -31,12 +35,27 @@ function idempotencyKey(request: FastifyRequest): string {
   return parsed.data;
 }
 
+function orderIdOf(request: FastifyRequest): string {
+  const parsed = orderIdSchema.safeParse((request.params as { orderId?: unknown }).orderId);
+  if (!parsed.success) throw new MerchError(404, "MERCH_ORDER_NOT_FOUND", "ไม่พบคำสั่งซื้อ");
+  return parsed.data;
+}
+
+async function requireOwnedOrder(db: MerchDb, orderId: string, buyerId: number): Promise<void> {
+  const [row] = await db
+    .select({ id: merchOrders.id })
+    .from(merchOrders)
+    .where(and(eq(merchOrders.id, orderId), eq(merchOrders.buyerUserId, buyerId)))
+    .limit(1);
+  if (!row) throw new MerchError(404, "MERCH_ORDER_NOT_FOUND", "ไม่พบคำสั่งซื้อ");
+}
+
 export async function merchandiseBuyerRoutes(
   app: FastifyInstance,
   options: MerchRouteOptions,
 ): Promise<void> {
   const db = options.database;
-  const ctx = contextFrom(options);
+  const ctx = contextFrom(options, app.log);
   app.addHook("onSend", async (_request, reply, payload) => {
     reply.header("Cache-Control", "no-store");
     return payload;
@@ -44,6 +63,24 @@ export async function merchandiseBuyerRoutes(
   const cartRateLimit = merchRateLimit(app, { max: 60, groupId: "merchandise-cart" });
   const routeOptions = { config: { rateLimit: false as const }, preHandler: cartRateLimit };
   const ordersRateLimit = merchRateLimit(app, { max: 10, groupId: "merchandise-orders" });
+  const readRateLimit = merchRateLimit(app, { max: 120, groupId: "merchandise-order-reads" });
+  const readOptions = { config: { rateLimit: false as const }, preHandler: readRateLimit };
+  const paymentsRateLimit = merchRateLimit(app, { max: 12, groupId: "merchandise-payments" });
+  const paymentOptions = { config: { rateLimit: false as const }, preHandler: paymentsRateLimit };
+
+  const orderRoute =
+    (handler: (orderId: string) => Promise<unknown>) =>
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        noStore(reply);
+        const buyer = await requireBuyer(db, request);
+        const orderId = orderIdOf(request);
+        await requireOwnedOrder(db, orderId, buyer.id);
+        return ok(reply, await handler(orderId));
+      } catch (error) {
+        return sendMerchFailure(reply, request, error);
+      }
+    };
 
   const route =
     (handler: (buyer: Buyer, eventId: number, request: FastifyRequest) => Promise<unknown>) =>
@@ -113,7 +150,7 @@ export async function merchandiseBuyerRoutes(
   );
   app.get(
     "/events/:eventCode/orders",
-    { config: { rateLimit: false as const } },
+    readOptions,
     route((buyer, eventId, request) => {
       const query = orderListQuery.parse(request.query);
       return listBuyerOrders(db, buyer, eventId, query.page, query.limit);
@@ -121,17 +158,28 @@ export async function merchandiseBuyerRoutes(
   );
   app.get(
     "/orders/:orderId",
-    { config: { rateLimit: false as const } },
+    readOptions,
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         noStore(reply);
         const buyer = await requireBuyer(db, request);
-        const parsed = orderIdSchema.safeParse((request.params as { orderId?: unknown }).orderId);
-        if (!parsed.success) throw new MerchError(404, "MERCH_ORDER_NOT_FOUND", "ไม่พบคำสั่งซื้อ");
-        return ok(reply, await readOrderDetail(ctx, parsed.data, { ownerId: buyer.id }));
+        return ok(reply, await readOrderDetail(ctx, orderIdOf(request), { ownerId: buyer.id }));
       } catch (error) {
         return sendMerchFailure(reply, request, error);
       }
     },
+  );
+  app.post(
+    "/orders/:orderId/payment-checks",
+    paymentOptions,
+    orderRoute(async (orderId) => {
+      await checkOrderPayments(ctx, orderId);
+      return { payment: await ownerPaymentView(ctx, orderId) };
+    }),
+  );
+  app.post(
+    "/orders/:orderId/payment-attempts",
+    paymentOptions,
+    orderRoute(async (orderId) => ({ payment: await requestNewQr(ctx, orderId) })),
   );
 }

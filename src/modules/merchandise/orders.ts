@@ -131,6 +131,7 @@ export async function readOrderDetail(
     storeState: state,
     now,
     payloadKey: ctx.paysoConfig?.qrPayloadKey ?? null,
+    log: ctx.log,
   });
 
   return {

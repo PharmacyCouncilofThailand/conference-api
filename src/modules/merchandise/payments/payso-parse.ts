@@ -120,7 +120,7 @@ export function classifyCreateQr(status: number, body: string, input: CreateQrIn
   };
 }
 
-function isTestMarker(evidence: InquiryEvidence): boolean {
+export function isTestMarker(evidence: InquiryEvidence): boolean {
   const name = evidence.statusName.trim().toUpperCase();
   return evidence.status === "TC" || name === "TEST COMPLETE" || name === "TEST COMPLETED";
 }
