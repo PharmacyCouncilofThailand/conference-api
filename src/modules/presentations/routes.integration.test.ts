@@ -186,12 +186,12 @@ test('all 15 approved REST paths, replay statuses and security use isolated JWT/
  assert.equal((await get(base+'/presentation-settings')).history.length,1);
 });
 
-test('Oral route buffers at most 50 MB, rejects client type/provider and accepts multi-page PDF using Drive', {timeout:30000}, async t=>{
+test('Oral route buffers at most 100 MB, rejects client type/provider and accepts multi-page PDF using Drive', {timeout:30000}, async t=>{
  const {database,fixture:f}=await preparePresentationScenario(t,{type:'oral'});
  process.env.PRESENTATION_SUBMISSIONS_ENABLED='true';
  let writes=0;
  const app=Fastify({logger:false});t.after(()=>app.close());
- await app.register(jwt,{secret:'presentation-oral-route-test'});await app.register(multipart);
+ await app.register(jwt,{secret:'presentation-oral-route-test'});await app.register(multipart,{limits:{fileSize:50*1024*1024}});
  app.setErrorHandler((error,_request,reply)=>error instanceof ApiError
   ?reply.code(error.statusCode).send(error.toJSON()):reply.code((error as FastifyError).statusCode??500).send({success:false,code:(error as FastifyError).code??'INTERNAL_ERROR'}));
  app.addHook('preHandler',async request=>{await request.jwtVerify();});

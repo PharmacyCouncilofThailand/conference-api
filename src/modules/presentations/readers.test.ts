@@ -40,8 +40,35 @@ function fixture(role:string,templateVersion='presentation-initial-v1') {
   if(sql.includes('FROM presentation_audit_events'))return sql.includes('AND action IN')?audits.filter(a=>['revision_created','revision_cancelled'].includes(a.action)):audits;
   throw new Error(`Unexpected reader query: ${sql}`);
  }} as unknown as PresentationDatabase;
- return {database,actor:{id:1,email:'staff@example.invalid',role},queries};
+ return {database,actor:{id:1,email:'staff@example.invalid',role},queries,roster};
 }
+
+test('participant groups filter before pagination/counts, preserve legacy general and intersect other filters',async()=>{
+ const {database,actor,roster}=fixture('admin');
+ Object.assign(roster[2].source_row,{participantGroup:'student'});
+ const student=await readPresentationList(database,actor,42,listQuerySchema.parse({participantGroup:'student',pageSize:1}));
+ assert.equal(student.total,1);assert.equal(student.items[0].abstractId,3);assert.equal(student.counts.submitted,1);
+ const general=await readPresentationList(database,actor,42,listQuerySchema.parse({participantGroup:'general',pageSize:1,page:2}));
+ assert.equal(general.total,2);assert.equal(general.items[0].abstractId,2);
+ assert.equal(general.counts.submitted,1);assert.equal(general.counts.not_submitted,1);
+ for(const extra of [{round:'2'},{presentationType:'oral'},{status:'not_submitted'},{search:'not found'}]){
+  const empty=await readPresentationList(database,actor,42,listQuerySchema.parse({participantGroup:'student',...extra}));
+  assert.equal(empty.total,0);assert.equal(empty.items.length,0);
+ }
+ assert.equal((await readPresentationList(database,actor,42,listQuerySchema.parse({}))).total,3);
+ assert.equal(listQuerySchema.safeParse({participantGroup:'invalid'}).success,false);
+});
+
+test('student filtering retains received-only viewer access and private data projection',async()=>{
+ const {database,actor,roster}=fixture('reviewer');
+ Object.assign(roster[1].source_row,{participantGroup:'student'});
+ Object.assign(roster[2].source_row,{participantGroup:'student'});
+ const result=await readPresentationList(database,actor,42,listQuerySchema.parse({participantGroup:'student'}));
+ assert.equal(result.total,1);assert.equal(result.items[0].abstractId,3);
+ assert.equal(result.items[0].announcement.participantGroup,'student');
+ assert.equal(result.items[0].canNotify,false);assert.equal(result.items[0].snapshot,null);
+ assert.deepEqual(result.items[0].problems,[]);
+});
 
 test('organizer/reviewer receive only uploaded works before pagination and no verification/email data',async()=>{
  for(const role of ['organizer','reviewer']){

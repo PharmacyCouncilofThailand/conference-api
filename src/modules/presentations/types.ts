@@ -6,6 +6,7 @@ export type MailKind = 'initial' | 'reminder' | 'revision' | 'receipt';
 export type MailState = 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'suppressed';
 export type PresentationActor = { id: number; role: string; email: string };
 export type Announcement = { id: number; sequence?: number; trackingId: string | null;
+  participantGroup?: 'general' | 'student';
   title: string; presentationType: AnnouncementType; categoryId: number; categoryName: string;
   submitterName: string | null; affiliation: string | null; round: 1 | 2 };
 export type DbCandidate = { abstractId: number; eventId: number; canonicalTrackingId: string | null;
@@ -31,6 +32,7 @@ export type OwnerPresentationDto = { abstractId: number; trackingId: string; tit
   selectedRequest: RevisionDto | null; currentUpload: UploadDto | null; uploads: UploadDto[] };
 export type MailPayload = { kind: MailKind; abstractId: number; trackingId: string; title: string;
   presentationType: AnnouncementType;
+  participantGroup?: 'general' | 'student';
   submitterName: string; recipient: string; websiteOrigin: string; closesAt: string | null;
   revisionRequestId: string | null; revisionDetails: string | null; upload: UploadDto | null };
 

@@ -59,11 +59,11 @@ test('Oral requires at least two PDF pages with no maximum and retains byte iden
   }
 });
 
-test('Oral accepts exactly 50 MB and rejects one byte more; Poster keeps its 30 MB cap', async () => {
+test('Oral accepts exactly 100 MB and rejects one byte more; Poster keeps its 30 MB cap', async () => {
   const original = await pdf(2);
   const buffer = Buffer.concat([original, Buffer.alloc(MAX_ORAL_BYTES - original.length, 32)]);
   const input = {buffer, filename: 'slides.pdf', mimetype: 'application/pdf'};
-  assert.equal((await validatePresentationFile(input, 'oral')).sizeBytes, 52_428_800);
+  assert.equal((await validatePresentationFile(input, 'oral')).sizeBytes, 104_857_600);
   await assert.rejects(validatePresentationFile({...input, buffer: Buffer.concat([buffer, Buffer.from(' ')])}, 'oral'),
     {code: 'PRESENTATION_FILE_TOO_LARGE', statusCode: 413});
   await assert.rejects(validatePresentationFile(input, 'poster'), {code: 'PRESENTATION_FILE_TOO_LARGE', statusCode: 413});

@@ -1,17 +1,21 @@
 # ขนาดไฟล์นำเสนอสูงสุด
 
-ข้อมูล ณ วันที่ 9 ตุลาคม 2026
+ข้อมูล ณ วันที่ 16 ตุลาคม 2026
 
 | ประเภทผลงาน | ขนาดสูงสุด | Bytes | จำนวนหน้า PDF |
 | --- | ---: | ---: | --- |
-| Oral | 50 MB | 52,428,800 | อย่างน้อย 2 หน้า ไม่จำกัดสูงสุด |
+| Oral | 100 MB | 104,857,600 | อย่างน้อย 2 หน้า ไม่จำกัดสูงสุด |
 | Poster / Highlighted Poster | 30 MB | 31,457,280 | 1 หน้า |
 
 Oral รับ PDF หนึ่งไฟล์ ไม่ตั้งรหัสผ่าน; Poster / Highlighted Poster รับ PNG หนึ่งภาพหรือ PDF หนึ่งหน้า หนึ่งไฟล์ โดย PDF ต้องไม่ตั้งรหัสผ่าน ขนาดเท่ากับเพดานรับได้ แต่ยังต้องผ่านการตรวจไฟล์และสิทธิ์อื่นตามระบบ
 
 PNG ต้องเป็นภาพที่ถอดรหัสได้ ไม่เกิน 40 ล้านพิกเซล และเก็บไฟล์ต้นฉบับใน R2 ด้วย `image/png` ต้องใช้ migration `0041_pris2026_poster_png.sql` เพื่อขยาย constraint ของตารางอัปโหลดก่อนใช้งาน
 
-คำว่า `MB` เป็นป้ายแสดงผลตามที่อนุมัติ โดยคงเพดาน bytes และการแปลงขนาดด้วย `1024 * 1024` เดิม ไม่ได้เปลี่ยนเพดานเป็น 50,000,000 / 30,000,000 bytes กำหนดขนาดในโค้ด ไม่ใช้ ENV
+คำว่า `MB` เป็นป้ายแสดงผลตามที่อนุมัติ โดยคงเพดาน bytes และการแปลงขนาดด้วย `1024 * 1024` เดิม ไม่ได้เปลี่ยนเพดานเป็น 100,000,000 / 30,000,000 bytes กำหนดขนาดในโค้ด ไม่ใช้ ENV
+
+ก่อน deploy API/เว็บที่รับ Oral 100 MB ให้ใช้ `drizzle/0045_pris2026_oral_100mb.sql` เพื่อขยาย CHECK constraint ใน `presentation_upload_attempts` และ `presentation_uploads` ก่อน รองรับการรันซ้ำและไม่แก้ข้อมูลเดิม ไม่ต้องเพิ่ม ENV และไม่เพิ่มเพดาน global multipart สำหรับการอัปโหลดส่วนอื่น (เส้นทาง Presentation เลือกเพดานตามประเภทเอง)
+
+Rollback: ใช้โค้ดเพดาน 50 MB ก่อน แล้วใช้ `sql/presentations-setup/03_oral_100mb_rollback.sql` สคริปต์จะยกเลิกทั้ง transaction ถ้ามีไฟล์ Oral เกิน 50 MB อยู่แล้ว โดยไม่ลบไฟล์หรือประวัติเพื่อบังคับ rollback อีเมลที่บันทึก/ส่งแล้วคงเนื้อหาเดิม; อีเมลและ preview ใหม่แสดงเพดาน 100 MB
 
 ## จุดกำหนดและตรวจสอบ
 
@@ -23,7 +27,7 @@ PNG ต้องเป็นภาพที่ถอดรหัสได้ ไ
 | `conference-api/src/modules/presentations/public.routes.ts` | 18–22 | จำกัดขนาดระหว่างอ่าน multipart และตรวจไฟล์ที่ถูกตัดเพราะเกินขนาด |
 | `conference-api/src/modules/presentations/file-validation.ts` | 9 | ตรวจขนาด Buffer ก่อนตรวจ PDF; เกินเพดานตอบ `PRESENTATION_FILE_TOO_LARGE` / HTTP 413 |
 | `conference-api/src/modules/presentations/uploads.ts` | 133 | ตรวจขนาดซ้ำกับประเภทผลงานก่อนบันทึก |
-| `Pris2026/src/lib/presentationLimits.ts` | 2–7 | ค่ากลาง Frontend; กำหนด 50 / 30 ครั้งเดียวและคำนวณ bytes |
+| `Pris2026/src/lib/presentationLimits.ts` | 2–7 | ค่ากลาง Frontend; กำหนด 100 / 30 ครั้งเดียวและคำนวณ bytes |
 | `Pris2026/src/lib/presentationSubmissionState.ts` | 6 | ตรวจ `file.size` ด้วยค่ากลางก่อนส่ง; เกินเพดานคืน `PRESENTATION_FILE_TOO_LARGE` |
 | `Pris2026/src/components/presentations/PresentationWorkspace.tsx` | 16 | อ่าน `maxMB` จากค่ากลางสำหรับข้อกำหนด ข้อผิดพลาด และข้อความแสดงขนาด |
 | `Pris2026/messages/th.json`, `Pris2026/messages/en.json` | 1298–1299 | ข้อความ `requirementsOral` และ `requirementsPoster` รับตัวแปร `{maxMB}` |
@@ -40,7 +44,7 @@ API เป็นตัวบังคับขนาดจริง การต
 
 ```ts
 export type AbstractPresentationType = 'oral' | 'poster';
-export const MAX_ORAL_BYTES = 52_428_800;
+export const MAX_ORAL_BYTES = 104_857_600;
 export const MAX_POSTER_BYTES = 31_457_280;
 export const maxPresentationBytes = (type: AbstractPresentationType) => type === 'oral' ? MAX_ORAL_BYTES : MAX_POSTER_BYTES;
 ```
@@ -107,7 +111,7 @@ if (a.storage_provider !== presentationStorageProvider(gate.presentationType) ||
 ```ts
 // MB is the display label; retain the approved 1024-based byte ceilings.
 export const PRESENTATION_SIZE_UNIT_BYTES = 1024 * 1024;
-const oralMB = 50, posterMB = 30;
+const oralMB = 100, posterMB = 30;
 export const PRESENTATION_LIMITS = {
   oral: { mb: oralMB, bytes: oralMB * PRESENTATION_SIZE_UNIT_BYTES },
   poster: { mb: posterMB, bytes: posterMB * PRESENTATION_SIZE_UNIT_BYTES },
@@ -144,7 +148,7 @@ const maxMB = PRESENTATION_LIMITS[oral ? 'oral' : 'poster'].mb;
 const pageRule = t(oral ? 'pageRuleOral' : 'pageRulePoster');
 ```
 
-`maxMB` ใช้แสดง `PDF · 50 MB` / `PNG / PDF · 30 MB` และเติมตัวเลขในข้อความผิดพลาดและข้อกำหนดด้วย `t(oral ? 'requirementsOral' : 'requirementsPoster', { maxMB })` ขนาดไฟล์ที่เลือกคำนวณด้วย `(p.file.size / PRESENTATION_SIZE_UNIT_BYTES).toFixed(2)`
+`maxMB` ใช้แสดง `PDF · 100 MB` / `PNG / PDF · 30 MB` และเติมตัวเลขในข้อความผิดพลาดและข้อกำหนดด้วย `t(oral ? 'requirementsOral' : 'requirementsPoster', { maxMB })` ขนาดไฟล์ที่เลือกคำนวณด้วย `(p.file.size / PRESENTATION_SIZE_UNIT_BYTES).toFixed(2)`
 
 `Pris2026/messages/th.json`
 

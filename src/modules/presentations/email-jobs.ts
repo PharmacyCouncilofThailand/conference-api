@@ -13,14 +13,17 @@ import { operationKeySchema, resendInputSchema } from './schemas.js';
 export async function buildMailPayload(tx: Pick<PresentationDatabase, 'execute'>, targetId: string,
   kind: MailKind, requestId?: string, uploadId?: string): Promise<MailPayload> {
   const [work] = await rows<{ abstractId: number; userId: number; trackingId: string; title: string; submitterName: string;
-    recipient: string; websiteOrigin: string; closesAt: string | Date; presentationType: MailPayload['presentationType'] }>(tx, sql`
+    recipient: string; websiteOrigin: string; closesAt: string | Date; presentationType: MailPayload['presentationType'];
+    participantGroup?: 'student' | null }>(tx, sql`
     SELECT a.id AS "abstractId",a.user_id AS "userId",a.tracking_id AS "trackingId",a.title,
       concat_ws(' ',u.first_name,u.last_name) AS "submitterName",u.email AS recipient,
       e.website_url AS "websiteOrigin",s.closes_at AS "closesAt",
       CASE WHEN a.presentation_type='oral' THEN 'oral'
         WHEN EXISTS(SELECT 1 FROM presentation_announcements pa WHERE pa.target_id=t.id AND pa.present
           AND pa.source_row->>'presentationType'='highlighted-poster') THEN 'highlighted-poster'
-        ELSE a.presentation_type::text END AS "presentationType"
+        ELSE a.presentation_type::text END AS "presentationType",
+      CASE WHEN EXISTS(SELECT 1 FROM presentation_announcements pa WHERE pa.target_id=t.id AND pa.present
+        AND pa.source_row->>'participantGroup'='student') THEN 'student' END AS "participantGroup"
     FROM presentation_targets t JOIN abstracts a ON a.id=t.abstract_id JOIN users u ON u.id=a.user_id
     JOIN events e ON e.id=t.event_id JOIN presentation_settings s ON s.event_id=t.event_id
     WHERE t.id=${targetId}::uuid
@@ -49,7 +52,9 @@ export async function buildMailPayload(tx: Pick<PresentationDatabase, 'execute'>
     if (!file) fail('PRESENTATION_UPLOAD_NOT_FOUND', 404);
     upload = { ...file, receivedAt: new Date(file.receivedAt).toISOString() };
   }
-  const payload = { ...work, kind, closesAt: kind === 'receipt' ? null : close,
+  // Omit general metadata to preserve fingerprints of existing general mail jobs.
+  const { participantGroup, ...workFields } = work;
+  const payload = { ...workFields, ...(participantGroup === 'student' ? { participantGroup } : {}), kind, closesAt: kind === 'receipt' ? null : close,
     revisionRequestId: requestId ?? upload?.revisionRequestId ?? null, revisionDetails: details, upload };
   if (kind === 'initial' || kind === 'reminder') {
     const readiness = await rows(tx, sql`SELECT source_row,verified_fingerprint FROM presentation_announcements

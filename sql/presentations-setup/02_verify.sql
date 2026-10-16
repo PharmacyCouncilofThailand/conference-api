@@ -41,7 +41,7 @@ LEFT JOIN presentation_uploads u ON u.target_id=t.id AND u.id=t.current_upload_i
 WHERE t.current_upload_id IS NOT NULL AND u.id IS NULL;
 -- Empty results required; the schema additionally enforces these provider identities.
 SELECT id,storage_provider,size_bytes,drive_file_id,object_key FROM presentation_uploads
-WHERE (storage_provider='drive' AND (size_bytes>52428800 OR drive_file_id IS NULL OR object_key IS NOT NULL))
+WHERE (storage_provider='drive' AND (size_bytes>104857600 OR drive_file_id IS NULL OR object_key IS NOT NULL))
    OR (storage_provider='r2' AND (size_bytes>31457280 OR object_key IS NULL OR drive_file_id IS NOT NULL));
 SELECT pu.id,pu.user_id,a.user_id AS current_owner,a.presentation_type,pu.storage_provider
 FROM presentation_uploads pu JOIN presentation_targets t ON t.id=pu.target_id JOIN abstracts a ON a.id=t.abstract_id
