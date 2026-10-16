@@ -203,11 +203,17 @@ test("classifyInquiry amount mismatch", () => {
   const r = inq([rec({ Total: 149.0 })]);
   assert.equal(r.kind === "mismatch" && r.reason, "amount_mismatch");
 });
-test("classifyInquiry merchant mismatch (exact 8-digit match only)", () => {
+test("classifyInquiry merchant mismatch (full id or its last 5 digits only)", () => {
   const r = inq([rec({ MerchantID: "99999999" })]);
   assert.equal(r.kind === "mismatch" && r.reason, "merchant_mismatch");
-  const partial = inq([rec({ MerchantID: "45678" })]);
-  assert.equal(partial.kind === "mismatch" && partial.reason, "merchant_mismatch");
+  const wrongShort = inq([rec({ MerchantID: "45679" })]);
+  assert.equal(wrongShort.kind === "mismatch" && wrongShort.reason, "merchant_mismatch");
+  const wrongLength = inq([rec({ MerchantID: "345678" })]);
+  assert.equal(wrongLength.kind === "mismatch" && wrongLength.reason, "merchant_mismatch");
+});
+test("classifyInquiry accepts the last 5 digits of the merchant id (R14)", () => {
+  const r = inq([rec({ MerchantID: "45678" })]);
+  assert.equal(r.kind, "paid");
 });
 test("classifyInquiry currency mismatch", () => {
   const r = inq([rec({ CurrencyCode: "OO" })]);

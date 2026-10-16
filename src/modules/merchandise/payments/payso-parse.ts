@@ -145,7 +145,10 @@ function classifyRecord(
       .slice(0, 50)
       .map((k) => k.slice(0, 64)),
   };
-  if (evidence.merchantId !== ctx.merchantId) return { verdict: "mismatch", reason: "merchant_mismatch", evidence };
+  // R14: the provider may report the full merchant id or only its last 5 digits.
+  const merchantOk =
+    evidence.merchantId === ctx.merchantId || evidence.merchantId === ctx.merchantId.replace(/\D/g, "").slice(-5);
+  if (!merchantOk) return { verdict: "mismatch", reason: "merchant_mismatch", evidence };
   if (!CURRENCY_OK.has(evidence.currencyCode.toUpperCase())) {
     return { verdict: "mismatch", reason: "currency_mismatch", evidence };
   }
