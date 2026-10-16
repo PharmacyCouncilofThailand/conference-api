@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import sharp from "sharp";
 import {
   decryptPayload,
   encryptPayload,
@@ -84,4 +85,26 @@ test("payload crypto rejects keys that are not 32 bytes", () => {
   const short = Buffer.alloc(16, 1).toString("base64");
   assert.throws(() => encryptPayload("x", short), /QR_PAYLOAD_KEY_INVALID/);
   assert.throws(() => decryptPayload(Buffer.alloc(40), short), /QR_PAYLOAD_KEY_INVALID/);
+});
+
+const pngBytesOf = (dataUrl: string) => Buffer.from(dataUrl.slice("data:image/png;base64,".length), "base64");
+
+test("decodeQrDataUrl rejects a non-PNG image labelled as PNG (magic bytes)", async () => {
+  const jpeg = await sharp(pngBytesOf(await buildPromptPayDataUrl(5000))).jpeg({ quality: 100 }).toBuffer();
+  await assert.rejects(decodeQrDataUrl(`data:image/png;base64,${jpeg.toString("base64")}`), /QR_IMAGE_INVALID/);
+});
+
+test("decodeQrDataUrl rejects PNGs over 4,000,000 pixels", async () => {
+  const qr = pngBytesOf(await buildPromptPayDataUrl(5000));
+  const huge = await sharp({ create: { width: 2001, height: 2000, channels: 3, background: "#ffffff" } })
+    .composite([{ input: qr, top: 0, left: 0 }])
+    .png()
+    .toBuffer();
+  assert.ok(huge.length < 3 * 1024 * 1024);
+  await assert.rejects(decodeQrDataUrl(`data:image/png;base64,${huge.toString("base64")}`), /QR_IMAGE_INVALID/);
+  const fits = await sharp({ create: { width: 2000, height: 2000, channels: 3, background: "#ffffff" } })
+    .composite([{ input: qr, top: 0, left: 0 }])
+    .png()
+    .toBuffer();
+  assert.equal(await decodeQrDataUrl(`data:image/png;base64,${fits.toString("base64")}`), buildPromptPayPayload(5000));
 });

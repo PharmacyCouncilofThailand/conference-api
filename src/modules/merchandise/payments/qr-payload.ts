@@ -3,6 +3,8 @@ import sharp from "sharp";
 
 const PNG_PREFIX = "data:image/png;base64,";
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+const MAX_IMAGE_PIXELS = 4_000_000;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export type QrVerifyResult =
   | { ok: true }
@@ -72,7 +74,10 @@ export function verifyPromptPayPayload(payload: string, amountMinor: number): Qr
   return { ok: true };
 }
 
-/** Decodes a PNG data URL entirely in memory; the image is never written anywhere. */
+/**
+ * Decodes a PNG data URL entirely in memory; the image is never written anywhere. Only real
+ * PNGs (signature checked) of at most 4,000,000 pixels are decoded.
+ */
 export async function decodeQrDataUrl(dataUrl: string): Promise<string> {
   if (typeof dataUrl !== "string" || !dataUrl.startsWith(PNG_PREFIX)) {
     throw new Error("QR_IMAGE_INVALID");
@@ -85,8 +90,14 @@ export async function decodeQrDataUrl(dataUrl: string): Promise<string> {
   if (image.length === 0 || image.length > MAX_IMAGE_BYTES) {
     throw new Error("QR_IMAGE_INVALID");
   }
+  if (image.length < PNG_SIGNATURE.length || !image.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    throw new Error("QR_IMAGE_INVALID");
+  }
   try {
-    const { data, info } = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const { data, info } = await sharp(image, { limitInputPixels: MAX_IMAGE_PIXELS })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
     const result = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height);
     if (!result || !result.data) {
       throw new Error("QR_IMAGE_INVALID");
