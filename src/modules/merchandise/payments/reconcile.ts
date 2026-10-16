@@ -49,7 +49,8 @@ export function nextCheckAt(
 
 type ClaimedRow = { id: string; reference_no: string; amount: number; due: string | null };
 
-const CLAIMABLE = sql`status NOT IN ('paid', 'creating')`;
+/** Unfinished attempts that are not waiting for staff (an unresolved review is never re-inquired). */
+const CLAIMABLE = sql`status NOT IN ('paid', 'creating') AND (review_reason IS NULL OR review_resolved_at IS NOT NULL)`;
 
 async function inquireAndApply(ctx: MerchContext, claimed: ClaimedRow): Promise<void> {
   let result: InquiryResult;

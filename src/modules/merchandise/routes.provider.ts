@@ -9,6 +9,8 @@ import type { MerchRouteOptions } from "./types.js";
 
 const POSTBACK_BODY_LIMIT = 16_384;
 const REFERENCE_PATTERN = /^\d{12}$/;
+/** A postback for an attempt inquired less than this long ago does not trigger another inquiry. */
+const RECENT_CHECK_SECONDS = 10;
 
 export type MerchProviderRouteOptions = MerchRouteOptions & {
   /** What runs after the reply for a matched postback; tests inject a tracker. */
@@ -35,7 +37,8 @@ function replyOk(reply: FastifyReply): FastifyReply {
 
 /**
  * PaySolution postback (§7.7). It has no signature, so it never settles anything: it is
- * logged (sanitized), makes the matched attempt due and triggers an inquiry after the reply.
+ * logged (sanitized), makes the matched attempt due and triggers an inquiry after the reply
+ * (unless that attempt was inquired less than 10 s ago).
  * The provider always gets 200 `OK` (apart from the limiter's 429), whatever it sent.
  */
 export async function merchandiseProviderRoutes(
@@ -61,6 +64,7 @@ export async function merchandiseProviderRoutes(
     { bodyLimit: POSTBACK_BODY_LIMIT, config: { rateLimit: false }, preHandler: postbackRateLimit },
     async (request, reply) => {
       let matchedAttemptId: string | null = null;
+      let runReconcile = false;
       try {
         const parsed = parsePostback(decodeBody(request));
         const referenceNo = parsed.referenceNo;
@@ -80,16 +84,20 @@ export async function merchandiseProviderRoutes(
           result: matchedAttemptId ? "matched" : referenceNo ? "unmatched" : "no_reference",
         });
         if (matchedAttemptId) {
-          await db.execute(sql`
+          // Always make it due; skip the immediate inquiry when it was checked moments ago.
+          const updated = (await db.execute(sql`
             UPDATE merch_payment_attempts
             SET next_check_at = clock_timestamp(), updated_at = now()
-            WHERE id = ${matchedAttemptId} AND status <> 'paid'`);
+            WHERE id = ${matchedAttemptId} AND status <> 'paid'
+            RETURNING coalesce(last_check_at > clock_timestamp() - make_interval(secs => ${RECENT_CHECK_SECONDS}), false)
+              AS recent`)) as unknown as Array<{ recent: boolean }>;
+          runReconcile = updated.length > 0 && !updated[0]!.recent;
         }
       } catch (error) {
         logMerchError(ctx.log, error, "merchandise postback logging failed");
       }
       replyOk(reply);
-      if (matchedAttemptId) {
+      if (matchedAttemptId && runReconcile) {
         const attemptId = matchedAttemptId;
         void Promise.resolve()
           .then(() => reconcile(ctx, attemptId))

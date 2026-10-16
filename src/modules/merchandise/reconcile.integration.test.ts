@@ -314,6 +314,46 @@ test("three postbacks and a paid result queue one outbox row", { skip }, async (
   assert.equal(events.n, 3);
 });
 
+test("attempts with an unresolved review are never claimed by the worker or a postback", { skip }, async () => {
+  const order = await placeOrder();
+  await t.sql`UPDATE merch_payment_attempts SET review_reason = 'amount_mismatch' WHERE id = ${order.attemptId}`;
+  await makeDue(order.attemptId);
+  payso.calls.inquire.length = 0;
+  await reconcileDue(ctx, { limit: 10, concurrency: 2 });
+  await reconcileAttempt(ctx, order.attemptId);
+  assert.deepEqual(payso.calls.inquire, []);
+
+  await t.sql`UPDATE merch_payment_attempts SET review_resolved_at = clock_timestamp() WHERE id = ${order.attemptId}`;
+  await makeDue(order.attemptId);
+  await reconcileDue(ctx, { limit: 10, concurrency: 2 });
+  assert.deepEqual(payso.calls.inquire, [order.referenceNo]);
+});
+
+test("postback within 10 s of the last check makes the attempt due without an immediate reconcile", { skip }, async () => {
+  const fired: string[] = [];
+  fireReconcile = async (_c, id) => {
+    fired.push(id);
+  };
+  const order = await placeOrder();
+  await t.sql`
+    UPDATE merch_payment_attempts
+    SET last_check_at = clock_timestamp() - interval '3 seconds', next_check_at = clock_timestamp() + interval '1 hour'
+    WHERE id = ${order.attemptId}`;
+  const recent = await app.inject({ method: "POST", url: POSTBACK_URL, payload: { refno: order.referenceNo } });
+  assert.equal(recent.statusCode, 200);
+  await drainBackground();
+  assert.deepEqual(fired, []);
+  const [row] = await t.sql<{ due: boolean }[]>`
+    SELECT next_check_at <= clock_timestamp() AS due FROM merch_payment_attempts WHERE id = ${order.attemptId}`;
+  assert.equal(row.due, true);
+
+  await t.sql`UPDATE merch_payment_attempts SET last_check_at = clock_timestamp() - interval '30 seconds' WHERE id = ${order.attemptId}`;
+  const later = await app.inject({ method: "POST", url: POSTBACK_URL, payload: { refno: order.referenceNo } });
+  assert.equal(later.statusCode, 200);
+  await drainBackground();
+  assert.deepEqual(fired, [order.attemptId]);
+});
+
 test("expireAttempts expires active QRs and recovers stale creating attempts", { skip }, async () => {
   const active = await placeOrder();
   await t.sql`
