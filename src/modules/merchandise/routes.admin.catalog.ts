@@ -1,9 +1,6 @@
-import { eq } from "drizzle-orm";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { events } from "../../database/schema.js";
 import { MAX_WHEEL_IMAGE_BYTES, WheelImageError } from "../lucky-wheel/images.js";
-import { requireAdmin } from "./access.js";
 import {
   bulkInput,
   bulkUpdateProducts,
@@ -46,16 +43,12 @@ import {
   putStore,
   storeInput,
 } from "./admin-store.js";
-import { MerchError } from "./errors.js";
-import { noStore, ok, sendMerchFailure } from "./http.js";
+import { adminRoute } from "./http.js";
 import { uploadMerchImage } from "./images.js";
+import { merchandiseAdminOrderRoutes } from "./routes.admin.orders.js";
 import type { MerchRouteOptions } from "./types.js";
 
-const eventIdSchema = z.coerce.number().int().positive();
 const idSchema = z.string().uuid();
-
-type Ctx = { admin: { id: number; email: string }; eventId: number; request: FastifyRequest };
-type Result = { data: unknown; status?: number };
 
 export async function merchandiseAdminRoutes(
   app: FastifyInstance,
@@ -63,30 +56,9 @@ export async function merchandiseAdminRoutes(
 ): Promise<void> {
   const db = options.database;
 
-  const route =
-    (handler: (ctx: Ctx) => Promise<Result>) =>
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      try {
-        noStore(reply);
-        const params = request.params as { eventId?: unknown };
-        const parsed = eventIdSchema.safeParse(params.eventId);
-        if (!parsed.success) {
-          throw new MerchError(400, "VALIDATION_ERROR", "ข้อมูลที่ส่งมาไม่ถูกต้อง");
-        }
-        const eventId = parsed.data;
-        const admin = await requireAdmin(db, request, eventId);
-        const [event] = await db
-          .select({ id: events.id })
-          .from(events)
-          .where(eq(events.id, eventId))
-          .limit(1);
-        if (!event) throw new MerchError(404, "MERCH_EVENT_NOT_FOUND", "ไม่พบงานที่ระบุ");
-        const result = await handler({ admin, eventId, request });
-        return ok(reply, result.data, result.status ?? 200);
-      } catch (error) {
-        return sendMerchFailure(reply, request, error);
-      }
-    };
+  const route = adminRoute(db);
+
+  await app.register((orders) => merchandiseAdminOrderRoutes(orders, options));
 
   const idParam = (request: FastifyRequest) =>
     idSchema.parse((request.params as { id?: unknown }).id);

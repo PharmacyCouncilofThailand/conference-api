@@ -1,4 +1,4 @@
-import { desc, eq, sql, and } from "drizzle-orm";
+import { desc, eq, sql, and, type SQL, type SQLWrapper } from "drizzle-orm";
 import { merchOrders, merchPaymentAttempts } from "../../../database/schema.js";
 import type { MerchDb } from "../db.js";
 import { MerchError } from "../errors.js";
@@ -161,6 +161,16 @@ function attemptDto(attempt: AttemptRow, qrPayload: string | null): NonNullable<
 function isOpenAttempt(attempt: AttemptRow, now: Date): boolean {
   if (attempt.status === "creating") return true;
   return attempt.status === "active" && attempt.expiresAt !== null && attempt.expiresAt.getTime() > now.getTime();
+}
+
+/**
+ * SQL twin of `isOpenAttempt`: true when the order (`orderId`, a column or value) has an
+ * attempt being created or an active QR whose `expires_at` is after `now`.
+ */
+export function openAttemptExistsSql(orderId: SQLWrapper, now: Date | SQL): SQL {
+  const at = now instanceof Date ? sql`${now.toISOString()}::timestamptz` : now;
+  return sql`EXISTS (SELECT 1 FROM merch_payment_attempts oa WHERE oa.order_id = ${orderId}
+    AND (oa.status = 'creating' OR (oa.status = 'active' AND oa.expires_at > ${at})))`;
 }
 
 /** True when the order has an attempt being created or an active QR that has not expired. */

@@ -17,6 +17,7 @@ import {
   hasOpenAttempt,
   issueQrForAttempt,
   loadAttempts,
+  openAttemptExistsSql,
   type MerchContext,
 } from "./payments/attempts.js";
 import { dbNow, eventByCode, readStore, storeState, type StoreState } from "./store-window.js";
@@ -59,7 +60,7 @@ function amountsOf(order: OrderRow): Amounts {
   };
 }
 
-function summaryOf(order: OrderRow, paymentStatus: OrderSummary["paymentStatus"]): OrderSummary {
+export function summaryOf(order: OrderRow, paymentStatus: OrderSummary["paymentStatus"]): OrderSummary {
   return {
     id: order.id,
     orderNumber: order.orderNumber,
@@ -164,34 +165,17 @@ export async function listBuyerOrders(
 ): Promise<{ items: OrderSummary[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
   const where = and(eq(merchOrders.buyerUserId, buyer.id), eq(merchOrders.eventId, eventId));
   const [{ total }] = await db.select({ total: count() }).from(merchOrders).where(where);
-  const orders = await db
-    .select()
+  const { state, now } = await readStore(db, eventId);
+  const rows = await db
+    .select({ order: merchOrders, open: sql<boolean>`${openAttemptExistsSql(merchOrders.id, now)}` })
     .from(merchOrders)
     .where(where)
     .orderBy(desc(merchOrders.createdAt), desc(merchOrders.id))
     .limit(limit)
     .offset((page - 1) * limit);
-  const { state, now } = await readStore(db, eventId);
-
-  const open = new Set<string>();
-  if (orders.length > 0) {
-    const rows = await db
-      .select({ orderId: merchPaymentAttempts.orderId })
-      .from(merchPaymentAttempts)
-      .where(
-        and(
-          inArray(
-            merchPaymentAttempts.orderId,
-            orders.map((o) => o.id),
-          ),
-          sql`(${merchPaymentAttempts.status} = 'creating' OR (${merchPaymentAttempts.status} = 'active' AND ${merchPaymentAttempts.expiresAt} > ${now.toISOString()}::timestamptz))`,
-        ),
-      );
-    for (const r of rows) open.add(r.orderId);
-  }
 
   return {
-    items: orders.map((o) => summaryOf(o, paymentStatusOf(o, state, open.has(o.id)))),
+    items: rows.map((r) => summaryOf(r.order, paymentStatusOf(r.order, state, r.open))),
     pagination: { page, limit, total: Number(total), totalPages: Math.ceil(Number(total) / limit) },
   };
 }

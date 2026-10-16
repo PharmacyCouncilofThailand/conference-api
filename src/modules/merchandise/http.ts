@@ -1,6 +1,10 @@
+import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
+import { events } from "../../database/schema.js";
 import { WheelImageError } from "../lucky-wheel/images.js";
+import { requireAdmin } from "./access.js";
+import type { MerchDb } from "./db.js";
 import { MerchError } from "./errors.js";
 
 export function noStore(reply: FastifyReply): FastifyReply {
@@ -102,4 +106,39 @@ export function merchRateLimit(
       throw error;
     }
   };
+}
+
+const eventIdSchema = z.coerce.number().int().positive();
+
+export type AdminRouteCtx = { admin: { id: number; email: string }; eventId: number; request: FastifyRequest };
+export type AdminRouteResult = { data: unknown; status?: number };
+
+/**
+ * Wraps an admin handler under `/merchandise/events/:eventId`: no-store, `:eventId` parse,
+ * role `admin` check, event existence (404), envelope and error mapping.
+ */
+export function adminRoute(db: MerchDb) {
+  return (handler: (ctx: AdminRouteCtx) => Promise<AdminRouteResult>) =>
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        noStore(reply);
+        const params = request.params as { eventId?: unknown };
+        const parsed = eventIdSchema.safeParse(params.eventId);
+        if (!parsed.success) {
+          throw new MerchError(400, "VALIDATION_ERROR", "ข้อมูลที่ส่งมาไม่ถูกต้อง");
+        }
+        const eventId = parsed.data;
+        const admin = await requireAdmin(db, request, eventId);
+        const [event] = await db
+          .select({ id: events.id })
+          .from(events)
+          .where(eq(events.id, eventId))
+          .limit(1);
+        if (!event) throw new MerchError(404, "MERCH_EVENT_NOT_FOUND", "ไม่พบงานที่ระบุ");
+        const result = await handler({ admin, eventId, request });
+        return ok(reply, result.data, result.status ?? 200);
+      } catch (error) {
+        return sendMerchFailure(reply, request, error);
+      }
+    };
 }

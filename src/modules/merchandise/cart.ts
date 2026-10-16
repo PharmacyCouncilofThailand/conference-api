@@ -26,11 +26,11 @@ type CartRow = typeof merchCartItems.$inferSelect;
 
 const MAX_QUANTITY = 9999;
 const uuid = z.string().uuid();
-const selectionsSchema = z
+export const selectionsSchema = z
   .array(z.object({ componentId: uuid, variantId: uuid }).strict())
   .max(50)
   .refine((list) => new Set(list.map((s) => s.componentId)).size === list.length, "duplicate component");
-const quantitySchema = z.number().int().min(1).max(MAX_QUANTITY);
+export const quantitySchema = z.number().int().min(1).max(MAX_QUANTITY);
 
 export const addCartItemInput = z
   .object({
