@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import test from "node:test";
 import { createPaysoClient, readPaysoConfig, type PaysoConfig, type PaysoTransport } from "./payso-client.js";
 import {
@@ -58,12 +59,30 @@ test("readPaysoConfig requires all five vars and an 8-digit merchant id", () => 
     MERCHANDISE_PAYSO_AUTH_KEY: "a",
     MERCHANDISE_PAYSO_API_KEY: "b",
     MERCHANDISE_PAYSO_SECRET_KEY: "c",
-    MERCHANDISE_QR_PAYLOAD_KEY: "d",
+    MERCHANDISE_QR_PAYLOAD_KEY: randomBytes(32).toString("base64"),
     NODE_ENV: "production",
   };
   assert.equal(readPaysoConfig(env)?.merchantId, "12345678");
   assert.equal(readPaysoConfig({ ...env, MERCHANDISE_PAYSO_API_KEY: " " }), null);
   assert.equal(readPaysoConfig({ ...env, MERCHANDISE_PAYSO_MERCHANT_ID: "1234567" }), null);
+});
+
+test("readPaysoConfig requires MERCHANDISE_QR_PAYLOAD_KEY to be canonical base64 of exactly 32 bytes", () => {
+  const key = randomBytes(32).toString("base64");
+  const env = {
+    MERCHANDISE_PAYSO_MERCHANT_ID: "12345678",
+    MERCHANDISE_PAYSO_AUTH_KEY: "a",
+    MERCHANDISE_PAYSO_API_KEY: "b",
+    MERCHANDISE_PAYSO_SECRET_KEY: "c",
+    MERCHANDISE_QR_PAYLOAD_KEY: key,
+    NODE_ENV: "production",
+  };
+  assert.equal(readPaysoConfig(env)?.qrPayloadKey, key);
+  assert.equal(readPaysoConfig({ ...env, MERCHANDISE_QR_PAYLOAD_KEY: "base64_32_byte_key" }), null);
+  assert.equal(readPaysoConfig({ ...env, MERCHANDISE_QR_PAYLOAD_KEY: randomBytes(16).toString("base64") }), null);
+  assert.equal(readPaysoConfig({ ...env, MERCHANDISE_QR_PAYLOAD_KEY: randomBytes(33).toString("base64") }), null);
+  assert.equal(readPaysoConfig({ ...env, MERCHANDISE_QR_PAYLOAD_KEY: key.replace(/=+$/, "") }), null);
+  assert.equal(readPaysoConfig({ ...env, MERCHANDISE_QR_PAYLOAD_KEY: "!" + key.slice(1) }), null);
 });
 
 test("createQr sends the documented request", async () => {

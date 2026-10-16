@@ -16,6 +16,13 @@ export interface PaysoConfig {
   nodeEnv: string;
 }
 
+/** Canonical base64 (decodes and re-encodes to the same text) of exactly 32 bytes (AES-256). */
+function isPayloadKey(value: string): boolean {
+  const bytes = Buffer.from(value, "base64");
+  return bytes.length === 32 && bytes.toString("base64") === value;
+}
+
+/** Null (payments not configured) unless all five vars are set, the merchant id is 8 digits and the key is valid. */
 export function readPaysoConfig(env: NodeJS.ProcessEnv = process.env): PaysoConfig | null {
   const get = (name: string) => (env[name] ?? "").trim();
   const merchantId = get("MERCHANDISE_PAYSO_MERCHANT_ID");
@@ -25,6 +32,7 @@ export function readPaysoConfig(env: NodeJS.ProcessEnv = process.env): PaysoConf
   const qrPayloadKey = get("MERCHANDISE_QR_PAYLOAD_KEY");
   if (!merchantId || !authKey || !apiKey || !secretKey || !qrPayloadKey) return null;
   if (!/^\d{8}$/.test(merchantId)) return null;
+  if (!isPayloadKey(qrPayloadKey)) return null;
   return { merchantId, authKey, apiKey, secretKey, qrPayloadKey, nodeEnv: get("NODE_ENV") };
 }
 
