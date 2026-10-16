@@ -1,33 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatProviderTotal, parseProviderTotal } from "./money.js";
+import { MerchError } from "./errors.js";
+import { assertOrderTotalAllowed, formatProviderTotal, parseProviderTotal } from "./money.js";
 import { storeState } from "./store-window.js";
 
 test("formatProviderTotal", () => {
-  assert.equal(formatProviderTotal(12345), "123.45");
-  assert.equal(formatProviderTotal(5000), "50.00");
-  assert.equal(formatProviderTotal(7), "0.07");
+  assert.equal(formatProviderTotal(6), "6.00");
+  assert.equal(formatProviderTotal(56), "56.00");
+  assert.equal(formatProviderTotal(0), "0.00");
 });
-test("parseProviderTotal accepts numbers and strings, rejects junk", () => {
-  assert.equal(parseProviderTotal(123.45), 12345);
-  assert.equal(parseProviderTotal("3900.0"), 390000);
-  assert.equal(parseProviderTotal(12.1), 1210);
-  assert.equal(parseProviderTotal("abc"), null);
-  assert.equal(parseProviderTotal(-1), null);
-  assert.equal(parseProviderTotal(null), null);
+test("parseProviderTotal accepts whole baht as number or string", () => {
+  assert.equal(parseProviderTotal(56), 56);
+  assert.equal(parseProviderTotal("56"), 56);
+  assert.equal(parseProviderTotal("56.0"), 56);
+  assert.equal(parseProviderTotal(" 56.00 "), 56);
 });
-test("parseProviderTotal rejects malformed strings and numbers", () => {
-  assert.equal(parseProviderTotal(""), null);
-  assert.equal(parseProviderTotal("  "), null);
-  assert.equal(parseProviderTotal(Number.NaN), null);
-  assert.equal(parseProviderTotal(Number.POSITIVE_INFINITY), null);
-  assert.equal(parseProviderTotal("1e3"), null);
-  assert.equal(parseProviderTotal("0x10"), null);
-  assert.equal(parseProviderTotal("1.005"), null);
-  assert.equal(parseProviderTotal(1.005), null);
-  assert.equal(parseProviderTotal(" 150.00 "), 15000);
+test("parseProviderTotal rejects satang fractions instead of rounding", () => {
+  assert.equal(parseProviderTotal("56.50"), null);
+  assert.equal(parseProviderTotal("0.06"), null);
+  assert.equal(parseProviderTotal(56.5), null);
+  assert.equal(parseProviderTotal(0.06), null);
 });
-test("storeState transitions", () => {
+test("parseProviderTotal rejects malformed values", () => {
+  for (const v of ["", "  ", "abc", "1e3", "0x10", "1.005", -1, Number.NaN, Number.POSITIVE_INFINITY, null]) {
+    assert.equal(parseProviderTotal(v), null, String(v));
+  }
+});
+test("assertOrderTotalAllowed caps at 2,000,000 baht", () => {
+  assert.doesNotThrow(() => assertOrderTotalAllowed(2_000_000));
+  assert.throws(() => assertOrderTotalAllowed(2_000_001), (e: MerchError) =>
+    e.code === "MERCH_ORDER_TOO_LARGE" && (e.details as { maxTotalBaht: number }).maxTotalBaht === 2_000_000);
+});test("storeState transitions", () => {
   const now = new Date("2026-11-01T05:00:00Z");
   assert.equal(storeState(null, now), "disabled");
   assert.equal(storeState({ enabled: false, opensAt: null, closesAt: null }, now), "disabled");

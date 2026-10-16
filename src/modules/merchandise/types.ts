@@ -10,7 +10,7 @@ export interface MerchRouteOptions {
   imageStorage?: WheelImageStorage;
 }
 
-export type Minor = number; // satang, integer
+export type Baht = number; // whole THB, integer
 export interface ImageAsset { id: string; url: string; width: number; height: number }
 export interface StoreDto {
   eventId: number; eventCode: string;
