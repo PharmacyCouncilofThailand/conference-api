@@ -10,6 +10,24 @@ import type { OrderDetail } from "./types.js";
 export type EmailType = "paid" | "shipped";
 export type SendMail = (recipient: string, subject: string, html: string) => Promise<unknown>;
 
+/** Per-send NipaMail timeout; a timeout ends as `unknown` (the message may have been sent). */
+export const EMAIL_SEND_TIMEOUT_MS = 15_000;
+
+/** Wraps `sendNipaMailHtml` (or a stand-in) so every send has a timeout. */
+export function nipaSendWithTimeout(
+  sendImpl: (
+    recipient: string,
+    subject: string,
+    html: string,
+    retryOnAuth: boolean,
+    options: { timeoutMs: number },
+  ) => Promise<unknown> = sendNipaMailHtml,
+): SendMail {
+  return (recipient, subject, html) => sendImpl(recipient, subject, html, true, { timeoutMs: EMAIL_SEND_TIMEOUT_MS });
+}
+
+const defaultSendMail: SendMail = nipaSendWithTimeout();
+
 const MAX_ATTEMPTS = 5;
 const LEASE_MINUTES = 5;
 /** Backoff in minutes after failure number n (attempts after increment), n = 1..4. */
@@ -120,7 +138,7 @@ async function markUnknown(db: MerchDb, row: Claimed, code: string): Promise<voi
 /** §10: claim due rows, send each, record the outcome. Never throws for per-row failures. */
 export async function sendDueEmails(
   db: MerchDb,
-  send: SendMail = sendNipaMailHtml,
+  send: SendMail = defaultSendMail,
   opts: { limit: number } = { limit: 20 },
 ): Promise<{ sent: number; failed: number; unknown: number }> {
   await db.execute(sql`

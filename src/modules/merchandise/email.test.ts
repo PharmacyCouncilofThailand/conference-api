@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatBaht, renderPaidEmail, renderShippedEmail } from "./email.js";
+import { EMAIL_SEND_TIMEOUT_MS, formatBaht, nipaSendWithTimeout, renderPaidEmail, renderShippedEmail } from "./email.js";
 import type { OrderDetail } from "./types.js";
 
 const order = {
@@ -59,4 +59,14 @@ test("catalog and buyer strings are HTML-escaped", () => {
   assert.ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"));
   const shipped = renderShippedEmail({ ...order, shipping: { ...order.shipping, carrier: "<b>K</b>" } });
   assert.ok(!shipped.html.includes("<b>K</b>"));
+});
+
+test("default sender calls NipaMail with retry on auth and a 15 s timeout", async () => {
+  assert.equal(EMAIL_SEND_TIMEOUT_MS, 15_000);
+  const calls: unknown[][] = [];
+  const send = nipaSendWithTimeout(async (...args: unknown[]) => {
+    calls.push(args);
+  });
+  await send("b@x.test", "subject", "<p>html</p>");
+  assert.deepEqual(calls, [["b@x.test", "subject", "<p>html</p>", true, { timeoutMs: 15_000 }]]);
 });
