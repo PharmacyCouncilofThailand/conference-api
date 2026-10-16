@@ -111,7 +111,9 @@ export function merchRateLimit(
 const eventIdSchema = z.coerce.number().int().positive();
 
 export type AdminRouteCtx = { admin: { id: number; email: string }; eventId: number; request: FastifyRequest };
-export type AdminRouteResult = { data: unknown; status?: number };
+export type AdminRouteResult =
+  | { data: unknown; status?: number }
+  | { file: { buffer: Buffer; contentType: string; filename: string } };
 
 /**
  * Wraps an admin handler under `/merchandise/events/:eventId`: no-store, `:eventId` parse,
@@ -136,6 +138,14 @@ export function adminRoute(db: MerchDb) {
           .limit(1);
         if (!event) throw new MerchError(404, "MERCH_EVENT_NOT_FOUND", "ไม่พบงานที่ระบุ");
         const result = await handler({ admin, eventId, request });
+        if ("file" in result) {
+          const { buffer, contentType, filename } = result.file;
+          return reply
+            .status(200)
+            .header("Content-Type", contentType)
+            .header("Content-Disposition", `attachment; filename="${filename}"`)
+            .send(buffer);
+        }
         return ok(reply, result.data, result.status ?? 200);
       } catch (error) {
         return sendMerchFailure(reply, request, error);

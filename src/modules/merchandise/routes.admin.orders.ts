@@ -15,6 +15,15 @@ import { adminRoute } from "./http.js";
 import { editOrder, orderEditInput } from "./order-edit.js";
 import { contextFrom } from "./payments/attempts.js";
 import { checkOrderPayments } from "./payments/settlement.js";
+import {
+  buildOrdersWorkbook,
+  buildProductionWorkbook,
+  eventCodeOf,
+  exportFilename,
+  orderReportRows,
+  productionRows,
+  XLSX_CONTENT_TYPE,
+} from "./reports.js";
 import { bulkShipmentInput, bulkShipments, setShipment, shipmentInput } from "./shipping.js";
 import type { MerchRouteOptions } from "./types.js";
 
@@ -39,6 +48,27 @@ export async function merchandiseAdminOrderRoutes(
     route(async ({ eventId, request }) => ({
       data: await listAdminOrders(db, eventId, orderFilterSchema.parse(request.query)),
     })),
+  );
+  app.get(
+    `${P}/orders/export.xlsx`,
+    route(async ({ eventId, request }) => {
+      const { page: _page, limit: _limit, ...filters } = orderFilterSchema.parse(request.query);
+      const buffer = await buildOrdersWorkbook(await orderReportRows(db, eventId, filters));
+      const filename = exportFilename("orders", await eventCodeOf(db, eventId));
+      return { file: { buffer, contentType: XLSX_CONTENT_TYPE, filename } };
+    }),
+  );
+  app.get(
+    `${P}/production`,
+    route(async ({ eventId }) => ({ data: await productionRows(db, eventId) })),
+  );
+  app.get(
+    `${P}/production/export.xlsx`,
+    route(async ({ eventId }) => {
+      const buffer = await buildProductionWorkbook(await productionRows(db, eventId));
+      const filename = exportFilename("production", await eventCodeOf(db, eventId));
+      return { file: { buffer, contentType: XLSX_CONTENT_TYPE, filename } };
+    }),
   );
   app.get(
     `${P}/orders/:id`,

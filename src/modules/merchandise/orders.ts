@@ -84,7 +84,7 @@ type StoredComponent = {
   quantityPerBundle?: unknown;
 };
 
-function itemDto(item: OrderItemRow): OrderItemDto {
+export function itemDto(item: OrderItemRow): OrderItemDto {
   const components = Array.isArray(item.components) ? (item.components as StoredComponent[]) : [];
   return {
     id: item.id,
