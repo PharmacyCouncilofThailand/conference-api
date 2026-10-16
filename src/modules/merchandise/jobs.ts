@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { MerchDb } from "./db.js";
+import { sendDueEmails } from "./email.js";
 import type { MerchContext } from "./payments/attempts.js";
 import { expireAttempts, reconcileDue } from "./payments/reconcile.js";
 
@@ -17,7 +18,7 @@ export async function runMerchandiseJobsOnce(
 ): Promise<{ expired: number; staleCreating: number; checked: number; emails: number }> {
   const { expired, staleCreating } = await expireAttempts(ctx.db);
   const { checked } = await reconcileDue(ctx, { limit: RECONCILE_BATCH, concurrency: RECONCILE_CONCURRENCY });
-  const { sent } = deps.sendEmails ? await deps.sendEmails(ctx.db) : { sent: 0 };
+  const { sent } = await (deps.sendEmails ?? sendDueEmails)(ctx.db);
   return { expired, staleCreating, checked, emails: sent };
 }
 

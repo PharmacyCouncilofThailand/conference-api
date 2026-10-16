@@ -10,6 +10,7 @@ import {
   resolveReviewInput,
   reviewListQuery,
 } from "./admin-orders.js";
+import { resendNotification } from "./email.js";
 import { adminRoute } from "./http.js";
 import { editOrder, orderEditInput } from "./order-edit.js";
 import { contextFrom } from "./payments/attempts.js";
@@ -18,6 +19,8 @@ import { bulkShipmentInput, bulkShipments, setShipment, shipmentInput } from "./
 import type { MerchRouteOptions } from "./types.js";
 
 const idSchema = z.string().uuid();
+const resendInput = z.object({ reason: z.string().trim().min(1).max(1000) }).strict();
+const notificationType = z.enum(["paid", "shipped"]);
 
 /** Admin orders and payment reviews (§8.4); registered inside `merchandiseAdminRoutes`. */
 export async function merchandiseAdminOrderRoutes(
@@ -56,6 +59,16 @@ export async function merchandiseAdminOrderRoutes(
       await assertEventOrder(db, eventId, orderId);
       await checkOrderPayments(ctx, orderId);
       return { data: await readAdminOrderDetail(ctx, eventId, orderId) };
+    }),
+  );
+
+  app.post(
+    `${P}/orders/:id/notifications/:type/resend`,
+    route(async ({ admin, eventId, request }) => {
+      const type = notificationType.parse((request.params as { type?: unknown }).type);
+      const { reason } = resendInput.parse(request.body ?? {});
+      await resendNotification(db, admin, eventId, idParam(request), type, reason);
+      return { data: { ok: true } };
     }),
   );
 
