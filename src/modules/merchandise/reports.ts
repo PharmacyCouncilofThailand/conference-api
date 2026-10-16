@@ -1,11 +1,9 @@
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
-import { events, merchOrderItems, merchOrders } from "../../database/schema.js";
-import { orderFilterSql, type AdminOrderRow, type OrderFilters } from "./admin-orders.js";
+import { events } from "../../database/schema.js";
+import { optionsText, queryAdminOrders, type AdminOrderRow, type OrderFilters } from "./admin-orders.js";
 import type { MerchDb } from "./db.js";
-import { itemDto, paymentStatusOf, summaryOf } from "./orders.js";
-import { openAttemptExistsSql } from "./payments/attempts.js";
-import { readStore } from "./store-window.js";
+import { itemDto } from "./orders.js";
 import type { OrderItemDto, ProductionRow, Recipient } from "./types.js";
 
 export const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -43,10 +41,6 @@ export type OrderReportRow = {
   items: OrderItemDto[];
 };
 
-function optionsText(i: { sizeTh: string | null; colorTh: string | null }): string {
-  return [i.sizeTh, i.colorTh].filter((v): v is string => !!v).join("/");
-}
-
 function componentsText(item: OrderItemDto): string {
   return item.components
     .map((c) => {
@@ -62,52 +56,23 @@ export async function orderReportRows(
   eventId: number,
   filters: Omit<OrderFilters, "page" | "limit">,
 ): Promise<OrderReportRow[]> {
-  const { state, now } = await readStore(db, eventId);
-  const where = orderFilterSql(eventId, filters, now, state);
-  const orders = await db
-    .select({ order: merchOrders, open: sql<boolean>`${openAttemptExistsSql(merchOrders.id, now)}` })
-    .from(merchOrders)
-    .where(where)
-    .orderBy(desc(merchOrders.createdAt), desc(merchOrders.id));
-  const items = await db
-    .select({ item: merchOrderItems })
-    .from(merchOrderItems)
-    .innerJoin(merchOrders, eq(merchOrders.id, merchOrderItems.orderId))
-    .where(where)
-    .orderBy(asc(merchOrderItems.sortOrder), asc(merchOrderItems.id));
-  const byOrder = new Map<string, OrderItemDto[]>();
-  for (const { item } of items) {
-    const list = byOrder.get(item.orderId) ?? [];
-    list.push(itemDto(item));
-    byOrder.set(item.orderId, list);
-  }
-
-  return orders.map(({ order, open }) => {
-    const dtos = byOrder.get(order.id) ?? [];
-    return {
-      order: {
-        ...summaryOf(order, paymentStatusOf(order, state, open)),
-        buyerName: order.buyerName,
-        buyerEmail: order.buyerEmail,
-        itemsText: dtos
-          .map((i) => `${i.nameTh}${optionsText(i) ? ` (${optionsText(i)})` : ""} ×${i.quantity}`)
-          .join(", "),
-      },
-      buyerPhone: order.buyerPhone,
-      recipient: {
-        fullName: order.recipientName,
-        phone: order.recipientPhone,
-        addressLine: order.addressLine,
-        subdistrict: order.subdistrict,
-        district: order.district,
-        province: order.province,
-        postalCode: order.postalCode,
-        company: order.company,
-        deliveryNote: order.deliveryNote,
-      },
-      items: dtos,
-    };
-  });
+  const { rows } = await queryAdminOrders(db, eventId, filters);
+  return rows.map(({ order, items, row }) => ({
+    order: row,
+    buyerPhone: order.buyerPhone,
+    recipient: {
+      fullName: order.recipientName,
+      phone: order.recipientPhone,
+      addressLine: order.addressLine,
+      subdistrict: order.subdistrict,
+      district: order.district,
+      province: order.province,
+      postalCode: order.postalCode,
+      company: order.company,
+      deliveryNote: order.deliveryNote,
+    },
+    items: items.map(itemDto),
+  }));
 }
 
 const PAYMENT_TH = { pending: "รอชำระ", paid: "ชำระแล้ว", expired: "หมดเวลา" } as const;
@@ -218,27 +183,27 @@ type ProductionSqlRow = {
 export async function productionRows(db: MerchDb, eventId: number): Promise<ProductionRow[]> {
   const result = (await db.execute(sql`
     WITH paid_items AS (
-      SELECT i.kind, i.product_id, i.name_th, i.size_th, i.color_th, i.quantity, i.components, o.created_at
+      SELECT i.kind, i.product_id, i.name_th, i.size_th, i.color_th, i.quantity, i.components, o.created_at, o.id AS order_id
       FROM merch_order_items i
       JOIN merch_orders o ON o.id = i.order_id
       WHERE o.event_id = ${eventId} AND o.payment_status = 'paid'
     ),
     lines AS (
-      SELECT product_id, name_th, size_th, color_th, quantity AS single_quantity, 0 AS bundle_quantity, created_at
+      SELECT product_id, name_th, size_th, color_th, quantity AS single_quantity, 0 AS bundle_quantity, created_at, order_id
       FROM paid_items WHERE kind = 'single'
       UNION ALL
       SELECT (c.value ->> 'productId')::uuid, c.value ->> 'nameTh',
              NULLIF(c.value ->> 'sizeTh', ''), NULLIF(c.value ->> 'colorTh', ''),
-             0, p.quantity * COALESCE((c.value ->> 'quantityPerBundle')::int, 1), p.created_at
+             0, p.quantity * COALESCE((c.value ->> 'quantityPerBundle')::int, 1), p.created_at, p.order_id
       FROM paid_items p
       CROSS JOIN LATERAL jsonb_array_elements(p.components) AS c(value)
       WHERE p.kind = 'bundle'
     )
-    SELECT product_id, (array_agg(name_th ORDER BY created_at DESC))[1] AS name_th, size_th, color_th,
+    SELECT product_id, (array_agg(name_th ORDER BY created_at DESC, order_id DESC))[1] AS name_th, size_th, color_th,
            SUM(single_quantity)::int AS single_quantity, SUM(bundle_quantity)::int AS bundle_quantity
     FROM lines
     GROUP BY product_id, size_th, color_th
-    ORDER BY (array_agg(name_th ORDER BY created_at DESC))[1] COLLATE "C",
+    ORDER BY (array_agg(name_th ORDER BY created_at DESC, order_id DESC))[1] COLLATE "C",
              size_th COLLATE "C" NULLS FIRST, color_th COLLATE "C" NULLS FIRST`)) as unknown as ProductionSqlRow[];
   return result.map((r) => ({
     productId: r.product_id,

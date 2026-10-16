@@ -91,11 +91,73 @@ export function orderFilterSql(
 
 export type AdminOrderRow = OrderSummary & { buyerName: string; buyerEmail: string; itemsText: string };
 
-type ItemTextRow = { orderId: string; nameTh: string; sizeTh: string | null; colorTh: string | null; quantity: number };
+type OrderRow = typeof merchOrders.$inferSelect;
+type OrderItemRow = typeof merchOrderItems.$inferSelect;
 
-function itemText(item: ItemTextRow): string {
-  const options = [item.sizeTh, item.colorTh].filter((v): v is string => !!v);
-  return `${item.nameTh}${options.length > 0 ? ` (${options.join("/")})` : ""} ×${item.quantity}`;
+export function optionsText(item: { sizeTh: string | null; colorTh: string | null }): string {
+  return [item.sizeTh, item.colorTh].filter((v): v is string => !!v).join("/");
+}
+
+export function itemText(item: Pick<OrderItemRow, "nameTh" | "sizeTh" | "colorTh" | "quantity">): string {
+  const options = optionsText(item);
+  return `${item.nameTh}${options ? ` (${options})` : ""} ×${item.quantity}`;
+}
+
+/**
+ * Orders matching the list filters (optionally one page) with their items, newest first.
+ * Items are fetched by the ids the order query returned, so the two always agree.
+ */
+export async function queryAdminOrders(
+  db: MerchDb,
+  eventId: number,
+  filters: Omit<OrderFilters, "page" | "limit">,
+  paging?: { limit: number; offset: number },
+): Promise<{ total: number; rows: { order: OrderRow; items: OrderItemRow[]; row: AdminOrderRow }[] }> {
+  const { state, now } = await readStore(db, eventId);
+  const where = orderFilterSql(eventId, filters, now, state);
+  const [{ total }] = await db.select({ total: count() }).from(merchOrders).where(where);
+  const base = db
+    .select({ order: merchOrders, open: sql<boolean>`${openAttemptExistsSql(merchOrders.id, now)}` })
+    .from(merchOrders)
+    .where(where)
+    .orderBy(desc(merchOrders.createdAt), desc(merchOrders.id));
+  const orders = paging ? await base.limit(paging.limit).offset(paging.offset) : await base;
+
+  const byOrder = new Map<string, OrderItemRow[]>();
+  if (orders.length > 0) {
+    const items = await db
+      .select()
+      .from(merchOrderItems)
+      .where(
+        inArray(
+          merchOrderItems.orderId,
+          orders.map((r) => r.order.id),
+        ),
+      )
+      .orderBy(asc(merchOrderItems.sortOrder), asc(merchOrderItems.id));
+    for (const item of items) {
+      const list = byOrder.get(item.orderId) ?? [];
+      list.push(item);
+      byOrder.set(item.orderId, list);
+    }
+  }
+
+  return {
+    total: Number(total),
+    rows: orders.map(({ order, open }) => {
+      const items = byOrder.get(order.id) ?? [];
+      return {
+        order,
+        items,
+        row: {
+          ...summaryOf(order, paymentStatusOf(order, state, open)),
+          buyerName: order.buyerName,
+          buyerEmail: order.buyerEmail,
+          itemsText: items.map(itemText).join(", "),
+        },
+      };
+    }),
+  };
 }
 
 export async function listAdminOrders(
@@ -104,50 +166,10 @@ export async function listAdminOrders(
   filters: OrderFilters,
 ): Promise<{ items: AdminOrderRow[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
   const { page, limit } = filters;
-  const { state, now } = await readStore(db, eventId);
-  const where = orderFilterSql(eventId, filters, now, state);
-  const [{ total }] = await db.select({ total: count() }).from(merchOrders).where(where);
-  const rows = await db
-    .select({ order: merchOrders, open: sql<boolean>`${openAttemptExistsSql(merchOrders.id, now)}` })
-    .from(merchOrders)
-    .where(where)
-    .orderBy(desc(merchOrders.createdAt), desc(merchOrders.id))
-    .limit(limit)
-    .offset((page - 1) * limit);
-
-  const texts = new Map<string, string[]>();
-  if (rows.length > 0) {
-    const items = await db
-      .select({
-        orderId: merchOrderItems.orderId,
-        nameTh: merchOrderItems.nameTh,
-        sizeTh: merchOrderItems.sizeTh,
-        colorTh: merchOrderItems.colorTh,
-        quantity: merchOrderItems.quantity,
-      })
-      .from(merchOrderItems)
-      .where(
-        inArray(
-          merchOrderItems.orderId,
-          rows.map((r) => r.order.id),
-        ),
-      )
-      .orderBy(asc(merchOrderItems.sortOrder), asc(merchOrderItems.id));
-    for (const item of items) {
-      const list = texts.get(item.orderId) ?? [];
-      list.push(itemText(item));
-      texts.set(item.orderId, list);
-    }
-  }
-
+  const { total, rows } = await queryAdminOrders(db, eventId, filters, { limit, offset: (page - 1) * limit });
   return {
-    items: rows.map(({ order, open }) => ({
-      ...summaryOf(order, paymentStatusOf(order, state, open)),
-      buyerName: order.buyerName,
-      buyerEmail: order.buyerEmail,
-      itemsText: (texts.get(order.id) ?? []).join(", "),
-    })),
-    pagination: { page, limit, total: Number(total), totalPages: Math.ceil(Number(total) / limit) },
+    items: rows.map((r) => r.row),
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 }
 

@@ -357,3 +357,14 @@ test("orders export: sheets, text cells, formula escape, filters, ignores paging
   assert.equal(bad.statusCode, 400);
   assert.match(String(bad.headers["content-type"]), /json/);
 });
+
+test("production: quantityPerBundle multiplies bundle quantity", { skip }, async () => {
+  const b = await placeOrder([{ productId: gift.id, variantId: gift.v, quantity: 1 }]);
+  await makeBundle(b.orderId, 2, [{ ...comp(book.id, "สมุด"), quantityPerBundle: 3 }]);
+  await settle(b);
+  const rows = await productionRows(t.db, eventId);
+  assert.deepEqual(
+    rows.map((r) => [r.nameTh, r.singleQuantity, r.bundleQuantity, r.totalQuantity]),
+    [["สมุด", 0, 6, 6]],
+  );
+});
