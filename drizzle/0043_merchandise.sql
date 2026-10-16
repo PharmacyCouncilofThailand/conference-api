@@ -165,7 +165,7 @@ CREATE TABLE merch_orders (
   company text,
   delivery_note text,
   subtotal integer NOT NULL,
-  shipping_fee integer NOT NULL DEFAULT 5000,
+  shipping_fee integer NOT NULL DEFAULT 50,
   total integer NOT NULL,
   payment_status text NOT NULL DEFAULT 'pending',
   paid_at timestamptz,
@@ -298,5 +298,14 @@ CREATE TABLE merch_audit_log (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX merch_audit_log_entity_idx ON merch_audit_log (entity_type, entity_id, created_at);
+
+COMMENT ON COLUMN merch_products.base_price IS 'THB, whole baht';
+COMMENT ON COLUMN merch_variants.price IS 'THB, whole baht';
+COMMENT ON COLUMN merch_orders.subtotal IS 'THB, whole baht';
+COMMENT ON COLUMN merch_orders.shipping_fee IS 'THB, whole baht';
+COMMENT ON COLUMN merch_orders.total IS 'THB, whole baht';
+COMMENT ON COLUMN merch_order_items.unit_price IS 'THB, whole baht';
+COMMENT ON COLUMN merch_order_items.line_total IS 'THB, whole baht';
+COMMENT ON COLUMN merch_payment_attempts.amount IS 'THB, whole baht';
 
 COMMIT;

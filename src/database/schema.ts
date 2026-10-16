@@ -2774,7 +2774,7 @@ export const merchOrders = pgTable(
     company: text("company"),
     deliveryNote: text("delivery_note"),
     subtotal: integer("subtotal").notNull(),
-    shippingFee: integer("shipping_fee").notNull().default(5000),
+    shippingFee: integer("shipping_fee").notNull().default(50),
     total: integer("total").notNull(),
     paymentStatus: text("payment_status").notNull().default("pending"),
     paidAt: timestamp("paid_at", { withTimezone: true }),

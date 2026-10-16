@@ -16,10 +16,10 @@ test("merch migration enforces money, uniqueness and active-attempt rules", { sk
       recipient_name, recipient_phone, address_line, subdistrict, district, province, postal_code,
       subtotal, shipping_fee, total, idempotency_key, idempotency_fingerprint)
       VALUES (${eventId}, 'PRIS2026-M-000001', ${userId}, 'A B', 'a@x.test', 'A B', '0812345678', '1', 's', 'd', 'p', '10110',
-      10000, 5000, 15000, 'k1', 'f1') RETURNING id`;
-    await t.sql`INSERT INTO merch_payment_attempts (order_id, reference_no, amount, status, requested_at) VALUES (${order.id}, '700000000001', 15000, 'active', now())`;
-    await assert.rejects(t.sql`INSERT INTO merch_payment_attempts (order_id, reference_no, amount, status, requested_at) VALUES (${order.id}, '700000000002', 15000, 'creating', now())`, { code: "23505" });
-    await t.sql`INSERT INTO merch_payment_attempts (order_id, reference_no, amount, status, requested_at) VALUES (${order.id}, '700000000003', 15000, 'expired', now())`;
+      100, 50, 150, 'k1', 'f1') RETURNING id`;
+    await t.sql`INSERT INTO merch_payment_attempts (order_id, reference_no, amount, status, requested_at) VALUES (${order.id}, '700000000001', 150, 'active', now())`;
+    await assert.rejects(t.sql`INSERT INTO merch_payment_attempts (order_id, reference_no, amount, status, requested_at) VALUES (${order.id}, '700000000002', 150, 'creating', now())`, { code: "23505" });
+    await t.sql`INSERT INTO merch_payment_attempts (order_id, reference_no, amount, status, requested_at) VALUES (${order.id}, '700000000003', 150, 'expired', now())`;
     // outbox unique per (order,type)
     await t.sql`INSERT INTO merch_email_outbox (order_id, type) VALUES (${order.id}, 'paid')`;
     await assert.rejects(t.sql`INSERT INTO merch_email_outbox (order_id, type) VALUES (${order.id}, 'paid')`, { code: "23505" });
@@ -30,7 +30,23 @@ test("merch migration enforces money, uniqueness and active-attempt rules", { sk
       recipient_name, recipient_phone, address_line, subdistrict, district, province, postal_code,
       subtotal, shipping_fee, total, idempotency_key, idempotency_fingerprint)
       VALUES (${eventId}, 'PRIS2026-M-000002', ${userId}, 'A B', 'a@x.test', 'A B', '0812345678', '1', 's', 'd', 'p', '10110',
-      10000, 5000, 15000, 'k1', 'f2')`, { code: "23505" });
+      100, 50, 150, 'k1', 'f2')`, { code: "23505" });
+  } finally { await t.close(); }
+});
+
+test("merch migration defaults shipping to 50 baht and documents money columns as whole baht", { skip: !process.env.TEST_DATABASE_URL }, async () => {
+  const t = await openMerchTestDatabase();
+  try {
+    const [d] = await t.sql`SELECT column_default FROM information_schema.columns
+      WHERE table_name = 'merch_orders' AND column_name = 'shipping_fee' AND table_schema = ${t.schema}`;
+    assert.equal(d.column_default, "50");
+    const comments = await t.sql`SELECT col_description(c.oid, a.attnum) AS c
+      FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid
+      WHERE c.relnamespace = ${t.schema}::regnamespace AND (c.relname, a.attname) IN (('merch_products','base_price'),('merch_variants','price'),
+        ('merch_orders','subtotal'),('merch_orders','shipping_fee'),('merch_orders','total'),
+        ('merch_order_items','unit_price'),('merch_order_items','line_total'),('merch_payment_attempts','amount'))`;
+    assert.equal(comments.length, 8);
+    assert.ok(comments.every((r) => r.c === "THB, whole baht"));
   } finally { await t.close(); }
 });
 
