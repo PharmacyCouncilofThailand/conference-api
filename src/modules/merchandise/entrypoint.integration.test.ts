@@ -7,12 +7,14 @@ import { merchandiseAdminRoutes } from "./routes.admin.catalog.js";
 import { merchandiseBuyerRoutes } from "./routes.buyer.js";
 import { merchandiseProviderRoutes } from "./routes.provider.js";
 import { merchandisePublicRoutes } from "./routes.public.js";
+import type { MerchDb } from "./db.js";
 import { buildMerchTestApp, openMerchTestDatabase, type MerchTestDb } from "./test-support.js";
 
 const skip = !process.env.TEST_DATABASE_URL;
 
 let t: MerchTestDb;
 let app: FastifyInstance;
+const stubDb = {} as MerchDb;
 
 const fullEnv = {
   NODE_ENV: "production",
@@ -26,7 +28,7 @@ const fullEnv = {
 before(async () => {
   if (skip) return;
   t = await openMerchTestDatabase();
-  const options = buildMerchandiseOptions(t.db, fullEnv);
+  const options = buildMerchandiseOptions(stubDb, fullEnv);
   app = await buildMerchTestApp({
     database: t.db,
     register: async (instance) => {
@@ -48,15 +50,15 @@ after(async () => {
   await t?.close();
 });
 
-test("without PaySolution env the options carry no client or config", { skip }, () => {
-  const options = buildMerchandiseOptions(t.db, {});
+test("without PaySolution env the options carry no client or config", () => {
+  const options = buildMerchandiseOptions(stubDb, {});
   assert.equal(options.payso, null);
   assert.equal(options.paysoConfig, null);
   assert.equal(options.nodeEnv, "");
 });
 
-test("with all five variables set the options carry a client and config", { skip }, () => {
-  const options = buildMerchandiseOptions(t.db, fullEnv);
+test("with all five variables set the options carry a client and config", () => {
+  const options = buildMerchandiseOptions(stubDb, fullEnv);
   assert.notEqual(options.payso, null);
   assert.notEqual(options.paysoConfig, null);
   assert.equal(options.nodeEnv, "production");
@@ -69,8 +71,7 @@ test("all four plugins mount at their final URLs", { skip }, () => {
     "/api/v1/merchandise/provider/payso/postback (POST)",
     "/api/backoffice/merchandise/events/:eventId/orders (GET, HEAD)",
   ]) {
-    assert.ok(routes.includes(needle), `missing route ${needle}
-${routes}`);
+    assert.ok(routes.includes(needle), `missing route ${needle}: ${routes}`);
   }
   assert.ok(!routes.includes("/merchandise/merchandise"), "admin routes must not double /merchandise");
 });
