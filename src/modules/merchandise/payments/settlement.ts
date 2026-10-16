@@ -64,6 +64,9 @@ function guardTestStatus(ctx: MerchContext, result: InquiryResult): InquiryResul
  * Applies one inquiry result to an attempt (§7.4). One transaction; the order row is locked
  * FOR UPDATE first, then the attempt row (the same order everywhere, so no deadlock).
  * - attempt already `paid` → `noop` (idempotent)
+ * - `paid` on an attempt with an unresolved review → recorded, still held for review → `review`
+ * - `paid` while the order is pending but its total no longer equals the attempt amount
+ *   (admin edit after the QR was issued) → `amount_mismatch` review, nothing settled → `review`
  * - `paid` and order pending → attempt + order paid, payload removed, outbox `paid` queued → `settled`
  * - `paid` and order paid by another attempt → attempt paid + `duplicate_payment` review → `duplicate`
  * - `mismatch` → review reason set, order untouched → `review`
@@ -86,7 +89,12 @@ export async function applyInquiryResult(
       .limit(1);
     if (!ref) return "noop";
     const [order] = await tx
-      .select({ id: merchOrders.id, paymentStatus: merchOrders.paymentStatus, paidAttemptId: merchOrders.paidAttemptId })
+      .select({
+        id: merchOrders.id,
+        paymentStatus: merchOrders.paymentStatus,
+        paidAttemptId: merchOrders.paidAttemptId,
+        total: merchOrders.total,
+      })
       .from(merchOrders)
       .where(eq(merchOrders.id, ref.orderId))
       .for("update")
@@ -120,8 +128,31 @@ export async function applyInquiryResult(
     };
     const whereAttempt = eq(merchPaymentAttempts.id, attemptId);
 
+    const holdForReview = async (reason: string | null, evidence: InquiryEvidence) => {
+      await tx
+        .update(merchPaymentAttempts)
+        .set({
+          reviewReason: reason === null ? merchPaymentAttempts.reviewReason : sql`coalesce(${merchPaymentAttempts.reviewReason}, ${reason})`,
+          providerOrderNo: evidence.orderNo ?? attempt.providerOrderNo,
+          transactionId: evidence.transactionId ?? attempt.transactionId,
+          nextCheckAt: null,
+          ...checked,
+        })
+        .where(whereAttempt);
+    };
+
     if (result.kind === "paid") {
       const evidence = result.evidence;
+      // An attempt already held for review never settles automatically (record only).
+      if (attempt.reviewReason !== null && attempt.reviewResolvedAt === null) {
+        await holdForReview(null, evidence);
+        return "review";
+      }
+      // The order total changed after this QR was issued (§6.6 accepted limitation).
+      if (order.paymentStatus !== "paid" && attempt.amount !== order.total) {
+        await holdForReview("amount_mismatch", evidence);
+        return "review";
+      }
       let paidAt: Date;
       let paidAtSource: "provider" | "first_seen";
       if (evidence.paidAt) {
@@ -167,16 +198,7 @@ export async function applyInquiryResult(
     }
 
     if (result.kind === "mismatch") {
-      await tx
-        .update(merchPaymentAttempts)
-        .set({
-          reviewReason: sql`coalesce(${merchPaymentAttempts.reviewReason}, ${result.reason})`,
-          providerOrderNo: result.evidence.orderNo ?? attempt.providerOrderNo,
-          transactionId: result.evidence.transactionId ?? attempt.transactionId,
-          nextCheckAt: null,
-          ...checked,
-        })
-        .where(whereAttempt);
+      await holdForReview(result.reason, result.evidence);
       return "review";
     }
 

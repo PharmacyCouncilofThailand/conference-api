@@ -173,6 +173,17 @@ export function openAttemptExistsSql(orderId: SQLWrapper, now: Date | SQL): SQL 
     AND (oa.status = 'creating' OR (oa.status = 'active' AND oa.expires_at > ${at})))`;
 }
 
+/**
+ * True when an unpaid order must not be edited (§6.6): an attempt is being created, or an
+ * `active`/`expired` QR expired less than the 2-minute verifying window ago (the same window
+ * `requestNewQr` waits), so a late payment of the old amount is still being verified.
+ */
+export function editBlockingAttemptExistsSql(orderId: SQLWrapper, now: SQL): SQL {
+  return sql`EXISTS (SELECT 1 FROM merch_payment_attempts ea WHERE ea.order_id = ${orderId}
+    AND (ea.status = 'creating' OR (ea.status IN ('active', 'expired')
+      AND ea.expires_at > ${now} - make_interval(secs => ${VERIFYING_WINDOW_MS / 1000}))))`;
+}
+
 /** True when the order has an attempt being created or an active QR that has not expired. */
 export function hasOpenAttempt(attempts: AttemptRow[], now: Date): boolean {
   return attempts.some((a) => isOpenAttempt(a, now));

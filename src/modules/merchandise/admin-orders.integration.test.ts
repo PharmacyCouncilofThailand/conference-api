@@ -360,6 +360,73 @@ test("edit unpaid: active QR blocks; after expiry total changes and next QR uses
   assert.equal(attempts[0].amount, 50000);
 });
 
+test("edit unpaid is blocked inside the 2-minute verifying window after QR expiry", { skip }, async () => {
+  const o = await placeOrder([{ productId: mug.id, variantId: mug.m, quantity: 1 }]);
+  const itemId = (await detail(o.orderId)).items[0].id;
+  const body = { expectedVersion: 1, reason: "ลูกค้าขอเพิ่มจำนวน", lines: [{ sourceItemId: itemId, quantity: 2 }] };
+
+  await expireAgo(o.attemptId, 60);
+  const verifying = await admin("PATCH", `/orders/${o.orderId}`, body);
+  assert.equal(verifying.statusCode, 409, verifying.body);
+  assert.equal(verifying.json().code, "MERCH_ORDER_HAS_ACTIVE_QR");
+
+  await t.sql`UPDATE merch_payment_attempts SET status = 'expired', qr_payload_enc = NULL WHERE id = ${o.attemptId}`;
+  const stillVerifying = await admin("PATCH", `/orders/${o.orderId}`, body);
+  assert.equal(stillVerifying.statusCode, 409, stillVerifying.body);
+  assert.equal(stillVerifying.json().code, "MERCH_ORDER_HAS_ACTIVE_QR");
+
+  await expireAgo(o.attemptId, 121);
+  const res = await admin("PATCH", `/orders/${o.orderId}`, body);
+  assert.equal(res.statusCode, 200, res.body);
+});
+
+test("old QR paid at the old amount after an edit goes to amount_mismatch review, not settled", { skip }, async () => {
+  const o = await placeOrder([{ productId: mug.id, variantId: mug.m, quantity: 1 }]);
+  const itemId = (await detail(o.orderId)).items[0].id;
+  await expireAgo(o.attemptId, 300);
+  const edit = await admin("PATCH", `/orders/${o.orderId}`, {
+    expectedVersion: 1,
+    reason: "ลูกค้าขอเพิ่มจำนวน",
+    lines: [{ sourceItemId: itemId, quantity: 3 }],
+  });
+  assert.equal(edit.statusCode, 200, edit.body);
+  assert.equal(edit.json().data.amounts.totalMinor, 50000);
+
+  inquireImpl = (ref, amount) => paidResult(ref, amount);
+  assert.equal(
+    await applyInquiryResult(ctx, o.attemptId, paidResult(o.referenceNo, o.total), { at: new Date(), source: "inquiry" }),
+    "review",
+  );
+  const [order] = await t.sql<{ payment_status: string; paid_attempt_id: string | null }[]>`
+    SELECT payment_status, paid_attempt_id FROM merch_orders WHERE id = ${o.orderId}`;
+  assert.equal(order.payment_status, "pending");
+  assert.equal(order.paid_attempt_id, null);
+  const [attempt] = await t.sql<{ status: string; review_reason: string | null; next_check_at: Date | null }[]>`
+    SELECT status, review_reason, next_check_at FROM merch_payment_attempts WHERE id = ${o.attemptId}`;
+  assert.notEqual(attempt.status, "paid");
+  assert.equal(attempt.review_reason, "amount_mismatch");
+  assert.equal(attempt.next_check_at, null);
+  const outbox = await t.sql`SELECT 1 FROM merch_email_outbox WHERE order_id = ${o.orderId}`;
+  assert.equal(outbox.length, 0);
+  assert.equal((await detail(o.orderId)).payment.state, "review");
+});
+
+test("paid evidence on an attempt with an unresolved review is recorded only, not settled", { skip }, async () => {
+  const o = await placeOrder([{ productId: gift.id, variantId: gift.v, quantity: 1 }]);
+  await t.sql`UPDATE merch_payment_attempts SET review_reason = 'merchant_mismatch' WHERE id = ${o.attemptId}`;
+  assert.equal(
+    await applyInquiryResult(ctx, o.attemptId, paidResult(o.referenceNo, o.total), { at: new Date(), source: "inquiry" }),
+    "review",
+  );
+  const [order] = await t.sql<{ payment_status: string }[]>`SELECT payment_status FROM merch_orders WHERE id = ${o.orderId}`;
+  assert.equal(order.payment_status, "pending");
+  const [attempt] = await t.sql<{ status: string; review_reason: string }[]>`
+    SELECT status, review_reason FROM merch_payment_attempts WHERE id = ${o.attemptId}`;
+  assert.notEqual(attempt.status, "paid");
+  assert.equal(attempt.review_reason, "merchant_mismatch");
+  assert.equal((await t.sql`SELECT 1 FROM merch_email_outbox WHERE order_id = ${o.orderId}`).length, 0);
+});
+
 test("edit paid: contact required, total must match, same-price variant swap is audited", { skip }, async () => {
   const o = await placeOrder([{ productId: mug.id, variantId: mug.m, quantity: 2 }]);
   await settle(o);

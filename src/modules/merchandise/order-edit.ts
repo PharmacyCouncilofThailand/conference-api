@@ -10,7 +10,7 @@ import { validateSelection, type CatalogSnapshot } from "./catalog-rules.js";
 import type { MerchDb } from "./db.js";
 import { MerchError } from "./errors.js";
 import { SHIPPING_FEE_MINOR } from "./money.js";
-import { openAttemptExistsSql, type MerchContext } from "./payments/attempts.js";
+import { editBlockingAttemptExistsSql, type MerchContext } from "./payments/attempts.js";
 import { recipientSchema } from "./recipient.js";
 import { dbNow, storeState } from "./store-window.js";
 import type { AdminOrderDetail, BundleSelection, Recipient } from "./types.js";
@@ -167,7 +167,8 @@ function priceNewLine(
 /**
  * Admin order edit (§6.6). One transaction with the order row locked FOR UPDATE; the unpaid
  * vs paid rules are decided from `payment_status` read under that lock (R11).
- * - unpaid: no `creating` attempt and no `active` attempt with `expires_at` > DB now, else 409
+ * - unpaid: no `creating` attempt and no `active`/`expired` attempt with `expires_at` within the
+ *   last 120 s or later (DB now), else 409
  * - paid: `contactConfirmed: true` + `contactNote` required, and the new total must equal the old
  * Existing lines keep their stored `unit_price`; new lines are priced from the current catalog.
  */
@@ -200,7 +201,7 @@ export async function editOrder(
       }
     } else {
       const rows = (await tx.execute(
-        sql`SELECT ${openAttemptExistsSql(sql`${orderId}::uuid`, sql`clock_timestamp()`)} AS open`,
+        sql`SELECT ${editBlockingAttemptExistsSql(sql`${orderId}::uuid`, sql`clock_timestamp()`)} AS open`,
       )) as unknown as Array<{ open: boolean }>;
       if (rows[0]?.open) {
         throw new MerchError(
