@@ -21,7 +21,7 @@ const config: PaysoConfig = {
 };
 const input = {
   referenceNo: "700000000001",
-  amountMinor: 15000,
+  amountBaht: 150,
   productDetail: "PRIS2026 M 000123",
   customerName: "สมชาย ใจดี",
   customerEmail: "a@b.c",
@@ -38,7 +38,7 @@ function fake(respond: (req: Req) => { status: number; body: string } | Error) {
   };
   return { calls, client: createPaysoClient(config, transport) };
 }
-async function successBody(over: Record<string, unknown> = {}, amountMinor = 15000) {
+async function successBody(over: Record<string, unknown> = {}, amountBaht = 150) {
   return JSON.stringify({
     status: "success",
     data: {
@@ -47,7 +47,7 @@ async function successBody(over: Record<string, unknown> = {}, amountMinor = 150
       total: "150.00",
       orderdatetime: "2026-10-14 13:40:00",
       expiredate: "2026-10-14 13:50:00",
-      image: await buildPromptPayDataUrl(amountMinor),
+      image: await buildPromptPayDataUrl(amountBaht),
       ...over,
     },
   });
@@ -147,7 +147,7 @@ test("createQr total mismatch is unknown", async () => {
   assert.deepEqual(await client.createQr(input), { kind: "unknown", code: "QR_AMOUNT_MISMATCH" });
 });
 test("createQr image with a different amount is unknown", async () => {
-  const body = await successBody({}, 14900);
+  const body = await successBody({}, 149);
   const { client } = fake(() => ({ status: 200, body }));
   assert.deepEqual(await client.createQr(input), { kind: "unknown", code: "QR_AMOUNT_MISMATCH" });
 });
@@ -159,7 +159,7 @@ test("createQr undecodable image is unknown", async () => {
 
 test("inquire sends the documented request", async () => {
   const { calls, client } = fake(() => ({ status: 200, body: "" }));
-  const r = await client.inquire("700000000001", 15000);
+  const r = await client.inquire("700000000001", 150);
   assert.deepEqual(r, { kind: "not_found" });
   const req = calls[0]!;
   assert.equal(req.url, "https://apis.paysolutions.asia/order/orderdetailpost");
@@ -177,10 +177,10 @@ test("inquire sends the documented request", async () => {
 });
 test("inquire transport failure is an error", async () => {
   const { client } = fake(() => new Error("boom"));
-  assert.deepEqual(await client.inquire("700000000001", 15000), { kind: "error", code: "INQUIRY_NETWORK_ERROR" });
+  assert.deepEqual(await client.inquire("700000000001", 150), { kind: "error", code: "INQUIRY_NETWORK_ERROR" });
 });
 
-const ctx = { referenceNo: "700000000001", amountMinor: 15000, merchantId: "12345678", nodeEnv: "production" };
+const ctx = { referenceNo: "700000000001", amountBaht: 150, merchantId: "12345678", nodeEnv: "production" };
 const rec = (over: Record<string, unknown> = {}) => ({
   ReferenceNo: "700000000001",
   OrderNo: "90729356",
@@ -207,7 +207,7 @@ test("classifyInquiry CP is paid and copies evidence", () => {
   if (r.kind === "paid") {
     assert.equal(r.evidence.transactionId, "T-1");
     assert.equal(r.evidence.orderNo, "90729356");
-    assert.equal(r.evidence.totalMinor, 15000);
+    assert.equal(r.evidence.totalBaht, 150);
     assert.equal(r.evidence.paidAt?.toISOString(), "2026-10-16T03:00:00.000Z");
     assert.ok(r.evidence.fieldNames.includes("Status"));
   }
@@ -221,6 +221,13 @@ test("classifyInquiry object form is paid", () => {
 test("classifyInquiry amount mismatch", () => {
   const r = inq([rec({ Total: 149.0 })]);
   assert.equal(r.kind === "mismatch" && r.reason, "amount_mismatch");
+});
+test("classifyInquiry satang total is an amount mismatch", () => {
+  const r = inq([rec({ Total: "150.50" })]);
+  assert.equal(r.kind === "mismatch" && r.reason, "amount_mismatch");
+});
+test("classifyInquiry whole-baht string total is not a mismatch", () => {
+  assert.equal(inq([rec({ Total: "150" })]).kind, "paid");
 });
 test("classifyInquiry merchant mismatch (full id or its last 5 digits only)", () => {
   const r = inq([rec({ MerchantID: "99999999" })]);

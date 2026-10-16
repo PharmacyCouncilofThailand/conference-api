@@ -6,19 +6,19 @@ function tlv(tag: string, value: string): string {
   return `${tag}${String(value.length).padStart(2, "0")}${value}`;
 }
 
-export function buildPromptPayPayload(amountMinor: number): string {
+export function buildPromptPayPayload(amountBaht: number): string {
   const merchant = tlv("00", "A000000677010111") + tlv("01", "0066812345678");
   const body =
     tlv("00", "01") +
     tlv("01", "12") +
     tlv("29", merchant) +
     tlv("53", "764") +
-    tlv("54", (amountMinor / 100).toFixed(2)) +
+    tlv("54", amountBaht.toFixed(2)) +
     tlv("58", "TH") +
     "6304";
   return body + crc16Ccitt(body);
 }
 
-export async function buildPromptPayDataUrl(amountMinor: number): Promise<string> {
-  return QRCode.toDataURL(buildPromptPayPayload(amountMinor));
+export async function buildPromptPayDataUrl(amountBaht: number): Promise<string> {
+  return QRCode.toDataURL(buildPromptPayPayload(amountBaht));
 }

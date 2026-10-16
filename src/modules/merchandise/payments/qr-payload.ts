@@ -1,3 +1,4 @@
+import { parseProviderTotal } from "../money.js";
 import jsQR from "jsqr";
 import sharp from "sharp";
 
@@ -46,7 +47,7 @@ export function parseEmvTags(payload: string): Map<string, string> {
   return tags;
 }
 
-export function verifyPromptPayPayload(payload: string, amountMinor: number): QrVerifyResult {
+export function verifyPromptPayPayload(payload: string, amountBaht: number): QrVerifyResult {
   let tags: Map<string, string>;
   try {
     tags = parseEmvTags(payload);
@@ -68,7 +69,7 @@ export function verifyPromptPayPayload(payload: string, amountMinor: number): Qr
   if (amount === undefined || !/^\d+(\.\d{1,2})?$/.test(amount)) {
     return { ok: false, code: "QR_FORMAT_INVALID" };
   }
-  if (Math.round(Number(amount) * 100) !== amountMinor) {
+  if (parseProviderTotal(amount) !== amountBaht) {
     return { ok: false, code: "QR_AMOUNT_MISMATCH" };
   }
   return { ok: true };

@@ -81,7 +81,7 @@ export const fetchTransport: PaysoTransport = async (req) => {
 
 export interface CreateQrInput {
   referenceNo: string;
-  amountMinor: number;
+  amountBaht: number;
   productDetail: string;
   customerName: string;
   customerEmail: string;
@@ -103,7 +103,7 @@ export interface InquiryEvidence {
   orderNo: string | null;
   transactionId: string | null;
   merchantId: string;
-  totalMinor: number | null;
+  totalBaht: number | null;
   currencyCode: string;
   status: string;
   statusName: string;
@@ -127,7 +127,7 @@ export type InquiryResult =
 
 export interface PaysoClient {
   createQr(input: CreateQrInput): Promise<CreateQrResult>;
-  inquire(referenceNo: string, amountMinor: number): Promise<InquiryResult>;
+  inquire(referenceNo: string, amountBaht: number): Promise<InquiryResult>;
 }
 
 export function createPaysoClient(config: PaysoConfig, transport: PaysoTransport = fetchTransport): PaysoClient {
@@ -138,7 +138,7 @@ export function createPaysoClient(config: PaysoConfig, transport: PaysoTransport
         productDetail: sanitizeProviderText(input.productDetail, 1024),
         customerEmail: input.customerEmail,
         customerName: sanitizeProviderText(input.customerName, 100),
-        total: formatProviderTotal(input.amountMinor),
+        total: formatProviderTotal(input.amountBaht),
         referenceNo: input.referenceNo,
       });
       let response: { status: number; body: string };
@@ -161,7 +161,7 @@ export function createPaysoClient(config: PaysoConfig, transport: PaysoTransport
       } catch {
         return { kind: "unknown", code: "QR_IMAGE_INVALID" };
       }
-      const verified = verifyPromptPayPayload(payload, input.amountMinor);
+      const verified = verifyPromptPayPayload(payload, input.amountBaht);
       if (!verified.ok) return { kind: "unknown", code: verified.code };
       return {
         kind: "issued",
@@ -172,7 +172,7 @@ export function createPaysoClient(config: PaysoConfig, transport: PaysoTransport
       };
     },
 
-    async inquire(referenceNo, amountMinor) {
+    async inquire(referenceNo, amountBaht) {
       const shortMerchant = config.merchantId.slice(-5);
       let response: { status: number; body: string };
       try {
@@ -199,7 +199,7 @@ export function createPaysoClient(config: PaysoConfig, transport: PaysoTransport
       }
       return classifyInquiry(response.status, response.body, {
         referenceNo,
-        amountMinor,
+        amountBaht,
         merchantId: config.merchantId,
         nodeEnv: config.nodeEnv,
       });

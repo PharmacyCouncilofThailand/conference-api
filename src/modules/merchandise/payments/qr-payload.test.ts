@@ -21,43 +21,43 @@ test("crc16Ccitt matches the standard check value", () => {
 });
 
 test("parseEmvTags reads top-level TLV", () => {
-  const tags = parseEmvTags(buildPromptPayPayload(5000));
+  const tags = parseEmvTags(buildPromptPayPayload(56));
   assert.equal(tags.get("00"), "01");
   assert.equal(tags.get("53"), "764");
-  assert.equal(tags.get("54"), "50.00");
+  assert.equal(tags.get("54"), "56.00");
   assert.equal(tags.get("58"), "TH");
 });
 
 test("verifyPromptPayPayload accepts a valid payload", () => {
-  assert.deepEqual(verifyPromptPayPayload(buildPromptPayPayload(5000), 5000), { ok: true });
+  assert.deepEqual(verifyPromptPayPayload(buildPromptPayPayload(56), 56), { ok: true });
 });
 
 test("verifyPromptPayPayload rejects wrong amount", () => {
-  assert.deepEqual(verifyPromptPayPayload(buildPromptPayPayload(5000), 5001), {
+  assert.deepEqual(verifyPromptPayPayload(buildPromptPayPayload(56), 57), {
     ok: false,
     code: "QR_AMOUNT_MISMATCH",
   });
 });
 
 test("verifyPromptPayPayload rejects a corrupted body", () => {
-  const payload = buildPromptPayPayload(5000);
+  const payload = buildPromptPayPayload(56);
   const flipped = (payload[0] === "0" ? "1" : "0") + payload.slice(1);
-  assert.deepEqual(verifyPromptPayPayload(flipped, 5000), { ok: false, code: "QR_CRC_INVALID" });
+  assert.deepEqual(verifyPromptPayPayload(flipped, 56), { ok: false, code: "QR_CRC_INVALID" });
 });
 
 test("verifyPromptPayPayload rejects non-THB currency", () => {
-  const body = buildPromptPayPayload(5000).replace("5303764", "5303840").slice(0, -4);
+  const body = buildPromptPayPayload(56).replace("5303764", "5303840").slice(0, -4);
   const payload = body + crc16Ccitt(body);
-  assert.deepEqual(verifyPromptPayPayload(payload, 5000), { ok: false, code: "QR_CURRENCY_INVALID" });
+  assert.deepEqual(verifyPromptPayPayload(payload, 56), { ok: false, code: "QR_CURRENCY_INVALID" });
 });
 
 test("verifyPromptPayPayload rejects malformed input", () => {
-  assert.deepEqual(verifyPromptPayPayload("garbage", 5000), { ok: false, code: "QR_FORMAT_INVALID" });
+  assert.deepEqual(verifyPromptPayPayload("garbage", 56), { ok: false, code: "QR_FORMAT_INVALID" });
 });
 
 test("decodeQrDataUrl returns the payload from a PNG data URL", async () => {
-  const payload = buildPromptPayPayload(5000);
-  assert.equal(await decodeQrDataUrl(await buildPromptPayDataUrl(5000)), payload);
+  const payload = buildPromptPayPayload(56);
+  assert.equal(await decodeQrDataUrl(await buildPromptPayDataUrl(56)), payload);
 });
 
 test("decodeQrDataUrl rejects non-PNG data URLs", async () => {
@@ -90,12 +90,12 @@ test("payload crypto rejects keys that are not 32 bytes", () => {
 const pngBytesOf = (dataUrl: string) => Buffer.from(dataUrl.slice("data:image/png;base64,".length), "base64");
 
 test("decodeQrDataUrl rejects a non-PNG image labelled as PNG (magic bytes)", async () => {
-  const jpeg = await sharp(pngBytesOf(await buildPromptPayDataUrl(5000))).jpeg({ quality: 100 }).toBuffer();
+  const jpeg = await sharp(pngBytesOf(await buildPromptPayDataUrl(56))).jpeg({ quality: 100 }).toBuffer();
   await assert.rejects(decodeQrDataUrl(`data:image/png;base64,${jpeg.toString("base64")}`), /QR_IMAGE_INVALID/);
 });
 
 test("decodeQrDataUrl rejects PNGs over 4,000,000 pixels", async () => {
-  const qr = pngBytesOf(await buildPromptPayDataUrl(5000));
+  const qr = pngBytesOf(await buildPromptPayDataUrl(56));
   const huge = await sharp({ create: { width: 2001, height: 2000, channels: 3, background: "#ffffff" } })
     .composite([{ input: qr, top: 0, left: 0 }])
     .png()
@@ -106,5 +106,11 @@ test("decodeQrDataUrl rejects PNGs over 4,000,000 pixels", async () => {
     .composite([{ input: qr, top: 0, left: 0 }])
     .png()
     .toBuffer();
-  assert.equal(await decodeQrDataUrl(`data:image/png;base64,${fits.toString("base64")}`), buildPromptPayPayload(5000));
+  assert.equal(await decodeQrDataUrl(`data:image/png;base64,${fits.toString("base64")}`), buildPromptPayPayload(56));
+});
+
+test("verifyPromptPayPayload rejects a satang amount in tag 54", () => {
+  const body = buildPromptPayPayload(56).replace("540556.00", "540556.50").slice(0, -4);
+  const payload = body + crc16Ccitt(body);
+  assert.deepEqual(verifyPromptPayPayload(payload, 56), { ok: false, code: "QR_AMOUNT_MISMATCH" });
 });

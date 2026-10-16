@@ -82,7 +82,7 @@ export async function issueQrForAttempt(ctx: MerchContext, attemptId: string): P
   try {
     result = await ctx.payso.createQr({
       referenceNo: row.attempt.referenceNo,
-      amountMinor: row.attempt.amount,
+      amountBaht: row.attempt.amount,
       productDetail: productDetailFor(row.orderNumber),
       customerName: sanitizeProviderText(row.buyerName, 100),
       customerEmail: row.buyerEmail,

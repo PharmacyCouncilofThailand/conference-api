@@ -108,7 +108,7 @@ export function classifyCreateQr(status: number, body: string, input: CreateQrIn
     return { kind: "unknown", code: "QR_IDENTITY_MISMATCH" };
   }
   if (String(data.referenceNo) !== input.referenceNo) return { kind: "unknown", code: "QR_IDENTITY_MISMATCH" };
-  if (parseProviderTotal(data.total) !== input.amountMinor) return { kind: "unknown", code: "QR_AMOUNT_MISMATCH" };
+  if (parseProviderTotal(data.total) !== input.amountBaht) return { kind: "unknown", code: "QR_AMOUNT_MISMATCH" };
   if (typeof data.image !== "string" || data.image === "") return { kind: "unknown", code: "QR_IMAGE_INVALID" };
 
   return {
@@ -127,7 +127,7 @@ export function isTestMarker(evidence: InquiryEvidence): boolean {
 
 function classifyRecord(
   record: Record<string, unknown>,
-  ctx: { referenceNo: string; amountMinor: number; merchantId: string; nodeEnv: string },
+  ctx: { referenceNo: string; amountBaht: number; merchantId: string; nodeEnv: string },
 ): { verdict: "paid" | "mismatch" | "not_paid"; reason?: ReviewReason; evidence: InquiryEvidence } {
   const paidRaw = text(record.PaidDate);
   const paidAt = parseBangkokTime(paidRaw ? paidRaw : text(record.PaymentDate));
@@ -136,7 +136,7 @@ function classifyRecord(
     orderNo: text(record.OrderNo),
     transactionId: text(record.TransactionID),
     merchantId: text(record.MerchantID) ?? "",
-    totalMinor: parseProviderTotal(record.Total),
+    totalBaht: parseProviderTotal(record.Total),
     currencyCode: text(record.CurrencyCode) ?? "",
     status: (text(record.Status) ?? "").toUpperCase(),
     statusName: text(record.StatusName) ?? "",
@@ -152,7 +152,7 @@ function classifyRecord(
   if (!CURRENCY_OK.has(evidence.currencyCode.toUpperCase())) {
     return { verdict: "mismatch", reason: "currency_mismatch", evidence };
   }
-  if (evidence.totalMinor !== ctx.amountMinor) return { verdict: "mismatch", reason: "amount_mismatch", evidence };
+  if (evidence.totalBaht !== ctx.amountBaht) return { verdict: "mismatch", reason: "amount_mismatch", evidence };
   const testMarker = isTestMarker(evidence);
   const env = ctx.nodeEnv.trim().toLowerCase();
   const testAllowed = env === "development" || env === "test";
@@ -164,7 +164,7 @@ function classifyRecord(
 export function classifyInquiry(
   status: number,
   body: string,
-  ctx: { referenceNo: string; amountMinor: number; merchantId: string; nodeEnv: string },
+  ctx: { referenceNo: string; amountBaht: number; merchantId: string; nodeEnv: string },
 ): InquiryResult {
   if (status < 200 || status >= 300) return { kind: "error", code: "INQUIRY_HTTP_ERROR" };
   if (body.trim() === "") return { kind: "not_found" };

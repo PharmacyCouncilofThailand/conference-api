@@ -44,7 +44,7 @@ function sanitizedEvidence(evidence: InquiryEvidence, reason?: string): Record<s
     orderNo: evidence.orderNo,
     merchantId: evidence.merchantId,
     status: evidence.status,
-    totalMinor: evidence.totalMinor,
+    totalBaht: evidence.totalBaht,
     currencyCode: evidence.currencyCode,
     paidAt: evidence.paidAt ? evidence.paidAt.toISOString() : null,
     fieldNames: evidence.fieldNames,
