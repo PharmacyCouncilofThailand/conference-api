@@ -1,5 +1,25 @@
 -- Merchandise preorder module: 14 new tables + 1 sequence. Existing tables are untouched.
-CREATE SEQUENCE IF NOT EXISTS merch_payment_reference_seq START 1;
+-- Apply by hand (the drizzle journal stops at 0007); see docs/merchandise-runbook.md.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
+-- An old backup branch created same-named merch_* tables with different shapes: refuse to run
+-- over any of them instead of failing half-way or silently reusing a wrong shape.
+DO $$
+DECLARE
+  existing text;
+BEGIN
+  SELECT string_agg(name, ', ' ORDER BY ord) INTO existing
+  FROM unnest(ARRAY['merch_stores', 'merch_categories', 'merch_images', 'merch_banners', 'merch_products', 'merch_variants', 'merch_bundle_components', 'merch_cart_items', 'merch_orders', 'merch_order_items', 'merch_payment_attempts', 'merch_payment_events', 'merch_email_outbox', 'merch_audit_log', 'merch_payment_reference_seq']) WITH ORDINALITY AS t(name, ord)
+  WHERE to_regclass(name) IS NOT NULL;
+  IF existing IS NOT NULL THEN
+    RAISE EXCEPTION '0043_merchandise: already exist: %', existing
+      USING HINT = 'Rename or drop the old merch_* objects (see docs/merchandise-runbook.md) and run this file again.';
+  END IF;
+END
+$$;
+
+CREATE SEQUENCE merch_payment_reference_seq START 1;
 
 CREATE TABLE merch_stores (
   event_id integer PRIMARY KEY REFERENCES events(id),
@@ -278,3 +298,5 @@ CREATE TABLE merch_audit_log (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX merch_audit_log_entity_idx ON merch_audit_log (entity_type, entity_id, created_at);
+
+COMMIT;

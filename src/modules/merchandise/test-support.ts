@@ -113,7 +113,13 @@ export async function openMerchTestDatabase(): Promise<MerchTestDb> {
 
   try {
     await sql.unsafe(STUB_TABLES);
-    await sql.unsafe(await readFile("drizzle/0043_merchandise.sql", "utf8"));
+    // 0043 has its own BEGIN/COMMIT, which postgres.js only allows on a reserved connection.
+    const migrationConn = await sql.reserve();
+    try {
+      await migrationConn.unsafe(await readFile("drizzle/0043_merchandise.sql", "utf8"));
+    } finally {
+      migrationConn.release();
+    }
   } catch (error) {
     await close();
     throw error;
