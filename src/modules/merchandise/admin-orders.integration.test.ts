@@ -26,7 +26,7 @@ let eventId: number;
 let adminId: number;
 let adminHeaders: { authorization: string };
 let ctx: MerchContext;
-let inquireImpl: (referenceNo: string, amountMinor: number) => InquiryResult;
+let inquireImpl: (referenceNo: string, amountBaht: number) => InquiryResult;
 let mug: { id: string; m: string; l: string };
 let gift: { id: string; v: string };
 
@@ -53,14 +53,14 @@ const recipient = {
 
 const hours = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
 
-const paidResult = (referenceNo: string, amountMinor: number): InquiryResult => ({
+const paidResult = (referenceNo: string, amountBaht: number): InquiryResult => ({
   kind: "paid",
   evidence: {
     referenceNo,
     orderNo: `ORD${referenceNo}`,
     transactionId: `TX${referenceNo}`,
     merchantId: paysoConfig.merchantId,
-    totalMinor: amountMinor,
+    totalBaht: amountBaht,
     currencyCode: "00",
     status: "CP",
     statusName: "Completed",
@@ -112,7 +112,7 @@ async function placeOrder(
     orderNumber: order.orderNumber,
     attemptId: attempt.id,
     referenceNo: attempt.reference_no,
-    total: order.amounts.totalMinor,
+    total: order.amounts.totalBaht,
   };
 }
 
@@ -176,12 +176,12 @@ before(async () => {
   });
   assert.equal(store.statusCode, 200, store.body);
 
-  const mkSingle = async (nameTh: string, basePriceMinor: number, variants?: unknown[]) => {
+  const mkSingle = async (nameTh: string, basePriceBaht: number, variants?: unknown[]) => {
     const created = await admin("POST", "/products", {
       imageIds: [image.id],
       kind: "single",
       nameTh,
-      basePriceMinor,
+      basePriceBaht,
       saleEnabled: true,
     });
     assert.equal(created.statusCode, 201, created.body);
@@ -194,13 +194,13 @@ before(async () => {
     assert.equal(published.statusCode, 200, published.body);
     return published.json().data as { id: string; variants: { id: string; sizeTh: string | null }[] };
   };
-  const mugDto = await mkSingle("แก้ว Mug", 15000, [{ sizeTh: "M" }, { sizeTh: "L" }]);
+  const mugDto = await mkSingle("แก้ว Mug", 150, [{ sizeTh: "M" }, { sizeTh: "L" }]);
   mug = {
     id: mugDto.id,
     m: mugDto.variants.find((v) => v.sizeTh === "M")!.id,
     l: mugDto.variants.find((v) => v.sizeTh === "L")!.id,
   };
-  const giftDto = await mkSingle("ชุดของขวัญ", 30000);
+  const giftDto = await mkSingle("ชุดของขวัญ", 300);
   gift = { id: giftDto.id, v: giftDto.variants[0].id };
 });
 
@@ -302,7 +302,7 @@ test("detail: attempts without payload, notifications, audit; payment-checks set
     assert.ok(!Object.keys(attempt).some((k) => /payload/i.test(k)), JSON.stringify(attempt));
   }
   assert.equal(d0.attempts[0].referenceNo, o.referenceNo);
-  assert.equal(d0.attempts[0].amountMinor, o.total);
+  assert.equal(d0.attempts[0].amountBaht, o.total);
   assert.equal(d0.payment.attempt.qrPayload, null);
   assert.deepEqual(d0.notifications, []);
   assert.deepEqual(d0.audit, []);
@@ -342,14 +342,14 @@ test("edit unpaid: active QR blocks; after expiry total changes and next QR uses
   const edited = res.json().data;
   assert.equal(edited.version, 2);
   assert.equal(edited.items[0].quantity, 3);
-  assert.equal(edited.amounts.subtotalMinor, 45000);
-  assert.equal(edited.amounts.totalMinor, 50000);
+  assert.equal(edited.amounts.subtotalBaht, 450);
+  assert.equal(edited.amounts.totalBaht, 500);
   assert.equal(edited.audit.length, 1);
   assert.equal(edited.audit[0].action, "order.edit");
   assert.equal(edited.audit[0].actorId, adminId);
   assert.equal(edited.audit[0].reason, "ลูกค้าขอเพิ่มจำนวน");
-  assert.equal(edited.audit[0].before.total, 20000);
-  assert.equal(edited.audit[0].after.total, 50000);
+  assert.equal(edited.audit[0].before.total, 200);
+  assert.equal(edited.audit[0].after.total, 500);
   assert.equal(edited.audit[0].before.items[0].quantity, 1);
   assert.equal(edited.audit[0].after.items[0].quantity, 3);
 
@@ -357,7 +357,7 @@ test("edit unpaid: active QR blocks; after expiry total changes and next QR uses
   const attempts = await t.sql<{ amount: number }[]>`
     SELECT amount FROM merch_payment_attempts WHERE order_id = ${o.orderId} ORDER BY created_at DESC, id DESC`;
   assert.equal(attempts.length, 2);
-  assert.equal(attempts[0].amount, 50000);
+  assert.equal(attempts[0].amount, 500);
 });
 
 test("edit unpaid is blocked inside the 2-minute verifying window after QR expiry", { skip }, async () => {
@@ -390,7 +390,7 @@ test("old QR paid at the old amount after an edit goes to amount_mismatch review
     lines: [{ sourceItemId: itemId, quantity: 3 }],
   });
   assert.equal(edit.statusCode, 200, edit.body);
-  assert.equal(edit.json().data.amounts.totalMinor, 50000);
+  assert.equal(edit.json().data.amounts.totalBaht, 500);
 
   inquireImpl = (ref, amount) => paidResult(ref, amount);
   assert.equal(
@@ -461,7 +461,7 @@ test("edit paid: contact required, total must match, same-price variant swap is 
   const d = swap.json().data;
   assert.equal(d.items.length, 1);
   assert.equal(d.items[0].sizeTh, "L");
-  assert.equal(d.amounts.totalMinor, o.total);
+  assert.equal(d.amounts.totalBaht, o.total);
   assert.equal(d.paymentStatus, "paid");
   assert.equal(d.audit[0].contactNote, "โทรยืนยันกับลูกค้า 16 ต.ค.");
   const [row] = await t.sql<{ contact_confirmed: boolean; contact_note: string }[]>`
@@ -474,7 +474,7 @@ test("edit keeps original unit_price of existing lines after a catalog price cha
   const o = await placeOrder([{ productId: mug.id, variantId: mug.m, quantity: 1 }]);
   await expireAgo(o.attemptId, 300);
   const itemId = (await detail(o.orderId)).items[0].id;
-  await t.sql`UPDATE merch_products SET base_price = 20000 WHERE id = ${mug.id}`;
+  await t.sql`UPDATE merch_products SET base_price = 200 WHERE id = ${mug.id}`;
   try {
     const res = await admin("PATCH", `/orders/${o.orderId}`, {
       expectedVersion: 1,
@@ -487,15 +487,15 @@ test("edit keeps original unit_price of existing lines after a catalog price cha
     });
     assert.equal(res.statusCode, 200, res.body);
     const d = res.json().data;
-    assert.equal(d.items[0].unitPriceMinor, 15000);
-    assert.equal(d.items[0].lineTotalMinor, 30000);
-    assert.equal(d.items[1].unitPriceMinor, 20000);
-    assert.equal(d.amounts.totalMinor, 30000 + 20000 + 5000);
+    assert.equal(d.items[0].unitPriceBaht, 150);
+    assert.equal(d.items[0].lineTotalBaht, 300);
+    assert.equal(d.items[1].unitPriceBaht, 200);
+    assert.equal(d.amounts.totalBaht, 300 + 200 + 50);
     assert.equal(d.recipient.addressLine, "1 ถนนใหม่");
     assert.equal(d.audit[0].before.recipient.addressLine, recipient.addressLine);
     assert.equal(d.audit[0].after.recipient.addressLine, "1 ถนนใหม่");
   } finally {
-    await t.sql`UPDATE merch_products SET base_price = 15000 WHERE id = ${mug.id}`;
+    await t.sql`UPDATE merch_products SET base_price = 150 WHERE id = ${mug.id}`;
   }
 });
 
@@ -552,7 +552,7 @@ test("reviews: duplicate payment listed, resolve audited, second resolve conflic
   assert.equal(row.orderId, o.orderId);
   assert.equal(row.orderNumber, o.orderNumber);
   assert.equal(row.referenceNo, b.reference_no);
-  assert.equal(row.amountMinor, o.total);
+  assert.equal(row.amountBaht, o.total);
   assert.equal(row.resolvedAt, null);
 
   const noNote = await admin("POST", `/payment-attempts/${b.id}/resolve-review`, {});

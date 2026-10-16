@@ -18,7 +18,7 @@ import type { MerchRouteOptions } from "./types.js";
 export function fakePayso(
   script: Partial<{
     createQr: (input: CreateQrInput) => CreateQrResult | Promise<CreateQrResult>;
-    inquire: (referenceNo: string, amountMinor: number) => InquiryResult | Promise<InquiryResult>;
+    inquire: (referenceNo: string, amountBaht: number) => InquiryResult | Promise<InquiryResult>;
   }> = {},
 ): PaysoClient & { calls: { createQr: CreateQrInput[]; inquire: string[] } } {
   const calls = { createQr: [] as CreateQrInput[], inquire: [] as string[] };
@@ -35,12 +35,12 @@ export function fakePayso(
         providerOrderNo: `PO${input.referenceNo}`,
         createdRaw: bangkok(created),
         expiresRaw: bangkok(created + 10 * 60_000),
-        payload: buildPromptPayPayload(input.amountMinor),
+        payload: buildPromptPayPayload(input.amountBaht),
       };
     },
-    async inquire(referenceNo, amountMinor) {
+    async inquire(referenceNo, amountBaht) {
       calls.inquire.push(referenceNo);
-      if (script.inquire) return script.inquire(referenceNo, amountMinor);
+      if (script.inquire) return script.inquire(referenceNo, amountBaht);
       return { kind: "not_found" };
     },
   };

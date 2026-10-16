@@ -81,7 +81,7 @@ after(async () => {
 });
 
 test("create: single gets default variant, bundle gets none, image and kind rules", { skip }, async () => {
-  const single = await mkProduct({ kind: "single", nameTh: "เสื้อ", basePriceMinor: 25000, imageIds: [imageId] });
+  const single = await mkProduct({ kind: "single", nameTh: "เสื้อ", basePriceBaht: 250, imageIds: [imageId] });
   assert.equal(single.kind, "single");
   assert.equal(single.publishState, "draft");
   assert.equal(single.version, 1);
@@ -90,7 +90,7 @@ test("create: single gets default variant, bundle gets none, image and kind rule
   assert.equal(single.variants[0].colorTh, null);
   assert.equal(single.images.length, 1);
 
-  const bundle = await mkProduct({ kind: "bundle", nameTh: "ชุด", basePriceMinor: 50000 });
+  const bundle = await mkProduct({ kind: "bundle", nameTh: "ชุด", basePriceBaht: 500 });
   assert.equal(bundle.variants.length, 0);
 
   const badImage = await call("POST", "/products", { kind: "single", nameTh: "x", imageIds: [otherImageId] });
@@ -129,25 +129,25 @@ test("variants: replace semantics, shape, duplicate, bundle reference", { skip }
   const defaultId = shirt.variants[0].id;
 
   const mixed = await call("PUT", `/products/${shirt.id}/variants`, {
-    variants: [{ id: defaultId }, { sizeTh: "S", price: 25000 }],
+    variants: [{ id: defaultId }, { sizeTh: "S", priceBaht: 250 }],
   });
   assert.equal(mixed.statusCode, 422);
   assert.equal(mixed.json().code, "MERCH_VARIANT_SHAPE_MIXED");
 
   const dup = await call("PUT", `/products/${shirt.id}/variants`, {
-    variants: [{ sizeTh: "S", colorTh: "ดำ", price: 1 }, { sizeTh: "S", colorTh: "ดำ", price: 2 }],
+    variants: [{ sizeTh: "S", colorTh: "ดำ", priceBaht: 1 }, { sizeTh: "S", colorTh: "ดำ", priceBaht: 2 }],
   });
   assert.equal(dup.statusCode, 422);
   assert.equal(dup.json().code, "MERCH_VARIANT_DUPLICATE");
 
   const ok = await call("PUT", `/products/${shirt.id}/variants`, [
-    { sizeTh: "S", price: 25000 },
-    { sizeTh: "M", price: 30000 },
+    { sizeTh: "S", priceBaht: 250 },
+    { sizeTh: "M", priceBaht: 300 },
   ]);
   assert.equal(ok.statusCode, 200, ok.body);
   const v = ok.json().data.variants;
   assert.deepEqual(v.map((x: { sizeTh: string }) => x.sizeTh), ["S", "M"]);
-  assert.deepEqual(v.map((x: { priceMinor: number }) => x.priceMinor), [25000, 30000]);
+  assert.deepEqual(v.map((x: { priceBaht: number }) => x.priceBaht), [250, 300]);
   assert.equal(ok.json().data.version, 2);
   const gone = await t.sql`SELECT id FROM merch_variants WHERE id = ${defaultId}`;
   assert.equal(gone.length, 0);
@@ -156,9 +156,9 @@ test("variants: replace semantics, shape, duplicate, bundle reference", { skip }
   const [s, m] = v;
   const swapped = await call("PUT", `/products/${shirt.id}/variants`, {
     variants: [
-      { id: s.id, sizeTh: "M", price: 25000 },
-      { id: m.id, sizeTh: "S", price: 30000 },
-      { sizeTh: "L", price: 31000, saleEnabled: false },
+      { id: s.id, sizeTh: "M", priceBaht: 250 },
+      { id: m.id, sizeTh: "S", priceBaht: 300 },
+      { sizeTh: "L", priceBaht: 310, saleEnabled: false },
     ],
   });
   assert.equal(swapped.statusCode, 200, swapped.body);
@@ -173,7 +173,7 @@ test("variants: replace semantics, shape, duplicate, bundle reference", { skip }
   assert.equal(foreign.statusCode, 422);
   assert.equal(foreign.json().code, "MERCH_VARIANT_INVALID");
 
-  const bundle = await mkProduct({ kind: "bundle", nameTh: "ชุดเสื้อ", basePriceMinor: 60000 });
+  const bundle = await mkProduct({ kind: "bundle", nameTh: "ชุดเสื้อ", basePriceBaht: 600 });
   const bundleVariants = await call("PUT", `/products/${bundle.id}/variants`, { variants: [{ sizeTh: "S" }] });
   assert.equal(bundleVariants.statusCode, 422);
   assert.equal(bundleVariants.json().code, "MERCH_PRODUCT_KIND_INVALID");
@@ -186,7 +186,7 @@ test("variants: replace semantics, shape, duplicate, bundle reference", { skip }
   assert.equal(comp.json().data.components[0].fixedVariantId, s.id);
 
   const removeUsed = await call("PUT", `/products/${shirt.id}/variants`, {
-    variants: [{ id: m.id, sizeTh: "S", price: 30000 }],
+    variants: [{ id: m.id, sizeTh: "S", priceBaht: 300 }],
   });
   assert.equal(removeUsed.statusCode, 422);
   assert.equal(removeUsed.json().code, "MERCH_VARIANT_IN_BUNDLE");
@@ -194,10 +194,22 @@ test("variants: replace semantics, shape, duplicate, bundle reference", { skip }
   assert.equal(still.length, 1);
 });
 
+test("variants: price input accepts only whole-baht priceBaht", { skip }, async () => {
+  const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อบาท", imageIds: [imageId] });
+  for (const bad of [{ priceMinor: 600 }, { price: 600 }, { priceBaht: 6.5 }, { priceBaht: 1_000_001 }]) {
+    const res = await call("PUT", `/products/${shirt.id}/variants`, { variants: [{ sizeTh: "S", ...bad }] });
+    assert.equal(res.statusCode, 400, `${JSON.stringify(bad)} -> ${res.body}`);
+  }
+  const ok = await call("PUT", `/products/${shirt.id}/variants`, { variants: [{ sizeTh: "S", priceBaht: 6 }] });
+  assert.equal(ok.statusCode, 200, ok.body);
+  const [row] = await t.sql<{ price: number }[]>`SELECT price FROM merch_variants WHERE product_id = ${shirt.id}`;
+  assert.equal(row.price, 6);
+});
+
 test("components: only single products, validated variants, replace", { skip }, async () => {
   const shirt = await mkProduct({ kind: "single", nameTh: "คอมโพเนนต์", imageIds: [imageId] });
-  const bundleA = await mkProduct({ kind: "bundle", nameTh: "A", basePriceMinor: 100 });
-  const bundleB = await mkProduct({ kind: "bundle", nameTh: "B", basePriceMinor: 100 });
+  const bundleA = await mkProduct({ kind: "bundle", nameTh: "A", basePriceBaht: 100 });
+  const bundleB = await mkProduct({ kind: "bundle", nameTh: "B", basePriceBaht: 100 });
   const variantId = shirt.variants[0].id;
 
   const nested = await call("PUT", `/products/${bundleA.id}/components`, {
@@ -249,7 +261,7 @@ test("publish: incomplete 422 with issues, complete publishes, unpublish returns
   assert.ok(res.json().details.issues.includes("IMAGE_REQUIRED"));
   assert.ok(res.json().details.issues.includes("VARIANT_PRICE_REQUIRED"));
 
-  const full = await mkProduct({ kind: "single", nameTh: "ครบ", basePriceMinor: 10000, imageIds: [imageId] });
+  const full = await mkProduct({ kind: "single", nameTh: "ครบ", basePriceBaht: 100, imageIds: [imageId] });
   assert.deepEqual(full.publishIssues, []);
   const pub = await call("POST", `/products/${full.id}/publish`, {});
   assert.equal(pub.statusCode, 200, pub.body);
@@ -316,11 +328,11 @@ test("preview: drafts included, purchasable computed as open", { skip }, async (
   const shop = await t.createEvent();
   const img = await insertImage(shop);
   const draft = await mkProduct(
-    { kind: "single", nameTh: "draft", basePriceMinor: 100, imageIds: [img], saleEnabled: true },
+    { kind: "single", nameTh: "draft", basePriceBaht: 100, imageIds: [img], saleEnabled: true },
     shop,
   );
   const published = await mkProduct(
-    { kind: "single", nameTh: "pub", basePriceMinor: 100, imageIds: [img], saleEnabled: true },
+    { kind: "single", nameTh: "pub", basePriceBaht: 100, imageIds: [img], saleEnabled: true },
     shop,
   );
   const pubRes = await call("POST", `/products/${published.id}/publish`, {}, shop);

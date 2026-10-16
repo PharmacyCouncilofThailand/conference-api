@@ -31,7 +31,7 @@ let productId: string;
 let variantId: string;
 let payso: ReturnType<typeof fakePayso>;
 let ctx: MerchContext;
-let inquireImpl: (referenceNo: string, amountMinor: number) => InquiryResult | Promise<InquiryResult>;
+let inquireImpl: (referenceNo: string, amountBaht: number) => InquiryResult | Promise<InquiryResult>;
 /** What the postback route fires after replying; tests switch it and await `background`. */
 let fireReconcile: (ctx: MerchContext, attemptId: string) => Promise<void>;
 let background: Promise<void>[] = [];
@@ -59,14 +59,14 @@ const recipient = {
 
 const hours = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
 
-const paid = (referenceNo: string, amountMinor: number): InquiryResult => ({
+const paid = (referenceNo: string, amountBaht: number): InquiryResult => ({
   kind: "paid",
   evidence: {
     referenceNo,
     orderNo: `ORD${referenceNo}`,
     transactionId: `TX${referenceNo}`,
     merchantId: paysoConfig.merchantId,
-    totalMinor: amountMinor,
+    totalBaht: amountBaht,
     currencyCode: "00",
     status: "CP",
     statusName: "Completed",
@@ -173,7 +173,7 @@ before(async () => {
     imageIds: [image.id],
     kind: "single",
     nameTh: "เสื้อยืด",
-    basePriceMinor: 25000,
+    basePriceBaht: 250,
     saleEnabled: true,
   });
   assert.equal(created.statusCode, 201, created.body);

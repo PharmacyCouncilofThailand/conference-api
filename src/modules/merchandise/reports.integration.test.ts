@@ -56,14 +56,14 @@ const recipient = {
 
 const hours = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
 
-const paidResult = (referenceNo: string, amountMinor: number): InquiryResult => ({
+const paidResult = (referenceNo: string, amountBaht: number): InquiryResult => ({
   kind: "paid",
   evidence: {
     referenceNo,
     orderNo: `ORD${referenceNo}`,
     transactionId: `TX${referenceNo}`,
     merchantId: paysoConfig.merchantId,
-    totalMinor: amountMinor,
+    totalBaht: amountBaht,
     currencyCode: "00",
     status: "CP",
     statusName: "Completed",
@@ -115,7 +115,7 @@ async function placeOrder(
     orderNumber: order.orderNumber,
     attemptId: attempt.id,
     referenceNo: attempt.reference_no,
-    total: order.amounts.totalMinor,
+    total: order.amounts.totalBaht,
   };
 }
 
@@ -181,12 +181,12 @@ before(async () => {
   });
   assert.equal(store.statusCode, 200, store.body);
 
-  const mkSingle = async (nameTh: string, basePriceMinor: number, variants?: unknown[]) => {
+  const mkSingle = async (nameTh: string, basePriceBaht: number, variants?: unknown[]) => {
     const created = await admin("POST", "/products", {
       imageIds: [image.id],
       kind: "single",
       nameTh,
-      basePriceMinor,
+      basePriceBaht,
       saleEnabled: true,
     });
     assert.equal(created.statusCode, 201, created.body);
@@ -199,15 +199,15 @@ before(async () => {
     assert.equal(published.statusCode, 200, published.body);
     return published.json().data as { id: string; variants: { id: string; sizeTh: string | null }[] };
   };
-  const mugDto = await mkSingle("Mug", 15000, [{ sizeTh: "S" }, { sizeTh: "M" }]);
+  const mugDto = await mkSingle("Mug", 150, [{ sizeTh: "S" }, { sizeTh: "M" }]);
   mug = {
     id: mugDto.id,
     s: mugDto.variants.find((v) => v.sizeTh === "S")!.id,
     m: mugDto.variants.find((v) => v.sizeTh === "M")!.id,
   };
-  bag = { id: (await mkSingle("กระเป๋า", 20000)).id };
-  book = { id: (await mkSingle("สมุด", 5000)).id };
-  const giftDto = await mkSingle("ชุดของขวัญ", 30000);
+  bag = { id: (await mkSingle("กระเป๋า", 200)).id };
+  book = { id: (await mkSingle("สมุด", 50)).id };
+  const giftDto = await mkSingle("ชุดของขวัญ", 300);
   gift = { id: giftDto.id, v: giftDto.variants[0].id };
 });
 
@@ -339,6 +339,11 @@ test("orders export: sheets, text cells, formula escape, filters, ignores paging
   assert.equal(ra.getCell(col("โทร")).type, ExcelJS.ValueType.String);
   assert.equal(ra.getCell(col("โทร")).value, "0812345678");
   assert.equal(ra.getCell(col("ยอดรวม")).type, ExcelJS.ValueType.Number);
+  // money cells are whole baht as stored (Mug 150 x 2 + shipping 50)
+  assert.equal(ra.getCell(col("ค่าสินค้า")).value, 300);
+  assert.equal(ra.getCell(col("ค่าส่ง")).value, 50);
+  assert.equal(ra.getCell(col("ยอดรวม")).value, a.total);
+  assert.equal(a.total, 350);
 
   const items = wb.getWorksheet("รายการสินค้า")!;
   const itemRows: unknown[][] = [];

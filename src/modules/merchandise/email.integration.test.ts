@@ -28,7 +28,7 @@ let eventId: number;
 let adminId: number;
 let adminHeaders: { authorization: string };
 let ctx: MerchContext;
-let inquireImpl: (referenceNo: string, amountMinor: number) => InquiryResult;
+let inquireImpl: (referenceNo: string, amountBaht: number) => InquiryResult;
 let mug: { id: string; m: string; l: string };
 let gift: { id: string; v: string };
 
@@ -98,7 +98,7 @@ async function placeOrder(
     orderNumber: order.orderNumber,
     attemptId: attempt.id,
     referenceNo: attempt.reference_no,
-    total: order.amounts.totalMinor,
+    total: order.amounts.totalBaht,
   };
 }
 
@@ -134,12 +134,12 @@ before(async () => {
   });
   assert.equal(store.statusCode, 200, store.body);
 
-  const mkSingle = async (nameTh: string, basePriceMinor: number, variants?: unknown[]) => {
+  const mkSingle = async (nameTh: string, basePriceBaht: number, variants?: unknown[]) => {
     const created = await admin("POST", "/products", {
       imageIds: [image.id],
       kind: "single",
       nameTh,
-      basePriceMinor,
+      basePriceBaht,
       saleEnabled: true,
     });
     assert.equal(created.statusCode, 201, created.body);
@@ -152,13 +152,13 @@ before(async () => {
     assert.equal(published.statusCode, 200, published.body);
     return published.json().data as { id: string; variants: { id: string; sizeTh: string | null }[] };
   };
-  const mugDto = await mkSingle("แก้ว Mug", 15000, [{ sizeTh: "M" }, { sizeTh: "L" }]);
+  const mugDto = await mkSingle("แก้ว Mug", 150, [{ sizeTh: "M" }, { sizeTh: "L" }]);
   mug = {
     id: mugDto.id,
     m: mugDto.variants.find((v) => v.sizeTh === "M")!.id,
     l: mugDto.variants.find((v) => v.sizeTh === "L")!.id,
   };
-  const giftDto = await mkSingle("ชุดของขวัญ", 30000);
+  const giftDto = await mkSingle("ชุดของขวัญ", 300);
   gift = { id: giftDto.id, v: giftDto.variants[0].id };
 });
 

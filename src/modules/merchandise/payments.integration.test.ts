@@ -33,7 +33,7 @@ let variantId: string;
 let payso: ReturnType<typeof fakePayso>;
 let ctx: MerchContext;
 let createQrOverride: ((input: CreateQrInput) => CreateQrResult | Promise<CreateQrResult>) | null = null;
-let inquireImpl: (referenceNo: string, amountMinor: number) => InquiryResult | Promise<InquiryResult>;
+let inquireImpl: (referenceNo: string, amountBaht: number) => InquiryResult | Promise<InquiryResult>;
 
 const paysoConfig: PaysoConfig = {
   merchantId: "12345678",
@@ -58,13 +58,13 @@ const recipient = {
 
 const hours = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
 
-function evidence(referenceNo: string, amountMinor: number, extra: Partial<InquiryEvidence> = {}): InquiryEvidence {
+function evidence(referenceNo: string, amountBaht: number, extra: Partial<InquiryEvidence> = {}): InquiryEvidence {
   return {
     referenceNo,
     orderNo: `ORD${referenceNo}`,
     transactionId: `TX${referenceNo}`,
     merchantId: paysoConfig.merchantId,
-    totalMinor: amountMinor,
+    totalBaht: amountBaht,
     currencyCode: "00",
     status: "CP",
     statusName: "Completed",
@@ -74,9 +74,9 @@ function evidence(referenceNo: string, amountMinor: number, extra: Partial<Inqui
   };
 }
 
-const paid = (referenceNo: string, amountMinor: number, extra: Partial<InquiryEvidence> = {}): InquiryResult => ({
+const paid = (referenceNo: string, amountBaht: number, extra: Partial<InquiryEvidence> = {}): InquiryResult => ({
   kind: "paid",
-  evidence: evidence(referenceNo, amountMinor, extra),
+  evidence: evidence(referenceNo, amountBaht, extra),
 });
 
 type Buyer = { id: number; headers: { authorization: string } };
@@ -214,7 +214,7 @@ before(async () => {
     imageIds: [image.id],
     kind: "single",
     nameTh: "เสื้อยืด",
-    basePriceMinor: 25000,
+    basePriceBaht: 250,
     saleEnabled: true,
   });
   assert.equal(created.statusCode, 201, created.body);
@@ -396,7 +396,7 @@ test("new QR 30 s after expiry with not_found answers 409 MERCH_PAYMENT_VERIFYIN
 test("new QR 3 min after expiry with store open issues a new attempt at the current total", { skip }, async () => {
   const o = await placeOrder();
   await expireAgo(o.attemptId, 180);
-  await t.sql`UPDATE merch_orders SET total = 56000 WHERE id = ${o.orderId}`;
+  await t.sql`UPDATE merch_orders SET total = 560 WHERE id = ${o.orderId}`;
   payso.calls.createQr.length = 0;
   const res = await postAttempt(o.buyer, o.orderId);
   assert.equal(res.statusCode, 200, res.body);
@@ -406,7 +406,7 @@ test("new QR 3 min after expiry with store open issues a new attempt at the curr
   assert.notEqual(view.attempt.referenceNo, o.referenceNo);
   assert.ok(view.attempt.qrPayload);
   assert.equal(payso.calls.createQr.length, 1);
-  assert.equal(payso.calls.createQr[0].amountMinor, 56000);
+  assert.equal(payso.calls.createQr[0].amountBaht, 560);
   const rows = await attemptRows(o.orderId);
   assert.equal(rows.length, 2);
   const old = rows.find((r) => r.id === o.attemptId)!;
@@ -414,7 +414,7 @@ test("new QR 3 min after expiry with store open issues a new attempt at the curr
   assert.equal(old.qr_payload_enc, null);
   const fresh = rows.find((r) => r.id !== o.attemptId)!;
   assert.equal(fresh.status, "active");
-  assert.equal(fresh.amount, 56000);
+  assert.equal(fresh.amount, 560);
 });
 
 test("new QR 3 min after expiry with store closed answers 409 MERCH_PREORDER_CLOSED", { skip }, async () => {

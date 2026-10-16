@@ -92,7 +92,7 @@ function toVariantDto(product: ProductRow, variant: VariantRow): VariantDto {
     id: variant.id,
     sizeTh: variant.sizeTh,
     colorTh: variant.colorTh,
-    priceMinor: effectiveVariantPrice(product, variant),
+    priceBaht: effectiveVariantPrice(product, variant),
     saleEnabled: variant.saleEnabled,
   };
 }
@@ -178,7 +178,7 @@ export function toAdminProductDto(
     sortOrder: product.sortOrder,
     publishState: product.publishState as "draft" | "published",
     saleEnabled: product.saleEnabled,
-    basePriceMinor: product.basePrice,
+    basePriceBaht: product.basePrice,
     version: product.version,
     variants: (catalog.variantsByProduct.get(productId) ?? []).map((v) => ({
       ...toVariantDto(product, v),
@@ -234,7 +234,7 @@ export async function toStoreDto(
     closesAt: row?.closesAt?.toISOString() ?? null,
     productionInfoTh: row?.productionInfoTh ?? null,
     shippingInfoTh: row?.shippingInfoTh ?? null,
-    shippingMinor: 5000,
+    shippingBaht: 50,
     currency: "THB",
     serverNow: now.toISOString(),
     categories: categories.map((c) => ({ id: c.id, nameTh: c.nameTh, sortOrder: c.sortOrder })),

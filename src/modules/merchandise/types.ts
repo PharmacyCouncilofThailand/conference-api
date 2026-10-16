@@ -17,13 +17,13 @@ export interface StoreDto {
   state: "disabled" | "not_open" | "open" | "closed";
   opensAt: string | null; closesAt: string | null;
   productionInfoTh: string | null; shippingInfoTh: string | null;
-  shippingMinor: 5000; currency: "THB"; serverNow: string;
+  shippingBaht: 50; currency: "THB"; serverNow: string;
   categories: { id: string; nameTh: string; sortOrder: number }[];
   banners: { id: string; image: ImageAsset; linkUrl: string | null }[];
 }
 export interface VariantDto {
   id: string; sizeTh: string | null; colorTh: string | null;
-  priceMinor: Minor | null; saleEnabled: boolean;
+  priceBaht: Baht | null; saleEnabled: boolean;
 }
 export interface BundleComponentDto {
   id: string; productId: string; nameTh: string; quantityPerBundle: number;
@@ -35,17 +35,17 @@ export interface ProductDto {
   images: ImageAsset[]; categoryId: string | null; sortOrder: number;
   hasOptions: boolean; // false = hide the option picker
   variants: VariantDto[]; components: BundleComponentDto[];
-  price: { kind: "exact" | "from"; amountMinor: Minor } | null;
+  price: { kind: "exact" | "from"; amountBaht: Baht } | null;
   purchasable: boolean; unavailableCodes: string[];
 }
 export interface BundleSelection { componentId: string; variantId: string }
 export interface CartLine {
   id: string; productId: string; variantId: string | null; bundleSelections: BundleSelection[];
   quantity: number; product: ProductDto | null;
-  unitPriceMinor: Minor | null; lineTotalMinor: Minor | null;
+  unitPriceBaht: Baht | null; lineTotalBaht: Baht | null;
   valid: boolean; issueCodes: string[];
 }
-export interface Amounts { subtotalMinor: Minor; shippingMinor: 5000; totalMinor: Minor; currency: "THB" }
+export interface Amounts { subtotalBaht: Baht; shippingBaht: 50; totalBaht: Baht; currency: "THB" }
 export interface CartDto {
   cartVersion: string; items: CartLine[]; amounts: Amounts | null;
   buyerDefaults: { fullName: string; phone: string | null; email: string };
@@ -58,7 +58,7 @@ export interface Recipient {
 }
 export interface OrderItemDto {
   id: string; kind: "single" | "bundle"; nameTh: string; sizeTh: string | null; colorTh: string | null;
-  quantity: number; unitPriceMinor: Minor; lineTotalMinor: Minor;
+  quantity: number; unitPriceBaht: Baht; lineTotalBaht: Baht;
   components: { nameTh: string; sizeTh: string | null; colorTh: string | null; quantityPerBundle: number }[];
 }
 export interface OrderSummary {
@@ -95,7 +95,7 @@ export interface OrderDetail extends OrderSummary {
 export interface AdminOrderDetail extends OrderDetail {
   version: number;
   attempts: { id: string; referenceNo: string; providerOrderNo: string | null; transactionId: string | null;
-    amountMinor: Minor; status: string; requestedAt: string; expiresAt: string | null; paidAt: string | null;
+    amountBaht: Baht; status: string; requestedAt: string; expiresAt: string | null; paidAt: string | null;
     lastCheckAt: string | null; lastCheckResult: string | null; reviewReason: string | null; reviewResolvedAt: string | null }[];
   notifications: { type: "paid" | "shipped"; status: string; attempts: number; lastErrorCode: string | null; sentAt: string | null }[];
   audit: { action: string; actorId: number | null; reason: string | null; contactNote: string | null; createdAt: string; before: unknown; after: unknown }[];
@@ -113,7 +113,7 @@ export interface AdminComponentDto {
 export interface AdminProductDto {
   id: string; kind: "single" | "bundle"; nameTh: string; descriptionTh: string | null; sizeChartTh: string | null;
   images: ImageAsset[]; categoryId: string | null; sortOrder: number;
-  publishState: "draft" | "published"; saleEnabled: boolean; basePriceMinor: Minor | null; version: number;
+  publishState: "draft" | "published"; saleEnabled: boolean; basePriceBaht: Baht | null; version: number;
   variants: AdminVariantDto[]; components: AdminComponentDto[];
   publishIssues: string[]; // what is missing before publish (empty = publishable)
   purchasable: boolean; unavailableCodes: string[];
@@ -123,6 +123,6 @@ export interface AdminBannerDto { id: string; image: ImageAsset; linkUrl: string
 export interface AdminStoreDto extends StoreDto { enabled: boolean; version: number }
 export interface BatchRowResult { id: string; ok: boolean; code: string | null; error: string | null }
 export interface PaymentReviewDto {
-  attemptId: string; orderId: string; orderNumber: string; referenceNo: string; amountMinor: Minor;
+  attemptId: string; orderId: string; orderNumber: string; referenceNo: string; amountBaht: Baht;
   reviewReason: string; createdAt: string; resolvedAt: string | null; note: string | null;
 }

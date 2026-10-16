@@ -107,12 +107,12 @@ test("store: envelope, null productionInfoTh when empty, disabled without store 
   assert.equal(res.json().data.state, "open");
   assert.equal(res.json().data.eventCode, eventCode);
   assert.equal(res.json().data.productionInfoTh, null);
-  assert.equal(res.json().data.shippingMinor, 5000);
+  assert.equal(res.json().data.shippingBaht, 50);
 });
 
 test("products: drafts hidden, hasOptions, purchasable, 404 by id for draft", { skip }, async () => {
-  const draft = await mkProduct({ kind: "single", nameTh: "ร่าง", basePriceMinor: 10000 }, false);
-  const plain = await mkProduct({ kind: "single", nameTh: "สติกเกอร์", basePriceMinor: 5000, saleEnabled: true });
+  const draft = await mkProduct({ kind: "single", nameTh: "ร่าง", basePriceBaht: 100 }, false);
+  const plain = await mkProduct({ kind: "single", nameTh: "สติกเกอร์", basePriceBaht: 50, saleEnabled: true });
 
   const list = await app.inject({ method: "GET", url: pub("/products") });
   assert.equal(list.statusCode, 200, list.body);
@@ -142,7 +142,7 @@ test("products: pagination, kind and category filters, validation", { skip }, as
   const cat = await admin("POST", "/categories", { nameTh: "หมวด" });
   assert.equal(cat.statusCode, 201, cat.body);
   const categoryId = cat.json().data.id;
-  await mkProduct({ kind: "single", nameTh: "ในหมวด", basePriceMinor: 100, categoryId, saleEnabled: true });
+  await mkProduct({ kind: "single", nameTh: "ในหมวด", basePriceBaht: 100, categoryId, saleEnabled: true });
   const total = (await app.inject({ method: "GET", url: pub("/products") })).json().data.pagination.total;
   assert.ok(total >= 2);
 
@@ -169,7 +169,7 @@ test("products: pagination, kind and category filters, validation", { skip }, as
 });
 
 test("products with options report hasOptions=true", { skip }, async () => {
-  const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อ", basePriceMinor: 20000, saleEnabled: true }, false);
+  const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อ", basePriceBaht: 200, saleEnabled: true }, false);
   const v = await admin("PUT", `/products/${shirt.id}/variants`, {
     variants: [{ sizeTh: "S" }, { sizeTh: "M" }],
   });
@@ -195,11 +195,11 @@ test("closed store: products still listed, purchasable=false with STORE_NOT_OPEN
 });
 
 test("bundle with draft component keeps a non-empty component name and is unpurchasable", { skip }, async () => {
-  const comp = await mkProduct({ kind: "single", nameTh: "ส่วนประกอบร่าง", basePriceMinor: 3000, saleEnabled: true });
+  const comp = await mkProduct({ kind: "single", nameTh: "ส่วนประกอบร่าง", basePriceBaht: 30, saleEnabled: true });
   const detail = await admin("GET", `/products/${comp.id}`);
   const variantId = detail.json().data.variants[0].id;
   const bundle = await mkProduct(
-    { kind: "bundle", nameTh: "ชุดพิเศษ", basePriceMinor: 9000, saleEnabled: true },
+    { kind: "bundle", nameTh: "ชุดพิเศษ", basePriceBaht: 90, saleEnabled: true },
     false,
   );
   const put = await admin("PUT", `/products/${bundle.id}/components`, {

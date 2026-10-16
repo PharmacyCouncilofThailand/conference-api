@@ -154,7 +154,7 @@ before(async () => {
     imageIds: [image.id],
     kind: "single",
     nameTh: "เสื้อยืด",
-    basePriceMinor: 25000,
+    basePriceBaht: 250,
     saleEnabled: true,
   });
   assert.equal(created.statusCode, 201, created.body);
@@ -184,19 +184,19 @@ test("happy path: 201, order number, amounts, cart emptied, active QR stored enc
   firstOrderId = order.id;
   assert.equal(replayed, false);
   assert.equal(order.orderNumber, "PRIS2026-M-000001");
-  assert.deepEqual(order.amounts, { subtotalMinor: 50000, shippingMinor: 5000, totalMinor: 55000, currency: "THB" });
+  assert.deepEqual(order.amounts, { subtotalBaht: 500, shippingBaht: 50, totalBaht: 550, currency: "THB" });
   assert.equal(order.paymentStatus, "pending");
   assert.equal(order.recipient.phone, "0812345678");
   assert.equal(order.buyer.phone, "0899999999");
   assert.equal(order.items.length, 1);
   assert.equal(order.items[0].nameTh, "เสื้อยืด");
   assert.equal(order.items[0].quantity, 2);
-  assert.equal(order.items[0].unitPriceMinor, 25000);
+  assert.equal(order.items[0].unitPriceBaht, 250);
   assert.equal(order.productionInfoTh, "ผลิตหลังปิดรับ");
   assert.equal(order.payment.state, "qr_active");
   assert.equal(order.payment.canRequestNewQr, false);
   const payload = order.payment.attempt.qrPayload as string;
-  assert.ok(verifyPromptPayPayload(payload, 55000).ok, "payload is a PromptPay QR for 550.00");
+  assert.ok(verifyPromptPayPayload(payload, 550).ok, "payload is a PromptPay QR for 550.00");
   assert.match(payload, /5406550\.00/);
 
   const cart = await app.inject({
@@ -213,7 +213,7 @@ test("happy path: 201, order number, amounts, cart emptied, active QR stored enc
   assert.notDeepEqual(Buffer.from(attempt.qr_payload_enc), Buffer.from(payload, "utf8"));
   assert.ok(!Buffer.from(attempt.qr_payload_enc).includes(Buffer.from("550.00")));
   assert.match(payso.calls.createQr[0].referenceNo, /^7\d{11}$/);
-  assert.equal(payso.calls.createQr[0].amountMinor, 55000);
+  assert.equal(payso.calls.createQr[0].amountBaht, 550);
   assert.equal(payso.calls.createQr[0].productDetail, "PRIS2026 M 000001");
 });
 
@@ -274,20 +274,20 @@ test("stale cartVersion and a price change after the cart read both return 409 M
   assert.equal(res.json().code, "MERCH_CART_CHANGED");
 
   const current = await cartVersion(buyer.headers);
-  await t.sql`UPDATE merch_products SET base_price = 26000 WHERE id = ${productId}`;
+  await t.sql`UPDATE merch_products SET base_price = 260 WHERE id = ${productId}`;
   try {
     const priced = await confirm(buyer.headers, "key-price", { cartVersion: current, recipient });
     assert.equal(priced.statusCode, 409, priced.body);
     assert.equal(priced.json().code, "MERCH_CART_CHANGED");
   } finally {
-    await t.sql`UPDATE merch_products SET base_price = 25000 WHERE id = ${productId}`;
+    await t.sql`UPDATE merch_products SET base_price = 250 WHERE id = ${productId}`;
   }
   const orders = await t.sql`SELECT id FROM merch_orders WHERE buyer_user_id = ${buyer.id}`;
   assert.equal(orders.length, 0);
 });
 
 test("order total over 2,000,000 THB is 422 MERCH_ORDER_TOO_LARGE; exactly 2,000,000 THB is accepted", { skip }, async () => {
-  await t.sql`UPDATE merch_products SET base_price = 100000000 WHERE id = ${productId}`;
+  await t.sql`UPDATE merch_products SET base_price = 1000000 WHERE id = ${productId}`;
   try {
     const buyer = await newBuyer();
     const version = await addToCart(buyer.headers, 9999);
@@ -297,14 +297,14 @@ test("order total over 2,000,000 THB is 422 MERCH_ORDER_TOO_LARGE; exactly 2,000
     const orders = await t.sql`SELECT id FROM merch_orders WHERE buyer_user_id = ${buyer.id}`;
     assert.equal(orders.length, 0);
 
-    await t.sql`UPDATE merch_products SET base_price = 99997500 WHERE id = ${productId}`;
+    await t.sql`UPDATE merch_products SET base_price = 999975 WHERE id = ${productId}`;
     const edge = await newBuyer();
     const edgeVersion = await addToCart(edge.headers, 2);
     const ok = await confirm(edge.headers, "key-at-limit", { cartVersion: edgeVersion, recipient });
     assert.equal(ok.statusCode, 201, ok.body);
-    assert.equal(ok.json().data.order.amounts.totalMinor, 200_000_000);
+    assert.equal(ok.json().data.order.amounts.totalBaht, 2_000_000);
   } finally {
-    await t.sql`UPDATE merch_products SET base_price = 25000 WHERE id = ${productId}`;
+    await t.sql`UPDATE merch_products SET base_price = 250 WHERE id = ${productId}`;
   }
 });
 
@@ -438,7 +438,7 @@ test("GET /events/:code/orders lists only own orders, newest first", { skip }, a
   );
   assert.deepEqual(data.pagination, { page: 1, limit: 10, total: 2, totalPages: 1 });
   assert.equal(data.items[0].paymentStatus, "pending");
-  assert.equal(data.items[0].amounts.totalMinor, 55000);
+  assert.equal(data.items[0].amounts.totalBaht, 550);
 });
 
 test("order items are snapshots: renaming the product does not change them", { skip }, async () => {

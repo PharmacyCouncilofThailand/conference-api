@@ -49,7 +49,7 @@ test("seedDraftCatalog creates drafts once and is idempotent", { skip }, async (
 
   // Edit one product and the store, then re-run.
   const target = products[2];
-  await t.sql`UPDATE merch_products SET base_price = 12900, updated_at = now() - interval '1 day' WHERE id = ${target.id}`;
+  await t.sql`UPDATE merch_products SET base_price = 129, updated_at = now() - interval '1 day' WHERE id = ${target.id}`;
   await t.sql`UPDATE merch_stores SET enabled = true, shipping_info_th = 'x' WHERE event_id = ${eventId}`;
   const [beforeRow] = await t.sql`SELECT base_price, updated_at FROM merch_products WHERE id = ${target.id}`;
   const [storeBefore] = await t.sql`SELECT * FROM merch_stores WHERE event_id = ${eventId}`;
@@ -58,7 +58,7 @@ test("seedDraftCatalog creates drafts once and is idempotent", { skip }, async (
   assert.deepEqual(second, { created: 0, skipped: 11 });
 
   const [afterRow] = await t.sql`SELECT base_price, updated_at FROM merch_products WHERE id = ${target.id}`;
-  assert.equal(afterRow.base_price, 12900);
+  assert.equal(afterRow.base_price, 129);
   assert.equal(new Date(afterRow.updated_at).getTime(), new Date(beforeRow.updated_at).getTime());
   const [storeAfter] = await t.sql`SELECT * FROM merch_stores WHERE event_id = ${eventId}`;
   assert.deepEqual(storeAfter, storeBefore);

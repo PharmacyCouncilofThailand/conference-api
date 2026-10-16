@@ -11,7 +11,7 @@ import type { Buyer } from "./access.js";
 import { priceCart } from "./cart.js";
 import type { MerchDb } from "./db.js";
 import { MerchError } from "./errors.js";
-import { assertOrderTotalAllowed, SHIPPING_FEE_MINOR } from "./money.js";
+import { assertOrderTotalAllowed, SHIPPING_FEE_BAHT } from "./money.js";
 import {
   derivePaymentView,
   hasOpenAttempt,
@@ -53,9 +53,9 @@ export function paymentStatusOf(
 
 function amountsOf(order: OrderRow): Amounts {
   return {
-    subtotalMinor: order.subtotal,
-    shippingMinor: SHIPPING_FEE_MINOR,
-    totalMinor: order.total,
+    subtotalBaht: order.subtotal,
+    shippingBaht: SHIPPING_FEE_BAHT,
+    totalBaht: order.total,
     currency: "THB",
   };
 }
@@ -93,8 +93,8 @@ export function itemDto(item: OrderItemRow): OrderItemDto {
     sizeTh: item.sizeTh,
     colorTh: item.colorTh,
     quantity: item.quantity,
-    unitPriceMinor: item.unitPrice,
-    lineTotalMinor: item.lineTotal,
+    unitPriceBaht: item.unitPrice,
+    lineTotalBaht: item.lineTotal,
     components: components.map((c) => ({
       nameTh: typeof c.nameTh === "string" ? c.nameTh : "",
       sizeTh: typeof c.sizeTh === "string" ? c.sizeTh : null,
@@ -266,13 +266,13 @@ export async function confirmOrder(
         throw new MerchError(422, "MERCH_CART_EMPTY", "ตะกร้าว่าง");
       }
       const invalid = priced.lines.filter((l) => !l.valid);
-      if (invalid.length > 0 || priced.subtotalMinor === null) {
+      if (invalid.length > 0 || priced.subtotalBaht === null) {
         throw new MerchError(422, "MERCH_CART_INVALID", "มีสินค้าในตะกร้าที่ไม่สามารถสั่งซื้อได้", {
           items: invalid.map((l) => ({ id: l.id, productId: l.productId, issueCodes: l.issueCodes })),
         });
       }
-      const subtotal = priced.subtotalMinor;
-      const total = subtotal + SHIPPING_FEE_MINOR;
+      const subtotal = priced.subtotalBaht;
+      const total = subtotal + SHIPPING_FEE_BAHT;
       assertOrderTotalAllowed(total);
 
       const seq = store.nextOrderSeq;
@@ -301,7 +301,7 @@ export async function confirmOrder(
           company: r.company,
           deliveryNote: r.deliveryNote,
           subtotal,
-          shippingFee: SHIPPING_FEE_MINOR,
+          shippingFee: SHIPPING_FEE_BAHT,
           total,
           idempotencyKey: key,
           idempotencyFingerprint: fingerprint,
@@ -320,8 +320,8 @@ export async function confirmOrder(
           sizeTh: l.snapshot.sizeTh,
           colorTh: l.snapshot.colorTh,
           quantity: l.quantity,
-          unitPrice: l.unitPriceMinor as number,
-          lineTotal: l.lineTotalMinor as number,
+          unitPrice: l.unitPriceBaht as number,
+          lineTotal: l.lineTotalBaht as number,
           components: l.resolvedComponents.map((c) => ({
             productId: c.productId,
             variantId: c.variantId,

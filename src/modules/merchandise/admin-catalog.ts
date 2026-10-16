@@ -19,7 +19,7 @@ type Admin = { id: number };
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const uuid = z.string().uuid();
-const MAX_PRICE = 100_000_000;
+const MAX_PRICE = 1_000_000; // whole baht
 
 const productFields = {
   descriptionTh: z.string().trim().max(10000).nullable().optional(),
@@ -27,7 +27,7 @@ const productFields = {
   imageIds: z.array(uuid).max(20).optional(),
   categoryId: uuid.nullable().optional(),
   saleEnabled: z.boolean().optional(),
-  basePriceMinor: z.number().int().min(0).max(MAX_PRICE).nullable().optional(),
+  basePriceBaht: z.number().int().min(0).max(MAX_PRICE).nullable().optional(),
 };
 
 export const productCreateInput = z
@@ -48,8 +48,7 @@ const variantItem = z
     id: uuid.optional(),
     sizeTh: text(100).nullable().optional(),
     colorTh: text(100).nullable().optional(),
-    price: z.number().int().min(0).max(MAX_PRICE).nullable().optional(),
-    priceMinor: z.number().int().min(0).max(MAX_PRICE).nullable().optional(),
+    priceBaht: z.number().int().min(0).max(MAX_PRICE).nullable().optional(),
     saleEnabled: z.boolean().optional(),
   })
   .strict();
@@ -243,7 +242,7 @@ export async function createProduct(
         imageIds: input.imageIds ?? [],
         categoryId: input.categoryId ?? null,
         saleEnabled: input.saleEnabled ?? false,
-        basePrice: input.basePriceMinor ?? null,
+        basePrice: input.basePriceBaht ?? null,
         sortOrder: Number(max.value) + 1,
       })
       .returning();
@@ -282,7 +281,7 @@ export async function updateProduct(
       ...(input.imageIds !== undefined ? { imageIds: input.imageIds } : {}),
       ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
       ...(input.saleEnabled !== undefined ? { saleEnabled: input.saleEnabled } : {}),
-      ...(input.basePriceMinor !== undefined ? { basePrice: input.basePriceMinor } : {}),
+      ...(input.basePriceBaht !== undefined ? { basePrice: input.basePriceBaht } : {}),
     });
     await writeAudit(txDb, {
       eventId,
@@ -333,7 +332,7 @@ export async function replaceVariants(
       id: v.id,
       sizeTh: v.sizeTh ?? null,
       colorTh: v.colorTh ?? null,
-      price: v.price ?? v.priceMinor ?? null,
+      price: v.priceBaht ?? null,
       saleEnabled: v.saleEnabled ?? true,
       sortOrder: index,
     }));

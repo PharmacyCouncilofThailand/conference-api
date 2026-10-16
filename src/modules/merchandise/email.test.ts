@@ -10,7 +10,7 @@ const order = {
   paymentStatus: "paid",
   paidAt: null,
   shipping: { status: "shipped", carrier: "Kerry", trackingId: "00123", shippedAt: null },
-  amounts: { subtotalMinor: 123000, shippingMinor: 5000, totalMinor: 128000, currency: "THB" },
+  amounts: { subtotalBaht: 1230, shippingBaht: 50, totalBaht: 1280, currency: "THB" },
   buyer: { name: "B", email: "b@x.test", phone: null },
   recipient: {
     fullName: "สมชาย ใจดี",
@@ -24,8 +24,8 @@ const order = {
     deliveryNote: null,
   },
   items: [
-    { id: "i1", kind: "single", nameTh: "เสื้อ", sizeTh: "L", colorTh: "ดำ", quantity: 2, unitPriceMinor: 50000, lineTotalMinor: 100000, components: [] },
-    { id: "i2", kind: "single", nameTh: "<script>alert(1)</script>", sizeTh: null, colorTh: null, quantity: 1, unitPriceMinor: 23000, lineTotalMinor: 23000, components: [] },
+    { id: "i1", kind: "single", nameTh: "เสื้อ", sizeTh: "L", colorTh: "ดำ", quantity: 2, unitPriceBaht: 500, lineTotalBaht: 1000, components: [] },
+    { id: "i2", kind: "single", nameTh: "<script>alert(1)</script>", sizeTh: null, colorTh: null, quantity: 1, unitPriceBaht: 230, lineTotalBaht: 230, components: [] },
   ],
   productionInfoTh: null,
   shippingInfoTh: null,
@@ -35,8 +35,9 @@ const order = {
 const SUPPORT = "แนะนำให้ถ่ายวิดีโอขณะแกะพัสดุ หากพบปัญหากรุณาติดต่อ pr@pharmacycouncil.org พร้อมแจ้งเลขคำสั่งซื้อและหลักฐาน";
 
 test("formatBaht groups thousands with two decimals", () => {
-  assert.equal(formatBaht(123450), "1,234.50");
-  assert.equal(formatBaht(5000), "50.00");
+  assert.equal(formatBaht(1234), "1,234.00");
+  assert.equal(formatBaht(50), "50.00");
+  assert.equal(formatBaht(6), "6.00");
 });
 
 test("paid email lists items, shipping, total, recipient, address and support copy", () => {

@@ -48,7 +48,7 @@ async function mkProduct(body: Record<string, unknown>) {
 
 async function variantsOf(productId: string) {
   const res = await admin("GET", `/products/${productId}`);
-  return res.json().data.variants as { id: string; sizeTh: string | null; priceMinor: number | null }[];
+  return res.json().data.variants as { id: string; sizeTh: string | null; priceBaht: number | null }[];
 }
 
 async function setStore(opensAt: string | null, closesAt: string | null) {
@@ -111,7 +111,7 @@ test("no token returns 401; empty cart has buyerDefaults", { skip }, async () =>
 });
 
 test("add single: valid line, total = price + shipping; same selection sums; >9999 rejected", { skip }, async () => {
-  const p = await mkProduct({ kind: "single", nameTh: "สติกเกอร์", basePriceMinor: 5000, saleEnabled: true });
+  const p = await mkProduct({ kind: "single", nameTh: "สติกเกอร์", basePriceBaht: 50, saleEnabled: true });
   const [v] = await variantsOf(p.id);
   const add = (quantity: number) =>
     call("POST", "/items", { productId: p.id, variantId: v.id, bundleSelections: [], quantity });
@@ -119,10 +119,10 @@ test("add single: valid line, total = price + shipping; same selection sums; >99
   assert.equal(first.statusCode, 200, first.body);
   const line = first.json().data.items[0];
   assert.equal(line.valid, true);
-  assert.equal(line.unitPriceMinor, 5000);
-  assert.equal(line.lineTotalMinor, 10000);
-  assert.equal(first.json().data.amounts.subtotalMinor, 10000);
-  assert.equal(first.json().data.amounts.totalMinor, 10000 + 5000);
+  assert.equal(line.unitPriceBaht, 50);
+  assert.equal(line.lineTotalBaht, 100);
+  assert.equal(first.json().data.amounts.subtotalBaht, 100);
+  assert.equal(first.json().data.amounts.totalBaht, 100 + 50);
 
   const second = await add(3);
   assert.equal(second.statusCode, 200, second.body);
@@ -139,7 +139,7 @@ test("add single: valid line, total = price + shipping; same selection sums; >99
 });
 
 test("store not_open rejects add with MERCH_PRODUCT_UNAVAILABLE", { skip }, async () => {
-  const p = await mkProduct({ kind: "single", nameTh: "ปิด", basePriceMinor: 1000, saleEnabled: true });
+  const p = await mkProduct({ kind: "single", nameTh: "ปิด", basePriceBaht: 10, saleEnabled: true });
   const [v] = await variantsOf(p.id);
   await setStore(hours(2), hours(3));
   const res = await call("POST", "/items", { productId: p.id, variantId: v.id, bundleSelections: [], quantity: 1 });
@@ -150,7 +150,7 @@ test("store not_open rejects add with MERCH_PRODUCT_UNAVAILABLE", { skip }, asyn
 });
 
 test("invalid selection returns MERCH_SELECTION_INVALID", { skip }, async () => {
-  const p = await mkProduct({ kind: "single", nameTh: "เลือก", basePriceMinor: 1000, saleEnabled: true });
+  const p = await mkProduct({ kind: "single", nameTh: "เลือก", basePriceBaht: 10, saleEnabled: true });
   const res = await call("POST", "/items", {
     productId: p.id,
     variantId: "00000000-0000-4000-8000-000000000000",
@@ -164,7 +164,7 @@ test("invalid selection returns MERCH_SELECTION_INVALID", { skip }, async () => 
 
 test("disabled variant keeps the line invalid with null amounts; cartVersion tracks price changes", { skip }, async () => {
   const headers = tokenFor(await t.createUser({ email: "second@x.test" }));
-  const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อ", basePriceMinor: 20000, saleEnabled: true });
+  const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อ", basePriceBaht: 200, saleEnabled: true });
   const put = await admin("PUT", `/products/${shirt.id}/variants`, { variants: [{ sizeTh: "S" }, { sizeTh: "M" }] });
   assert.equal(put.statusCode, 200, put.body);
   const [s, m] = await variantsOf(shirt.id);
@@ -175,18 +175,18 @@ test("disabled variant keeps the line invalid with null amounts; cartVersion tra
   const first = (await call("GET", "", undefined, headers)).json().data;
   const reprice = await admin("PUT", `/products/${shirt.id}/variants`, {
     variants: [
-      { id: s.id, sizeTh: "S", priceMinor: 25000 },
+      { id: s.id, sizeTh: "S", priceBaht: 250 },
       { id: m.id, sizeTh: "M" },
     ],
   });
   assert.equal(reprice.statusCode, 200, reprice.body);
   const second = (await call("GET", "", undefined, headers)).json().data;
   assert.notEqual(second.cartVersion, first.cartVersion);
-  assert.equal(second.items[0].unitPriceMinor, 25000);
+  assert.equal(second.items[0].unitPriceBaht, 250);
 
   const off = await admin("PUT", `/products/${shirt.id}/variants`, {
     variants: [
-      { id: s.id, sizeTh: "S", priceMinor: 25000, saleEnabled: false },
+      { id: s.id, sizeTh: "S", priceBaht: 250, saleEnabled: false },
       { id: m.id, sizeTh: "M" },
     ],
   });
@@ -196,8 +196,8 @@ test("disabled variant keeps the line invalid with null amounts; cartVersion tra
   assert.equal(data.items.length, 1);
   assert.equal(data.items[0].valid, false);
   assert.ok(data.items[0].issueCodes.includes("VARIANT_DISABLED"));
-  assert.equal(data.items[0].unitPriceMinor, null);
-  assert.equal(data.items[0].lineTotalMinor, null);
+  assert.equal(data.items[0].unitPriceBaht, null);
+  assert.equal(data.items[0].lineTotalBaht, null);
   assert.equal(data.amounts, null);
   assert.notEqual(data.cartVersion, second.cartVersion);
 
@@ -209,7 +209,7 @@ test("disabled variant keeps the line invalid with null amounts; cartVersion tra
 
 test("PATCH merges into an existing line with the same selection", { skip }, async () => {
   const headers = tokenFor(await t.createUser({ email: "merge@x.test" }));
-  const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อรวม", basePriceMinor: 1000, saleEnabled: true });
+  const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อรวม", basePriceBaht: 10, saleEnabled: true });
   await admin("PUT", `/products/${shirt.id}/variants`, { variants: [{ sizeTh: "S" }, { sizeTh: "M" }] });
   const [s, m] = await variantsOf(shirt.id);
   const body = (variantId: string, quantity: number) => ({ productId: shirt.id, variantId, bundleSelections: [], quantity });
@@ -224,7 +224,7 @@ test("PATCH merges into an existing line with the same selection", { skip }, asy
 });
 
 test("another user's item returns 404 on PATCH and DELETE; DELETE removes own", { skip }, async () => {
-  const p = await mkProduct({ kind: "single", nameTh: "ของฉัน", basePriceMinor: 1000, saleEnabled: true });
+  const p = await mkProduct({ kind: "single", nameTh: "ของฉัน", basePriceBaht: 10, saleEnabled: true });
   const [v] = await variantsOf(p.id);
   const added = await call("POST", "/items", { productId: p.id, variantId: v.id, bundleSelections: [], quantity: 1 });
   const itemId = added.json().data.items.find((i: { productId: string }) => i.productId === p.id).id;
@@ -240,11 +240,11 @@ test("another user's item returns 404 on PATCH and DELETE; DELETE removes own", 
 });
 
 test("bundle: selection key merges regardless of selection order", { skip }, async () => {
-  const comp = await mkProduct({ kind: "single", nameTh: "ส่วนประกอบ", basePriceMinor: 1000, saleEnabled: true });
+  const comp = await mkProduct({ kind: "single", nameTh: "ส่วนประกอบ", basePriceBaht: 10, saleEnabled: true });
   await admin("PUT", `/products/${comp.id}/variants`, { variants: [{ sizeTh: "S" }, { sizeTh: "M" }] });
   const [s, m] = await variantsOf(comp.id);
   const bundle = await admin("POST", "/products", {
-    imageIds: [imageId], kind: "bundle", nameTh: "ชุด", basePriceMinor: 9000, saleEnabled: true,
+    imageIds: [imageId], kind: "bundle", nameTh: "ชุด", basePriceBaht: 90, saleEnabled: true,
   });
   const bid = bundle.json().data.id;
   const put = await admin("PUT", `/products/${bid}/components`, {
@@ -269,7 +269,7 @@ test("bundle: selection key merges regardless of selection order", { skip }, asy
   assert.equal(again.statusCode, 200, again.body);
   assert.equal(again.json().data.items.length, 1);
   assert.equal(again.json().data.items[0].quantity, 3);
-  assert.equal(again.json().data.amounts.totalMinor, 27000 + 5000);
+  assert.equal(again.json().data.amounts.totalBaht, 270 + 50);
 });
 
 function forgedToken(id: number): string {

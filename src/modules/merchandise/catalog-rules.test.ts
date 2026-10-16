@@ -135,10 +135,10 @@ test("unavailableCodes store and product state", () => {
 
 test("displayPrice", () => {
   const p = product();
-  assert.deepEqual(displayPrice(p.id, catalog([p], [variant(p.id, { price: 25000, sizeTh: "S" }), variant(p.id, { price: 25000, sizeTh: "M" })])), { kind: "exact", amountMinor: 25000 });
-  assert.deepEqual(displayPrice(p.id, catalog([p], [variant(p.id, { price: 25000, sizeTh: "S" }), variant(p.id, { price: 30000, sizeTh: "M" })])), { kind: "from", amountMinor: 25000 });
-  const b = product({ kind: "bundle", basePrice: 90000 });
-  assert.deepEqual(displayPrice(b.id, catalog([b])), { kind: "exact", amountMinor: 90000 });
+  assert.deepEqual(displayPrice(p.id, catalog([p], [variant(p.id, { price: 250, sizeTh: "S" }), variant(p.id, { price: 250, sizeTh: "M" })])), { kind: "exact", amountBaht: 250 });
+  assert.deepEqual(displayPrice(p.id, catalog([p], [variant(p.id, { price: 250, sizeTh: "S" }), variant(p.id, { price: 300, sizeTh: "M" })])), { kind: "from", amountBaht: 250 });
+  const b = product({ kind: "bundle", basePrice: 900 });
+  assert.deepEqual(displayPrice(b.id, catalog([b])), { kind: "exact", amountBaht: 900 });
 });
 
 test("validateSelection single", () => {
@@ -147,7 +147,7 @@ test("validateSelection single", () => {
   const c = catalog([p], [v]);
   assert.deepEqual(validateSelection(p.id, { variantId: null, bundleSelections: [] }, c, "open").issueCodes, ["VARIANT_REQUIRED"]);
   const ok = validateSelection(p.id, { variantId: v.id, bundleSelections: [] }, c, "open");
-  assert.deepEqual(ok, { unitPriceMinor: 100, issueCodes: [], resolvedComponents: [] });
+  assert.deepEqual(ok, { unitPriceBaht: 100, issueCodes: [], resolvedComponents: [] });
   assert.deepEqual(validateSelection(p.id, { variantId: v.id, bundleSelections: [] }, c, "closed").issueCodes, ["STORE_NOT_OPEN"]);
 });
 
@@ -169,7 +169,7 @@ test("validateSelection bundle", () => {
     ["VARIANT_NOT_ALLOWED"],
   );
   const ok = validateSelection(b.id, { variantId: null, bundleSelections: [{ componentId: sel.id, variantId: sM.id }] }, c, "open");
-  assert.equal(ok.unitPriceMinor, 120);
+  assert.equal(ok.unitPriceBaht, 120);
   assert.deepEqual(ok.issueCodes, []);
   assert.deepEqual(ok.resolvedComponents, [
     { productId: shirt.id, variantId: sM.id, quantityPerBundle: 1, nameTh: "เสื้อ", sizeTh: "M", colorTh: null },
@@ -186,11 +186,11 @@ test("validateSelection never returns null price without an issue code", () => {
   for (const v of [bad, nullPrice]) {
     const r = validateSelection(p.id, { variantId: v.id, bundleSelections: [] }, c, "open");
     assert.ok(r.issueCodes.includes("VARIANT_DISABLED"));
-    assert.equal(r.unitPriceMinor, null);
+    assert.equal(r.unitPriceBaht, null);
   }
   const okR = validateSelection(p.id, { variantId: good.id, bundleSelections: [] }, c, "open");
   assert.deepEqual(okR.issueCodes, []);
-  assert.equal(okR.unitPriceMinor, 100);
+  assert.equal(okR.unitPriceBaht, 100);
 
   const shirt = product({ basePrice: 100 });
   const sv = variant(shirt.id, { sizeTh: "S" });
@@ -198,7 +198,7 @@ test("validateSelection never returns null price without an issue code", () => {
   const k = component(b.id, shirt.id, { fixedVariantId: sv.id });
   const r = validateSelection(b.id, { variantId: null, bundleSelections: [] }, catalog([b, shirt], [sv], [k]), "open");
   assert.deepEqual(r.issueCodes, ["PRODUCT_DISABLED"]);
-  assert.equal(r.unitPriceMinor, null);
+  assert.equal(r.unitPriceBaht, null);
 });
 
 test("validateSelection rejects foreign variant and disabled component variant", () => {
@@ -220,5 +220,5 @@ test("validateSelection rejects foreign variant and disabled component variant",
     "open",
   );
   assert.deepEqual(r.issueCodes, ["VARIANT_DISABLED"]);
-  assert.equal(r.unitPriceMinor, null);
+  assert.equal(r.unitPriceBaht, null);
 });

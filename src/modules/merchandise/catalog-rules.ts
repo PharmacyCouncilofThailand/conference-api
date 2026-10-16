@@ -127,16 +127,16 @@ export function unavailableCodes(
 export function displayPrice(
   productId: string,
   catalog: CatalogSnapshot,
-): { kind: "exact" | "from"; amountMinor: number } | null {
+): { kind: "exact" | "from"; amountBaht: number } | null {
   const product = catalog.products.get(productId);
   if (!product) return null;
   if (product.kind === "bundle") {
-    return product.basePrice === null ? null : { kind: "exact", amountMinor: product.basePrice };
+    return product.basePrice === null ? null : { kind: "exact", amountBaht: product.basePrice };
   }
   const prices = sellableVariants(product, catalog).map((v) => usablePrice(product, v) as number);
   if (prices.length === 0) return null;
   const min = Math.min(...prices);
-  return { kind: prices.every((p) => p === min) ? "exact" : "from", amountMinor: min };
+  return { kind: prices.every((p) => p === min) ? "exact" : "from", amountBaht: min };
 }
 
 export function validateSelection(
@@ -144,7 +144,7 @@ export function validateSelection(
   input: { variantId: string | null; bundleSelections: BundleSelection[] },
   catalog: CatalogSnapshot,
   state: StoreState,
-): { unitPriceMinor: number | null; issueCodes: string[]; resolvedComponents: ResolvedComponent[] } {
+): { unitPriceBaht: number | null; issueCodes: string[]; resolvedComponents: ResolvedComponent[] } {
   const issues = new Set<string>(unavailableCodes(productId, catalog, state));
   const resolvedComponents: ResolvedComponent[] = [];
   const product = catalog.products.get(productId);
@@ -209,7 +209,7 @@ export function validateSelection(
 
   const issueCodes = [...issues];
   return {
-    unitPriceMinor: issueCodes.length === 0 ? unit : null,
+    unitPriceBaht: issueCodes.length === 0 ? unit : null,
     issueCodes,
     resolvedComponents,
   };

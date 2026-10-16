@@ -20,8 +20,6 @@ function bangkokText(iso: string | null): string {
   return new Date(new Date(iso).getTime() + 7 * 3600_000).toISOString().slice(0, 16).replace("T", " ");
 }
 
-const baht = (minor: number) => minor / 100;
-
 export async function eventCodeOf(db: MerchDb, eventId: number): Promise<string> {
   const [row] = await db.select({ code: events.eventCode }).from(events).where(eq(events.id, eventId)).limit(1);
   return row?.code ?? String(eventId);
@@ -125,9 +123,9 @@ export async function buildOrdersWorkbook(rows: OrderReportRow[]): Promise<Buffe
         safeCell(buyerPhone),
         safeCell(recipient.fullName),
         safeCell(fullAddress(recipient)),
-        baht(order.amounts.subtotalMinor),
-        baht(order.amounts.shippingMinor),
-        baht(order.amounts.totalMinor),
+        order.amounts.subtotalBaht,
+        order.amounts.shippingBaht,
+        order.amounts.totalBaht,
         PAYMENT_TH[order.paymentStatus],
         bangkokText(order.paidAt),
         SHIPPING_TH[order.shipping.status],
@@ -152,8 +150,8 @@ export async function buildOrdersWorkbook(rows: OrderReportRow[]): Promise<Buffe
           safeCell(item.sizeTh),
           safeCell(item.colorTh),
           item.quantity,
-          baht(item.unitPriceMinor),
-          baht(item.lineTotalMinor),
+          item.unitPriceBaht,
+          item.lineTotalBaht,
           safeCell(componentsText(item)),
         ],
         new Set([5, 6]),

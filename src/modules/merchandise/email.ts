@@ -45,9 +45,9 @@ export function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-/** Satang to "1,234.50". */
-export function formatBaht(minor: number): string {
-  return (minor / 100).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Whole baht to "1,234.00". */
+export function formatBaht(baht: number): string {
+  return baht.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 const e = escapeHtml;
@@ -67,7 +67,7 @@ function itemsHtml(order: OrderDetail): string {
         `<tr><td>${e(item.nameTh)}${e(variantLabel(item.sizeTh, item.colorTh))}` +
         `${components ? `<ul>${components}</ul>` : ""}</td>` +
         `<td style="text-align:right">x ${item.quantity}</td>` +
-        `<td style="text-align:right">${formatBaht(item.lineTotalMinor)}</td></tr>`
+        `<td style="text-align:right">${formatBaht(item.lineTotalBaht)}</td></tr>`
       );
     })
     .join("");
@@ -94,8 +94,8 @@ export function renderPaidEmail(order: OrderDetail): { subject: string; html: st
     `<p>เรียน ${e(order.recipient.fullName)}</p>` +
       `<p>เราได้รับการชำระเงินสำหรับคำสั่งซื้อ ${e(order.orderNumber)} เรียบร้อยแล้ว</p>` +
       itemsHtml(order) +
-      `<p>ค่าจัดส่ง: ${formatBaht(order.amounts.shippingMinor)} บาท<br>` +
-      `ยอดรวมทั้งสิ้น: ${formatBaht(order.amounts.totalMinor)} บาท</p>` +
+      `<p>ค่าจัดส่ง: ${formatBaht(order.amounts.shippingBaht)} บาท<br>` +
+      `ยอดรวมทั้งสิ้น: ${formatBaht(order.amounts.totalBaht)} บาท</p>` +
       `<p><strong>ที่อยู่จัดส่ง</strong></p>${recipientHtml(order)}`,
   );
   return { subject: `ยืนยันการชำระเงิน คำสั่งซื้อ ${order.orderNumber}`, html };

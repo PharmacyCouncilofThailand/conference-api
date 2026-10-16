@@ -12,7 +12,7 @@ import {
 } from "./catalog-rules.js";
 import type { MerchDb } from "./db.js";
 import { MerchError } from "./errors.js";
-import { SHIPPING_FEE_MINOR } from "./money.js";
+import { SHIPPING_FEE_BAHT } from "./money.js";
 import { readStore, type StoreState } from "./store-window.js";
 import type { Amounts, BundleSelection, CartDto, CartLine, ImageAsset } from "./types.js";
 
@@ -68,7 +68,7 @@ export function cartVersion(
     quantity: number;
     selectionKey: string;
     updatedAt: Date;
-    unitPriceMinor: number | null;
+    unitPriceBaht: number | null;
     valid: boolean;
   }[],
 ): string {
@@ -76,7 +76,7 @@ export function cartVersion(
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map(
       (l) =>
-        `${l.id}:${l.quantity}:${l.selectionKey}:${l.updatedAt.toISOString()}:${l.unitPriceMinor ?? "null"}:${l.valid}`,
+        `${l.id}:${l.quantity}:${l.selectionKey}:${l.updatedAt.toISOString()}:${l.unitPriceBaht ?? "null"}:${l.valid}`,
     )
     .join("\n");
   return createHash("sha256").update(text).digest("hex");
@@ -108,7 +108,7 @@ export async function priceCart(
   buyer: Buyer,
   eventId: number,
   state: StoreState,
-): Promise<{ lines: PricedLine[]; version: string; subtotalMinor: number | null }> {
+): Promise<{ lines: PricedLine[]; version: string; subtotalBaht: number | null }> {
   const rows = await db
     .select()
     .from(merchCartItems)
@@ -125,8 +125,8 @@ export async function priceCart(
     const known = catalog.products.has(row.productId);
     const checked = known
       ? validateSelection(row.productId, { variantId: row.variantId, bundleSelections }, catalog, state)
-      : { unitPriceMinor: null, issueCodes: ["PRODUCT_DISABLED"], resolvedComponents: [] };
-    const unit = checked.unitPriceMinor;
+      : { unitPriceBaht: null, issueCodes: ["PRODUCT_DISABLED"], resolvedComponents: [] };
+    const unit = checked.unitPriceBaht;
     return {
       id: row.id,
       productId: row.productId,
@@ -134,8 +134,8 @@ export async function priceCart(
       bundleSelections,
       quantity: row.quantity,
       product: known ? toProductDto(row.productId, catalog, state, images) : null,
-      unitPriceMinor: unit,
-      lineTotalMinor: unit === null ? null : unit * row.quantity,
+      unitPriceBaht: unit,
+      lineTotalBaht: unit === null ? null : unit * row.quantity,
       valid: checked.issueCodes.length === 0 && unit !== null,
       issueCodes: checked.issueCodes,
       selectionKey: row.selectionKey,
@@ -150,27 +150,27 @@ export async function priceCart(
       quantity: l.quantity,
       selectionKey: l.selectionKey,
       updatedAt: rows[i].updatedAt,
-      unitPriceMinor: l.unitPriceMinor,
+      unitPriceBaht: l.unitPriceBaht,
       valid: l.valid,
     })),
   );
-  const subtotalMinor =
+  const subtotalBaht =
     lines.length > 0 && lines.every((l) => l.valid)
-      ? lines.reduce((sum, l) => sum + (l.lineTotalMinor as number), 0)
+      ? lines.reduce((sum, l) => sum + (l.lineTotalBaht as number), 0)
       : null;
-  return { lines, version, subtotalMinor };
+  return { lines, version, subtotalBaht };
 }
 
 export async function readCart(db: MerchDb, buyer: Buyer, eventId: number): Promise<CartDto> {
   const { state, now } = await readStore(db, eventId);
   const priced = await priceCart(db, buyer, eventId, state);
   const amounts: Amounts | null =
-    priced.subtotalMinor === null
+    priced.subtotalBaht === null
       ? null
       : {
-          subtotalMinor: priced.subtotalMinor,
-          shippingMinor: SHIPPING_FEE_MINOR,
-          totalMinor: priced.subtotalMinor + SHIPPING_FEE_MINOR,
+          subtotalBaht: priced.subtotalBaht,
+          shippingBaht: SHIPPING_FEE_BAHT,
+          totalBaht: priced.subtotalBaht + SHIPPING_FEE_BAHT,
           currency: "THB",
         };
   return {

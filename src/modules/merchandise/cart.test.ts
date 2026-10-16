@@ -27,7 +27,7 @@ const line = (over: Partial<Parameters<typeof cartVersion>[0][number]> = {}) => 
   quantity: 1,
   selectionKey: "v:x",
   updatedAt: new Date("2026-01-01T00:00:00Z"),
-  unitPriceMinor: 1000 as number | null,
+  unitPriceBaht: 10 as number | null,
   valid: true,
   ...over,
 });
@@ -35,8 +35,8 @@ const line = (over: Partial<Parameters<typeof cartVersion>[0][number]> = {}) => 
 test("cartVersion changes with price, quantity and validity, stable across order", () => {
   const base = cartVersion([line(), line({ id: "b" })]);
   assert.match(base, /^[0-9a-f]{64}$/);
-  assert.notEqual(base, cartVersion([line({ unitPriceMinor: 1100 }), line({ id: "b" })]));
+  assert.notEqual(base, cartVersion([line({ unitPriceBaht: 11 }), line({ id: "b" })]));
   assert.notEqual(base, cartVersion([line({ quantity: 2 }), line({ id: "b" })]));
-  assert.notEqual(base, cartVersion([line({ valid: false, unitPriceMinor: null }), line({ id: "b" })]));
+  assert.notEqual(base, cartVersion([line({ valid: false, unitPriceBaht: null }), line({ id: "b" })]));
   assert.equal(base, cartVersion([line({ id: "b" }), line()]));
 });

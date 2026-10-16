@@ -9,7 +9,7 @@ import { loadCatalog } from "./catalog-read.js";
 import { validateSelection, type CatalogSnapshot } from "./catalog-rules.js";
 import type { MerchDb } from "./db.js";
 import { MerchError } from "./errors.js";
-import { assertOrderTotalAllowed, SHIPPING_FEE_MINOR } from "./money.js";
+import { assertOrderTotalAllowed, SHIPPING_FEE_BAHT } from "./money.js";
 import { editBlockingAttemptExistsSql, type MerchContext } from "./payments/attempts.js";
 import { recipientSchema } from "./recipient.js";
 import { dbNow, storeState } from "./store-window.js";
@@ -132,7 +132,7 @@ function priceNewLine(
   // STORE_NOT_OPEN alone nulls the price; re-price as if open (the store state affects nothing else).
   const unit =
     issueCodes.length === 0
-      ? (checked.unitPriceMinor ?? validateSelection(line.productId, selection, catalog, "open").unitPriceMinor)
+      ? (checked.unitPriceBaht ?? validateSelection(line.productId, selection, catalog, "open").unitPriceBaht)
       : null;
   if (unit === null) {
     throw new MerchError(422, "MERCH_SELECTION_INVALID", "ตัวเลือกสินค้าไม่ถูกต้อง", { index, issueCodes });
@@ -248,12 +248,12 @@ export async function editOrder(
     }
 
     const subtotal = afterItems.reduce((sum, i) => sum + i.lineTotal, 0);
-    const total = subtotal + SHIPPING_FEE_MINOR;
+    const total = subtotal + SHIPPING_FEE_BAHT;
     assertOrderTotalAllowed(total);
     if (paid && total !== order.total) {
       throw new MerchError(422, "MERCH_PAID_TOTAL_MUST_MATCH", "ยอดรวมใหม่ของออเดอร์ที่ชำระแล้วต้องเท่ากับยอดเดิม", {
-        currentTotalMinor: order.total,
-        newTotalMinor: total,
+        currentTotalBaht: order.total,
+        newTotalBaht: total,
       });
     }
 
@@ -279,7 +279,7 @@ export async function editOrder(
         company: r.company,
         deliveryNote: r.deliveryNote,
         subtotal,
-        shippingFee: SHIPPING_FEE_MINOR,
+        shippingFee: SHIPPING_FEE_BAHT,
         total,
         version: sql`${merchOrders.version} + 1`,
         updatedAt: sql`now()`,
