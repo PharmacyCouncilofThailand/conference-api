@@ -14,6 +14,7 @@ import { adminRoute } from "./http.js";
 import { editOrder, orderEditInput } from "./order-edit.js";
 import { contextFrom } from "./payments/attempts.js";
 import { checkOrderPayments } from "./payments/settlement.js";
+import { bulkShipmentInput, bulkShipments, setShipment, shipmentInput } from "./shipping.js";
 import type { MerchRouteOptions } from "./types.js";
 
 const idSchema = z.string().uuid();
@@ -56,6 +57,19 @@ export async function merchandiseAdminOrderRoutes(
       await checkOrderPayments(ctx, orderId);
       return { data: await readAdminOrderDetail(ctx, eventId, orderId) };
     }),
+  );
+
+  app.put(
+    `${P}/orders/:id/shipment`,
+    route(async ({ admin, eventId, request }) => ({
+      data: await setShipment(db, admin, eventId, idParam(request), shipmentInput.parse(request.body)),
+    })),
+  );
+  app.post(
+    `${P}/orders/shipments/bulk`,
+    route(async ({ admin, eventId, request }) => ({
+      data: { results: await bulkShipments(db, admin, eventId, bulkShipmentInput.parse(request.body).rows) },
+    })),
   );
 
   app.get(
