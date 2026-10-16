@@ -11,7 +11,7 @@ import type { Buyer } from "./access.js";
 import { priceCart } from "./cart.js";
 import type { MerchDb } from "./db.js";
 import { MerchError } from "./errors.js";
-import { SHIPPING_FEE_MINOR } from "./money.js";
+import { assertOrderTotalAllowed, SHIPPING_FEE_MINOR } from "./money.js";
 import {
   derivePaymentView,
   hasOpenAttempt,
@@ -273,6 +273,7 @@ export async function confirmOrder(
       }
       const subtotal = priced.subtotalMinor;
       const total = subtotal + SHIPPING_FEE_MINOR;
+      assertOrderTotalAllowed(total);
 
       const seq = store.nextOrderSeq;
       await tx

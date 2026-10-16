@@ -286,6 +286,28 @@ test("stale cartVersion and a price change after the cart read both return 409 M
   assert.equal(orders.length, 0);
 });
 
+test("order total over 2,000,000 THB is 422 MERCH_ORDER_TOO_LARGE; exactly 2,000,000 THB is accepted", { skip }, async () => {
+  await t.sql`UPDATE merch_products SET base_price = 100000000 WHERE id = ${productId}`;
+  try {
+    const buyer = await newBuyer();
+    const version = await addToCart(buyer.headers, 9999);
+    const res = await confirm(buyer.headers, "key-too-large", { cartVersion: version, recipient });
+    assert.equal(res.statusCode, 422, res.body);
+    assert.equal(res.json().code, "MERCH_ORDER_TOO_LARGE");
+    const orders = await t.sql`SELECT id FROM merch_orders WHERE buyer_user_id = ${buyer.id}`;
+    assert.equal(orders.length, 0);
+
+    await t.sql`UPDATE merch_products SET base_price = 99997500 WHERE id = ${productId}`;
+    const edge = await newBuyer();
+    const edgeVersion = await addToCart(edge.headers, 2);
+    const ok = await confirm(edge.headers, "key-at-limit", { cartVersion: edgeVersion, recipient });
+    assert.equal(ok.statusCode, 201, ok.body);
+    assert.equal(ok.json().data.order.amounts.totalMinor, 200_000_000);
+  } finally {
+    await t.sql`UPDATE merch_products SET base_price = 25000 WHERE id = ${productId}`;
+  }
+});
+
 test("closed store 409, empty cart 422, invalid line 422 with details.items", { skip }, async () => {
   const buyer = await newBuyer();
   const empty = await confirm(buyer.headers, "key-empty", { cartVersion: await cartVersion(buyer.headers), recipient });

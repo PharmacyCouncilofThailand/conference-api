@@ -513,6 +513,15 @@ test("edit validation: stale version, missing reason, empty lines, unknown sourc
   assert.equal(empty.statusCode, 422, empty.body);
   assert.equal(empty.json().code, "MERCH_ORDER_EMPTY");
 
+  const giftItemId = (await detail(o.orderId)).items[0].id;
+  const tooLarge = await admin("PATCH", `/orders/${o.orderId}`, {
+    expectedVersion: 1,
+    reason: "x",
+    lines: [{ sourceItemId: giftItemId, quantity: 9999 }],
+  });
+  assert.equal(tooLarge.statusCode, 422, tooLarge.body);
+  assert.equal(tooLarge.json().code, "MERCH_ORDER_TOO_LARGE");
+
   const unknown = await admin("PATCH", `/orders/${o.orderId}`, {
     expectedVersion: 1,
     reason: "x",

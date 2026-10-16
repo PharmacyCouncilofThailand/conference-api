@@ -9,7 +9,7 @@ import { loadCatalog } from "./catalog-read.js";
 import { validateSelection, type CatalogSnapshot } from "./catalog-rules.js";
 import type { MerchDb } from "./db.js";
 import { MerchError } from "./errors.js";
-import { SHIPPING_FEE_MINOR } from "./money.js";
+import { assertOrderTotalAllowed, SHIPPING_FEE_MINOR } from "./money.js";
 import { editBlockingAttemptExistsSql, type MerchContext } from "./payments/attempts.js";
 import { recipientSchema } from "./recipient.js";
 import { dbNow, storeState } from "./store-window.js";
@@ -249,6 +249,7 @@ export async function editOrder(
 
     const subtotal = afterItems.reduce((sum, i) => sum + i.lineTotal, 0);
     const total = subtotal + SHIPPING_FEE_MINOR;
+    assertOrderTotalAllowed(total);
     if (paid && total !== order.total) {
       throw new MerchError(422, "MERCH_PAID_TOTAL_MUST_MATCH", "ยอดรวมใหม่ของออเดอร์ที่ชำระแล้วต้องเท่ากับยอดเดิม", {
         currentTotalMinor: order.total,
