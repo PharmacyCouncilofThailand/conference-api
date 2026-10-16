@@ -88,6 +88,8 @@ npx tsx src/modules/merchandise/seed-drafts.ts --event-code PRIS-2026
 รันซ้ำได้: สร้าง `merch_stores` (`enabled=false`) ถ้ายังไม่มี และสินค้า draft 11 รายการที่ยังไม่มีชื่อซ้ำ
 ไม่แก้ข้อมูลที่ Admin แก้ไปแล้ว จากนั้น Admin ใส่ราคา รูป รายละเอียด แล้ว publish และตั้งเวลาเปิด–ปิดร้านเอง
 
+หน่วยเงินทั้งระบบเป็นบาทเต็ม (integer ไม่มีเศษสตางค์): กรอกราคา `6` = 6 บาท (`basePriceBaht` / `priceBaht` ได้ 0–1,000,000) ค่าส่งคงที่ 50 บาท และยอดออเดอร์ต้องไม่เกิน 2,000,000 บาท (เกินได้ 422 `MERCH_ORDER_TOO_LARGE`) คอลัมน์เงินใน `merch_*` อ่านเป็นบาทได้ตรงๆ ส่วน PaySolution ได้ยอดเป็นสตริง 2 ตำแหน่ง เช่น `"56.00"`
+
 ## 5. Postback URL (Control Panel ของ merchant ร้าน)
 
 Postback ใช้เร่งการ Inquiry เท่านั้น (ไม่ยืนยันการจ่ายจาก Postback) แต่ควรตั้งให้ถูก:

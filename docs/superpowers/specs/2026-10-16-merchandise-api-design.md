@@ -45,7 +45,7 @@
 | Preview | Backoffice แสดง preview เองจาก endpoint ที่รวมสินค้าร่าง (Q12) |
 | Banner | รูปเดียว ลิงก์ปลายทางใส่หรือไม่ก็ได้ (Q13) |
 | รูปสินค้า | R2 bucket และ env เดิม helper เดิมจาก `lucky-wheel/images.ts` |
-| เงิน | สตางค์แบบ integer (ค่าส่ง = `5000`) |
+| เงิน | บาทเต็มแบบ integer ไม่มีเศษสตางค์ (ค่าส่ง = `50`, ยอดออเดอร์สูงสุด 2,000,000 บาท) |
 | เวลา | เก็บ `timestamptz` (UTC) แสดงและรับค่าเป็นเวลาไทย |
 | Bundle ที่ส่วนประกอบถูกปิด | คำนวณว่า "ซื้อไม่ได้" ตอนอ่าน ไม่ไปแก้สถานะ Bundle |
 | User Test | จ่ายเงินจริงบน PRIS-2026 ในเครื่อง local ผ่าน ngrok (N6) |
@@ -121,7 +121,7 @@ src/modules/merchandise/
 
 Migration `drizzle/0043_merchandise.sql` + นิยามใน `src/database/schema.ts` เป็นตารางใหม่ทั้งหมด 14 ตาราง ขึ้นต้นด้วย `merch_` และ **ไม่แก้ตารางเดิม** มี sequence 1 ตัวสำหรับ reference number
 
-กติการ่วม: PK เป็น `uuid` (ยกเว้นระบุ), มี `created_at`/`updated_at timestamptz`, ตารางที่ Admin แก้มี `version integer` ไว้ตรวจการแก้ชนกัน (`expectedVersion`), เงินเป็น `integer` สตางค์ และมี `CHECK >= 0`
+กติการ่วม: PK เป็น `uuid` (ยกเว้นระบุ), มี `created_at`/`updated_at timestamptz`, ตารางที่ Admin แก้มี `version integer` ไว้ตรวจการแก้ชนกัน (`expectedVersion`), เงินเป็น `integer` บาทเต็ม (`COMMENT ... IS 'THB, whole baht'`) และมี `CHECK >= 0`
 
 ### 5.1 ร้านและแค็ตตาล็อก
 
@@ -178,7 +178,7 @@ Migration `drizzle/0043_merchandise.sql` + นิยามใน `src/database/s
 | `id`, `event_id`, `order_number` (unique) | |
 | `buyer_user_id`, `buyer_name`, `buyer_email`, `buyer_phone` | snapshot จากบัญชีตอนยืนยัน |
 | `recipient_name`, `recipient_phone`, `address_line`, `subdistrict`, `district`, `province`, `postal_code`, `company` null, `delivery_note` null | ประเทศไทยเท่านั้น |
-| `subtotal`, `shipping_fee` (= 5000), `total` | |
+| `subtotal`, `shipping_fee` (= 50), `total` | |
 | `payment_status` | `pending` \| `paid` |
 | `paid_at`, `paid_at_source` (`provider` \| `first_seen`), `paid_attempt_id` | |
 | `shipping_status` | `not_shipped` \| `shipped` |
@@ -197,7 +197,7 @@ Migration `drizzle/0043_merchandise.sql` + นิยามใน `src/database/s
 |---|---|
 | `id`, `order_id` | |
 | `reference_no` | char(12) unique, `'7' + lpad(nextval('merch_payment_reference_seq'), 11, '0')` |
-| `amount` | ยอดตอนสร้าง (สตางค์) |
+| `amount` | ยอดตอนสร้าง (บาทเต็ม) |
 | `status` | `creating` \| `active` \| `create_failed` \| `create_unknown` \| `expired` \| `paid` |
 | `provider_order_no` | text null ค่า `orderNo` จริง |
 | `transaction_id` | text null เก็บเฉพาะเมื่อ provider ส่งมาจริง |
@@ -249,7 +249,7 @@ Migration `drizzle/0043_merchandise.sql` + นิยามใน `src/database/s
 
 - single: ราคาของ variant = `variant.price ?? product.base_price` ถ้า variant ที่เปิดขายราคาเท่ากันหมด `price = {kind:"exact"}` ไม่เช่นนั้น `{kind:"from", amount: ต่ำสุด}`
 - bundle: `base_price` เสมอ (`exact`) ไม่บังคับว่าต้องถูกกว่าซื้อแยก
-- ยอดออเดอร์ = Σ(`unit_price × quantity`) + 5000 ไม่มีค่าธรรมเนียมเพิ่ม (ข้อ 13) ไม่มีขั้นต่ำหรือเพดานจำนวน (ข้อ 12) ยกเว้นเพดานทางเทคนิค 9999 ต่อรายการ
+- ยอดออเดอร์ = Σ(`unit_price × quantity`) + 50 (บาท) ไม่มีค่าธรรมเนียมเพิ่ม (ข้อ 13) ไม่มีขั้นต่ำหรือเพดานจำนวน (ข้อ 12) ยกเว้นเพดานทางเทคนิค 9999 ต่อรายการ และยอดรวมไม่เกิน 2,000,000 บาท (เกินได้ 422 `MERCH_ORDER_TOO_LARGE` พร้อม `details {maxTotalBaht, totalBaht}`)
 
 ### 6.4 ตะกร้า
 
@@ -283,7 +283,7 @@ Body: `{expectedVersion, reason (บังคับ), recipient?, lines?}` โ�
 
 ### 7.1 สร้าง QR (`payso-client.createQr`)
 
-- `total` = สตางค์แปลงเป็น `"123.45"`, `referenceNo` = attempt
+- `total` = บาทเต็มจัดรูปแบบ 2 ตำแหน่ง เช่น `6` → `"6.00"` (ยอดที่ provider ตอบกลับหรือ tag 54 ที่มีเศษสตางค์ถือว่ายอดไม่ตรง ไม่ปัดเศษ), `referenceNo` = attempt
 - `productDetail` = เลขออเดอร์ที่เหลือเฉพาะ `[A-Za-z0-9 ]` (`-` เปลี่ยนเป็นช่องว่าง)
 - `customerName` = ชื่อ–นามสกุลผู้ซื้อ ตัด `<>"'&` และอักขระควบคุมออก ไม่เกิน 100 ตัวอักษร ส่วน `customerEmail` = อีเมลบัญชี
 - timeout 20 วินาที, response ไม่เกิน 512 KB, ไม่ตาม redirect
@@ -413,7 +413,7 @@ interface PaymentView {
 
 - response ที่เป็นข้อมูลส่วนตัวใส่ `Cache-Control: no-store`
 - list ใช้ `page` (≥1) และ `limit` (≤100) และคืน `pagination {page, limit, total, totalPages}`
-- เงินเป็น integer สตางค์ ชื่อฟิลด์ลงท้าย `Minor`, เวลาเป็น ISO 8601 UTC (`...Z`)
+- เงินเป็น integer บาทเต็ม ชื่อฟิลด์ลงท้าย `Baht` (เช่น `priceBaht`, `totalBaht`), เวลาเป็น ISO 8601 UTC (`...Z`)
 
 ### 8.1 Public — `/api/v1/merchandise/events/:eventCode`
 
@@ -466,20 +466,20 @@ interface PaymentView {
 ### 8.5 DTO หลัก (`types.ts`)
 
 ```ts
-type Minor = number; // สตางค์ integer
+type Baht = number; // บาทเต็ม integer
 interface ImageAsset { id: string; url: string; width: number; height: number }
 interface StoreDto {
   eventId: number; eventCode: string;
   state: "disabled" | "not_open" | "open" | "closed";
   opensAt: string | null; closesAt: string | null;
   productionInfoTh: string | null; shippingInfoTh: string | null;
-  shippingMinor: 5000; currency: "THB"; serverNow: string;
+  shippingBaht: 50; currency: "THB"; serverNow: string;
   categories: { id: string; nameTh: string; sortOrder: number }[];
   banners: { id: string; image: ImageAsset; linkUrl: string | null }[];
 }
 interface VariantDto {
   id: string; sizeTh: string | null; colorTh: string | null;
-  priceMinor: Minor | null; saleEnabled: boolean;
+  priceBaht: Baht | null; saleEnabled: boolean;
 }
 interface BundleComponentDto {
   id: string; productId: string; nameTh: string; quantityPerBundle: number;
@@ -491,17 +491,17 @@ interface ProductDto {
   images: ImageAsset[]; categoryId: string | null; sortOrder: number;
   hasOptions: boolean;            // false = ไม่แสดงช่องเลือก (ข้อ 9)
   variants: VariantDto[]; components: BundleComponentDto[];
-  price: { kind: "exact" | "from"; amountMinor: Minor } | null;
+  price: { kind: "exact" | "from"; amountBaht: Baht } | null;
   purchasable: boolean; unavailableCodes: string[];
 }
 interface BundleSelection { componentId: string; variantId: string }
 interface CartLine {
   id: string; productId: string; variantId: string | null; bundleSelections: BundleSelection[];
   quantity: number; product: ProductDto | null;
-  unitPriceMinor: Minor | null; lineTotalMinor: Minor | null;
+  unitPriceBaht: Baht | null; lineTotalBaht: Baht | null;
   valid: boolean; issueCodes: string[];
 }
-interface Amounts { subtotalMinor: Minor; shippingMinor: 5000; totalMinor: Minor; currency: "THB" }
+interface Amounts { subtotalBaht: Baht; shippingBaht: 50; totalBaht: Baht; currency: "THB" }
 interface CartDto {
   cartVersion: string; items: CartLine[]; amounts: Amounts | null;
   buyerDefaults: { fullName: string; phone: string | null; email: string };
@@ -514,7 +514,7 @@ interface Recipient {
 }
 interface OrderItemDto {
   id: string; kind: "single" | "bundle"; nameTh: string; sizeTh: string | null; colorTh: string | null;
-  quantity: number; unitPriceMinor: Minor; lineTotalMinor: Minor;
+  quantity: number; unitPriceBaht: Baht; lineTotalBaht: Baht;
   components: { nameTh: string; sizeTh: string | null; colorTh: string | null; quantityPerBundle: number }[];
 }
 interface OrderSummary {
@@ -532,7 +532,7 @@ interface OrderDetail extends OrderSummary {
 interface AdminOrderDetail extends OrderDetail {
   version: number;
   attempts: { id: string; referenceNo: string; providerOrderNo: string | null; transactionId: string | null;
-    amountMinor: Minor; status: string; requestedAt: string; expiresAt: string | null; paidAt: string | null;
+    amountBaht: Baht; status: string; requestedAt: string; expiresAt: string | null; paidAt: string | null;
     lastCheckAt: string | null; lastCheckResult: string | null; reviewReason: string | null; reviewResolvedAt: string | null }[];
   notifications: { type: "paid" | "shipped"; status: string; attempts: number; lastErrorCode: string | null; sentAt: string | null }[];
   audit: { action: string; actorId: number | null; reason: string | null; contactNote: string | null; createdAt: string; before: unknown; after: unknown }[];
@@ -554,7 +554,7 @@ interface AdminComponentDto {
 interface AdminProductDto {
   id: string; kind: "single" | "bundle"; nameTh: string; descriptionTh: string | null; sizeChartTh: string | null;
   images: ImageAsset[]; categoryId: string | null; sortOrder: number;
-  publishState: "draft" | "published"; saleEnabled: boolean; basePriceMinor: Minor | null; version: number;
+  publishState: "draft" | "published"; saleEnabled: boolean; basePriceBaht: Baht | null; version: number;
   variants: AdminVariantDto[]; components: AdminComponentDto[];
   publishIssues: string[];        // สิ่งที่ยังขาดก่อนเผยแพร่ได้ (ว่าง = เผยแพร่ได้)
   purchasable: boolean; unavailableCodes: string[];
@@ -564,12 +564,14 @@ interface AdminBannerDto { id: string; image: ImageAsset; linkUrl: string | null
 interface AdminStoreDto extends StoreDto { enabled: boolean; version: number }
 interface BatchRowResult { id: string; ok: boolean; code: string | null; error: string | null }
 interface PaymentReviewDto {
-  attemptId: string; orderId: string; orderNumber: string; referenceNo: string; amountMinor: Minor;
+  attemptId: string; orderId: string; orderNumber: string; referenceNo: string; amountBaht: Baht;
   reviewReason: string; createdAt: string; resolvedAt: string | null; note: string | null;
 }
 ```
 
 Input ของ `POST/PATCH /products` คือฟิลด์ที่แก้ได้ของ `AdminProductDto` (ไม่รวม variants/components ซึ่งมี endpoint ของตัวเอง) พร้อม `expectedVersion` เมื่อแก้
+
+ราคาที่ Admin ส่งเป็นบาทเต็ม: `basePriceBaht` (product) และ `priceBaht` (variant ใน `PUT /products/:id/variants`) เป็น integer 0–1,000,000 หรือ `null` input ทุกตัวเป็น strict จึงได้ 400 เมื่อส่งเศษ (`6.5`), เกินเพดาน หรือชื่อฟิลด์เก่า (`price`, `priceMinor`)
 
 ## 9. การจัดส่ง
 
