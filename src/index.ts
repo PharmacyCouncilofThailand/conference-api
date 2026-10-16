@@ -244,6 +244,13 @@ import quickRegistrationRoutes from "./routes/registrations/quick.js";
 import teamRegistrationPublicRoutes from "./modules/team-registrations/public.routes.js";
 import teamRegistrationProviderRoutes from "./modules/team-registrations/provider.routes.js";
 import teamRegistrationBackofficeRoutes from "./modules/team-registrations/backoffice.routes.js";
+import {
+  buildMerchandiseOptions,
+  merchandiseAdminRoutes,
+  merchandiseBuyerRoutes,
+  merchandiseProviderRoutes,
+  merchandisePublicRoutes,
+} from "./modules/merchandise/index.js";
 import { getTeamRegistrationWorkerHealth, type TeamRegistrationWorkerHealth } from "./modules/team-registrations/jobs.js";
 
 // ============================================================================
@@ -311,6 +318,11 @@ fastify.register(quickRegistrationRoutes, { prefix: "/api/registrations" });
 fastify.register(teamRegistrationPublicRoutes, { prefix: "/api/v1/team-registrations" });
 fastify.register(teamRegistrationProviderRoutes, { prefix: "/api/v1/team-registrations" });
 
+const merchandiseOptions = buildMerchandiseOptions(db);
+fastify.register(merchandisePublicRoutes, { prefix: "/api/v1/merchandise", ...merchandiseOptions });
+fastify.register(merchandiseBuyerRoutes, { prefix: "/api/v1/merchandise", ...merchandiseOptions });
+fastify.register(merchandiseProviderRoutes, { prefix: "/api/v1/merchandise", ...merchandiseOptions });
+
 fastify.register(async (protectedLuckyWheelRoutes) => {
   protectedLuckyWheelRoutes.addHook("preHandler", fastify.authenticate);
   protectedLuckyWheelRoutes.register(luckyWheelAttendeeRoutes);
@@ -348,6 +360,8 @@ fastify.register(
   protectedRoutes.register(backofficeStudentEligibilityRequestsRoutes, { prefix: "/student-eligibility-requests" });
   protectedRoutes.register(backofficeSponsorRoutes);
   protectedRoutes.register(teamRegistrationBackofficeRoutes);
+  // Admin paths already start with /merchandise/events/:eventId, so no extra prefix here.
+  protectedRoutes.register(merchandiseAdminRoutes, { ...merchandiseOptions });
   },
   { prefix: "/api/backoffice" },
 );
