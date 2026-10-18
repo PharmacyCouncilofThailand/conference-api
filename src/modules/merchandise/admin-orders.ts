@@ -89,7 +89,12 @@ export function orderFilterSql(
   return sql.join(parts, sql` AND `);
 }
 
-export type AdminOrderRow = OrderSummary & { buyerName: string; buyerEmail: string; itemsText: string };
+export type AdminOrderRow = OrderSummary & {
+  buyerName: string;
+  buyerEmail: string;
+  itemsText: string;
+  version: number;
+};
 
 type OrderRow = typeof merchOrders.$inferSelect;
 type OrderItemRow = typeof merchOrderItems.$inferSelect;
@@ -154,6 +159,7 @@ export async function queryAdminOrders(
           buyerName: order.buyerName,
           buyerEmail: order.buyerEmail,
           itemsText: items.map(itemText).join(", "),
+          version: order.version,
         },
       };
     }),

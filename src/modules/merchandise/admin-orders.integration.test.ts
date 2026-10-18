@@ -137,7 +137,11 @@ async function detail(orderId: string) {
   return res.json().data;
 }
 
-async function list(query: string): Promise<{ id: string; paymentStatus: string; itemsText: string; buyerName: string; buyerEmail: string }[]> {
+async function list(
+  query: string,
+): Promise<
+  { id: string; paymentStatus: string; itemsText: string; buyerName: string; buyerEmail: string; version: number }[]
+> {
   const res = await admin("GET", `/orders?limit=100&${query}`);
   assert.equal(res.statusCode, 200, res.body);
   assert.equal(res.headers["cache-control"], "no-store");
@@ -576,3 +580,31 @@ test("reviews: duplicate payment listed, resolve audited, second resolve conflic
   const done = (await admin("GET", "/payment-reviews?resolved=true")).json().data;
   assert.ok(done.some((r: { attemptId: string }) => r.attemptId === b.id));
 });
+
+test("order list rows carry the order version", { skip }, async () => {
+  const o = await placeOrder([{ productId: mug.id, variantId: mug.m, quantity: 1 }], {
+    firstName: "Versioncheck",
+    lastName: "Buyer",
+  });
+  const initialRows = await list("search=versioncheck");
+  assert.equal(initialRows.length, 1);
+  assert.equal(initialRows[0].id, o.orderId);
+  assert.equal(initialRows[0].version, 1);
+
+  await expireAgo(o.attemptId, 300);
+  const d0 = await detail(o.orderId);
+  const itemId = d0.items[0].id;
+  const edit = await admin("PATCH", `/orders/${o.orderId}`, {
+    expectedVersion: 1,
+    reason: "เพิ่มจำนวนเพื่อตรวจ version",
+    lines: [{ sourceItemId: itemId, quantity: 2 }],
+  });
+  assert.equal(edit.statusCode, 200, edit.body);
+
+  const afterRows = await list("search=versioncheck");
+  const d1 = await detail(o.orderId);
+  assert.equal(afterRows.length, 1);
+  assert.equal(afterRows[0].version, 2);
+  assert.equal(afterRows[0].version, d1.version);
+});
+
