@@ -74,6 +74,8 @@ const allowedCorsOrigins = Array.from(new Set([...corsOrigins, ...teamRegistrati
 fastify.register(cors, {
   origin: allowedCorsOrigins,
   allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Source-App', 'ngrok-skip-browser-warning'],
+  // Lets cross-origin clients read file names on Excel downloads.
+  exposedHeaders: ['Content-Disposition'],
   credentials: true
 });
 
