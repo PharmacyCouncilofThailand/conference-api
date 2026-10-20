@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { toReceiptViewData } from "./receiptPdf.js";
+import { toReceiptViewData, generateReceiptPdf, TICKET_RECEIPT_LABEL } from "./receiptPdf.js";
+import { RECEIPT_REMARKS } from "./receipt/components/ReceiptFooter.js";
 
 test("free promo receipt shows free registration method and zero total", () => {
   const view = toReceiptViewData({
@@ -42,4 +43,52 @@ test("receipt view preserves long promo code exactly", () => {
   });
 
   assert.equal(view.promoCode, promoCode);
+});
+
+const orderOf = (items: { name: string; type: "ticket" | "addon"; price: number; quantity: number }[]) => ({
+  orderNumber: "CONF-LABEL",
+  paidAt: new Date("2026-09-20T13:11:00Z"),
+  paymentChannel: "promptpay" as const,
+  currency: "THB",
+  items,
+  subtotal: 1250,
+  fee: 0,
+  total: 1250,
+  customerName: "Receipt User",
+  customerEmail: "receipt@example.test",
+});
+
+test("every ticket type shows the registration fee label while add-ons keep their name", () => {
+  const view = toReceiptViewData(
+    orderOf([
+      { name: "Early Bird", type: "ticket", price: 1000, quantity: 1 },
+      { name: "Regular", type: "ticket", price: 1500, quantity: 2 },
+      { name: "Workshop", type: "addon", price: 250, quantity: 1 },
+    ]),
+  );
+
+  assert.deepEqual(
+    view.items.map((i) => i.description),
+    [TICKET_RECEIPT_LABEL, TICKET_RECEIPT_LABEL, "Workshop"],
+  );
+  assert.equal(
+    TICKET_RECEIPT_LABEL.replace("\n", ""),
+    "ค่าธรรมเนียมการลงทะเบียนเข้าร่วมงานประชุมวิชาการวิจัยและนวัตกรรมทางเภสัชกรรมระดับชาติ ประจำปี 2569 (PRIS 2026)",
+  );
+  assert.equal(TICKET_RECEIPT_LABEL.split("\n").length, 2);
+  // Only the label changes; amounts still come from the real ticket price.
+  assert.deepEqual(view.items.map((i) => i.amount), [1000, 3000, 250]);
+});
+
+test("receipt PDF renders on one page with the remarks", async () => {
+  const stream = await generateReceiptPdf(
+    orderOf([{ name: "Early Bird", type: "ticket", price: 1250, quantity: 1 }]),
+  );
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const pdf = Buffer.concat(chunks);
+
+  assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
+  assert.equal(pdf.toString("latin1").match(/\/Type \/Page\b/g)?.length, 1);
+  assert.equal(RECEIPT_REMARKS.length, 2);
 });
