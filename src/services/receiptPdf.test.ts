@@ -80,6 +80,26 @@ test("every ticket type shows the registration fee label while add-ons keep thei
   assert.deepEqual(view.items.map((i) => i.amount), [1000, 3000, 250]);
 });
 
+test("ticket receipt label includes the registered attendee name when available", () => {
+  const view = toReceiptViewData({
+    ...orderOf([{ name: "Early Bird", type: "ticket", price: 1250, quantity: 1 }]),
+    ticketOwnerName: "Ada Lovelace",
+  });
+
+  assert.equal(
+    view.items[0].description,
+    `${TICKET_RECEIPT_LABEL}\nชื่อผู้เข้าร่วม: Ada Lovelace`,
+  );
+});
+
+test("ticket receipt label omits the attendee name when registration is unavailable", () => {
+  const view = toReceiptViewData(
+    orderOf([{ name: "Early Bird", type: "ticket", price: 1250, quantity: 1 }]),
+  );
+
+  assert.equal(view.items[0].description, TICKET_RECEIPT_LABEL);
+});
+
 test("receipt PDF renders on one page with the remarks", async () => {
   const stream = await generateReceiptPdf(
     orderOf([{ name: "Early Bird", type: "ticket", price: 1250, quantity: 1 }]),

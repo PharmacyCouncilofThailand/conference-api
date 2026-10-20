@@ -25,6 +25,7 @@ export interface ReceiptData {
   paymentChannel: ReceiptPaymentChannel;
   currency: string;
   items: ReceiptItem[];
+  ticketOwnerName?: string;
   subtotal: number;
   discount?: number;
   promoCode?: string | null;
@@ -116,7 +117,12 @@ export function toReceiptViewData(data: ReceiptData): ReceiptViewData {
       address: data.taxInvoice?.taxFullAddress || "",
     },
     items: data.items.map((i) => ({
-      description: i.type === "ticket" ? TICKET_RECEIPT_LABEL : i.name,
+      description:
+        i.type === "ticket"
+          ? data.ticketOwnerName
+            ? `${TICKET_RECEIPT_LABEL}\nชื่อผู้เข้าร่วม: ${data.ticketOwnerName}`
+            : TICKET_RECEIPT_LABEL
+          : i.name,
       quantity: i.quantity,
       unitPrice: i.price,
       amount: i.price * i.quantity,

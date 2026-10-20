@@ -4057,7 +4057,11 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
 
         // Get event name from registrations
         const [reg] = await db
-          .select({ eventId: registrations.eventId })
+          .select({
+            eventId: registrations.eventId,
+            firstName: registrations.firstName,
+            lastName: registrations.lastName,
+          })
           .from(registrations)
           .where(eq(registrations.orderId, order.id))
           .limit(1);
@@ -4077,6 +4081,9 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
               : "card",
           currency: order.currency,
           eventName: event?.eventName || undefined,
+          ticketOwnerName: reg
+            ? `${reg.firstName} ${reg.lastName}`.trim()
+            : undefined,
           items: sortedItems.map((i) => ({
             name: i.name,
             type: i.type as "ticket" | "addon",
