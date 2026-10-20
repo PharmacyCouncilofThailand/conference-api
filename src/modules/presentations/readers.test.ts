@@ -3,7 +3,7 @@ import test from 'node:test';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import type { PresentationDatabase } from './access.js';
-import { readPresentationList, readPresentationDetail, readPresentationSettings, readPresentationBatch } from './readers.js';
+import { readPresentationList, readPresentationDetail, readPresentationSettings, readPresentationBatch, currentRosterRecords } from './readers.js';
 import { listQuerySchema } from './schemas.js';
 
 // Isolated reader fixtures: no runtime database, storage or email providers.
@@ -105,4 +105,16 @@ test('admin retains complete roster, verification, email and audit reads with op
  assert.ok((await readPresentationDetail(database,actor,42,2)).row);
  assert.equal((await readPresentationSettings(database,actor,42)).capabilities.manage,true);
  assert.equal((await readPresentationBatch(database,actor,42,'batch')).jobs.length,1);
+});
+
+test('a target shows only its present announcement; withdrawn rows stay only when nothing present replaces them', () => {
+ const row=(source_key:string,target_id:string|null,present:boolean)=>({source_key,target_id,present,source_row:{round:Number(source_key[0])}});
+ const kept=currentRosterRecords([
+  row('1:121','target-a',false),row('2:75','target-a',true),
+  row('1:5','target-b',false),row('2:9','target-b',false),
+  row('1:7',null,false),row('1:8',null,false),
+  row('2:1','target-c',true),row('2:2','target-c',true),
+ ]).map(r=>r.source_key);
+ // Round 1 history must not shadow the current Round 2 row that owns the same uploads.
+ assert.deepEqual(kept,['2:75','2:9','1:7','1:8','2:1','2:2']);
 });

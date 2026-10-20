@@ -57,6 +57,14 @@ type RosterRecord={source_key:string;source_row:Announcement;match_state:MatchSt
  match_snapshot:{announcement:Announcement;candidates:DbCandidate[];match:MatchResult};verified_fingerprint:string|null;
  verified_by:number|null;verified_at:Date|null;verification_reason:string|null;present:boolean;target_id:string|null;
  abstract_id:number|null;current_upload_id:string|null;submitter_email:string|null};
+// Reconcile keeps withdrawn rows on the same target, so Round 1 history would shadow the current row that owns its uploads.
+// Present rows all stay (duplicates are conflicts to review); a fully withdrawn target keeps only its latest round.
+export function currentRosterRecords<T extends {source_key:string;source_row:{round:number};present:boolean;target_id:string|null}>(records:T[]):T[]{
+ const shown=new Map<string,T>();
+ for(const r of records){if(!r.target_id)continue;const best=shown.get(r.target_id);
+  if(!best||(!best.present&&(r.present||r.source_row.round>best.source_row.round)))shown.set(r.target_id,r);}
+ return records.filter(r=>!r.target_id||(r.present?shown.get(r.target_id)!.present:shown.get(r.target_id)===r));
+}
 const iso=(value:string|Date)=>new Date(value).toISOString();
 const maybeIso=(value:string|Date|null)=>value?iso(value):null;
 function revisionDto(r:RevisionDto,now:Date):RevisionDto{
@@ -86,7 +94,7 @@ async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:num
  const latest=new Map<string,RevisionDto>();
  for(const {targetId,...request} of requests)if(!latest.has(targetId))latest.set(targetId,revisionDto(request,now));
  const lastEmail=new Map(mails.map(j=>[j.targetId,{id:j.id,kind:j.kind,state:j.state,createdAt:iso(j.createdAt),errorCode:j.errorCode}]));
- return announcements.map(a=>{
+ return currentRosterRecords(announcements).map(a=>{
   const file=a.current_upload_id?uploads.get(a.current_upload_id)??null:null;const request=a.target_id?latest.get(a.target_id)??null:null;
   const matchState=a.present?a.match_state:'withdrawn';const verified=a.verified_fingerprint===a.match_fingerprint;
   return {sourceKey:a.source_key,announcement:a.source_row,abstractId:a.abstract_id,matchState,matchFingerprint:a.match_fingerprint??'',
