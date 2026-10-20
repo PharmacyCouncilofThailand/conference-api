@@ -87,3 +87,19 @@ test('progress derives expired/open revisions and revised/current files',()=>{
  assert.equal(presentationProgress(file,{status:'open',closesAt:'2026-10-08T00:00:00Z'} as any,now),'revision_pending');
  assert.equal(presentationProgress(file,{status:'open',closesAt:now.toISOString()} as any,now),'revision_expired');
 });
+
+test('an upload under the Round 2 roster is reported as Round 2, not the withdrawn Round 1 row on the same target', async t=>{
+ const {database,fixture:f,announcement}=await preparePresentationScenario(t);
+ process.env.PRESENTATION_SUBMISSIONS_ENABLED='true';
+ await reconcilePresentations(database,[{...announcement,id:75,round:2}]);
+ const storage:PresentationStorage={r2:()=>({publicBaseUrl:'https://test.r2.dev',putObject:async()=>{},deleteObject:async()=>{}}),drive:{
+  rootFolderId:()=> 'root',generateId:async()=>randomUUID(),folder:async(_parent,name)=>name,
+  write:async input=>({fileId:input.fileId,fileUrl:`https://drive.google.com/file/d/${input.fileId}/view`,storedFileName:input.fileName}),delete:async()=>{},
+ }};
+ const pdf=await PDFDocument.create();pdf.addPage();
+ await submitPresentationUpload(database,f.owner,f.abstractId,randomUUID(),null,{buffer:Buffer.from(await pdf.save()),filename:'file.pdf',mimetype:'application/pdf'},storage);
+ const received=await readPresentationList(database,f.admin,f.eventId,listQuerySchema.parse({received:'true'}));
+ assert.deepEqual(received.items.map(r=>[r.sourceKey,r.announcement.round]),[['2:75',2]]);
+ assert.equal((await readPresentationList(database,f.admin,f.eventId,listQuerySchema.parse({round:'1'}))).total,0);
+ assert.equal((await readPresentationDetail(database,f.admin,f.eventId,f.abstractId)).row.announcement.round,2);
+});
