@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   merchBundleComponents,
@@ -284,6 +284,21 @@ export async function updateProduct(
       ...(input.saleEnabled !== undefined ? { saleEnabled: input.saleEnabled } : {}),
       ...(input.basePriceBaht !== undefined ? { basePrice: input.basePriceBaht } : {}),
     });
+    let clearedVariantImageIds: string[] = [];
+    if (input.imageIds !== undefined) {
+      const cleared = await tx
+        .update(merchVariants)
+        .set({ imageId: null, version: sql`${merchVariants.version} + 1`, updatedAt: sql`now()` })
+        .where(
+          and(
+            eq(merchVariants.productId, id),
+            isNotNull(merchVariants.imageId),
+            input.imageIds.length > 0 ? notInArray(merchVariants.imageId, input.imageIds) : undefined,
+          ),
+        )
+        .returning({ id: merchVariants.id });
+      clearedVariantImageIds = cleared.map((v) => v.id);
+    }
     await writeAudit(txDb, {
       eventId,
       entityType: "product",
@@ -291,7 +306,7 @@ export async function updateProduct(
       action: "product.update",
       actorId: admin.id,
       before: snapshot(before),
-      after: snapshot(after),
+      after: { ...snapshot(after), clearedVariantImageIds },
     });
   });
   return getAdminProduct(db, eventId, id);

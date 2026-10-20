@@ -151,6 +151,22 @@ test("variants: imageId must be a photo of the product; omitted keeps, null clea
   }
 });
 
+test("removing a photo from the product clears it from its variants", { skip }, async () => {
+  const second = await insertImage(eventId);
+  const p = await mkProduct({ kind: "single", nameTh: "ผ้าห่มฟ้า", imageIds: [imageId, second] });
+  const set = await call("PUT", `/products/${p.id}/variants`, [
+    { colorTh: "สีขาว", imageId },
+    { colorTh: "สีฟ้า", imageId: second },
+  ]);
+  const patched = await call("PATCH", `/products/${p.id}`, { expectedVersion: set.json().data.version, imageIds: [imageId] });
+  assert.equal(patched.statusCode, 200, patched.body);
+  assert.deepEqual(patched.json().data.variants.map((v: { imageId: string | null }) => v.imageId), [imageId, null]);
+  const [audit] = await t.sql<{ after: { clearedVariantImageIds: string[] } }[]>`
+    SELECT after FROM merch_audit_log WHERE entity_id = ${p.id} AND action = 'product.update'
+    ORDER BY created_at DESC LIMIT 1`;
+  assert.equal(audit.after.clearedVariantImageIds.length, 1);
+});
+
 test("variants: replace semantics, shape, duplicate, bundle reference", { skip }, async () => {
   const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อยืด", imageIds: [imageId] });
   const defaultId = shirt.variants[0].id;
