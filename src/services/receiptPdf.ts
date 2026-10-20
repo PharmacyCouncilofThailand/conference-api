@@ -92,6 +92,11 @@ function getOrganization(): Organization {
   };
 }
 
+/** Receipts show every ticket type under one fee label; add-ons keep their own name. */
+// The explicit line break keeps the unspaced Thai text inside its table column.
+export const TICKET_RECEIPT_LABEL =
+  "ค่าธรรมเนียมการลงทะเบียนเข้าร่วมงานประชุมวิชาการวิจัยและ\nนวัตกรรมทางเภสัชกรรมระดับชาติ ประจำปี 2569 (PRIS 2026)";
+
 const FOOTER_NOTE =
   process.env.RECEIPT_FOOTER_NOTE ||
   "สิ่งพิมพ์ออกจากระบบรับส่งอิเล็กทรอนิกส์ของสภาเภสัชกรรม ถือเป็นเอกสารที่สภาเภสัชกรรมให้การรับรอง";
@@ -111,7 +116,7 @@ export function toReceiptViewData(data: ReceiptData): ReceiptViewData {
       address: data.taxInvoice?.taxFullAddress || "",
     },
     items: data.items.map((i) => ({
-      description: i.name,
+      description: i.type === "ticket" ? TICKET_RECEIPT_LABEL : i.name,
       quantity: i.quantity,
       unitPrice: i.price,
       amount: i.price * i.quantity,
