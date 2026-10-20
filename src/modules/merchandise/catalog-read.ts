@@ -87,13 +87,18 @@ export async function loadImages(db: MerchDb, ids: string[]): Promise<Map<string
   return map;
 }
 
-function toVariantDto(product: ProductRow, variant: VariantRow): VariantDto {
+function toVariantDto(
+  product: ProductRow,
+  variant: VariantRow,
+  imageIds?: ReadonlySet<string>,
+): VariantDto {
   return {
     id: variant.id,
     sizeTh: variant.sizeTh,
     colorTh: variant.colorTh,
     priceBaht: effectiveVariantPrice(product, variant),
     saleEnabled: variant.saleEnabled,
+    imageId: variant.imageId && (!imageIds || imageIds.has(variant.imageId)) ? variant.imageId : null,
   };
 }
 
@@ -119,7 +124,7 @@ export function toProductDto(
       const componentVariants = catalog.variantsByProduct.get(c.componentProductId) ?? [];
       const dto = (id: string): VariantDto | null => {
         const row = componentVariants.find((v) => v.id === id);
-        return row && componentProduct ? toVariantDto(componentProduct, row) : null;
+        return row && componentProduct ? toVariantDto(componentProduct, row, new Set(componentProduct.imageIds)) : null;
       };
       return {
         id: c.id,
@@ -150,7 +155,7 @@ export function toProductDto(
     categoryId: product.categoryId,
     sortOrder: product.sortOrder,
     hasOptions,
-    variants: variantRows.map((v) => toVariantDto(product, v)),
+    variants: variantRows.map((v) => toVariantDto(product, v, new Set(product.imageIds))),
     components,
     price: displayPrice(productId, catalog),
     purchasable: codes.length === 0,

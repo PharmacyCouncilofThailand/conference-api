@@ -106,3 +106,14 @@ merchant ร้านใช้เฉพาะ merchandise จึงไม่ก�
 ทำตาม checklist ใน spec ส่วนที่ 15 หัวข้อ "User Test (local + ngrok, PRIS-2026, เงินจริง)" ให้ครบ
 และเก็บหลักฐาน โดยเฉพาะข้อแรก: ยืนยันว่า Legacy Inquiry เห็นรายการ Direct QR (ถ้าไม่เห็นต้องติดต่อ
 PaySolution ก่อนไปต่อ) และค่า `MerchantID` จริงใน Inquiry (8 หลักหรือ 5 หลักท้าย — ระบบรับทั้งสองแบบ)
+
+## Migration 0046 `drizzle/0046_merch_variant_image.sql` (รันด้วยมือ)
+
+เพิ่มคอลัมน์ `merch_variants.image_id` (nullable, FK ไป `merch_images`, `ON DELETE SET NULL`) สำหรับผูกรูปสินค้ากับตัวเลือก
+ไฟล์รันซ้ำได้ (`IF NOT EXISTS`)
+
+```bash
+psql "<connection ของ environment นั้น>" -v ON_ERROR_STOP=1 -f drizzle/0046_merch_variant_image.sql
+```
+
+ลำดับ deploy: migration → API → back office / storefront

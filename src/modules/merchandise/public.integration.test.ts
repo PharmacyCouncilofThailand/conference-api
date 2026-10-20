@@ -223,3 +223,13 @@ test("bundle with draft component keeps a non-empty component name and is unpurc
     assert.equal(dto.components[0].nameTh, "ส่วนประกอบร่าง");
   }
 });
+
+test("variants expose imageId; null by default, dropped when not a product photo", { skip }, async () => {
+  const p = await mkProduct({ kind: "single", nameTh: "ผ้าห่ม", basePriceBaht: 300 });
+  const read = async () => (await app.inject({ method: "GET", url: pub(`/products/${p.id}`) })).json().data.variants[0].imageId;
+  assert.equal(await read(), null);
+  await t.sql`UPDATE merch_variants SET image_id = ${imageId} WHERE product_id = ${p.id}`;
+  assert.equal(await read(), imageId);
+  await t.sql`UPDATE merch_products SET image_ids = '{}' WHERE id = ${p.id}`;
+  assert.equal(await read(), null);
+});
