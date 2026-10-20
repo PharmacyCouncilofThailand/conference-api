@@ -50,6 +50,7 @@ const variantItem = z
     colorTh: text(100).nullable().optional(),
     priceBaht: z.number().int().min(0).max(MAX_PRICE).nullable().optional(),
     saleEnabled: z.boolean().optional(),
+    imageId: uuid.nullable().optional(),
   })
   .strict();
 const variantList = z.array(variantItem).min(1).max(200);
@@ -335,10 +336,14 @@ export async function replaceVariants(
       price: v.priceBaht ?? null,
       saleEnabled: v.saleEnabled ?? true,
       sortOrder: index,
+      imageId: v.imageId !== undefined ? v.imageId : v.id ? (existingById.get(v.id)?.imageId ?? null) : null,
     }));
     const givenIds = rows.flatMap((r) => (r.id ? [r.id] : []));
     if (new Set(givenIds).size !== givenIds.length || givenIds.some((id) => !existingById.has(id))) {
       throw new MerchError(422, "MERCH_VARIANT_INVALID", "ไม่พบตัวเลือกสินค้าที่ระบุ");
+    }
+    if (rows.some((r) => r.imageId !== null && !product.imageIds.includes(r.imageId))) {
+      throw new MerchError(422, "MERCH_VARIANT_IMAGE_INVALID", "รูปของตัวเลือกต้องเป็นรูปของสินค้านี้");
     }
     if (!variantShapeValid(rows)) {
       throw new MerchError(
@@ -383,6 +388,7 @@ export async function replaceVariants(
           old.colorTh !== r.colorTh ||
           old.price !== r.price ||
           old.saleEnabled !== r.saleEnabled ||
+          old.imageId !== r.imageId ||
           old.sortOrder !== r.sortOrder)
       );
     });
@@ -404,6 +410,7 @@ export async function replaceVariants(
           colorTh: r.colorTh,
           price: r.price,
           saleEnabled: r.saleEnabled,
+          imageId: r.imageId,
           sortOrder: r.sortOrder,
           version: sql`${merchVariants.version} + 1`,
           updatedAt: sql`now()`,
@@ -419,14 +426,21 @@ export async function replaceVariants(
           colorTh: r.colorTh,
           price: r.price,
           saleEnabled: r.saleEnabled,
+          imageId: r.imageId,
           sortOrder: r.sortOrder,
         })),
       );
     }
 
     const after = await bumpProduct(txDb, productId);
-    const summary = (v: { sizeTh: string | null; colorTh: string | null; price: number | null; saleEnabled: boolean }) => ({
-      sizeTh: v.sizeTh, colorTh: v.colorTh, price: v.price, saleEnabled: v.saleEnabled,
+    const summary = (v: {
+      sizeTh: string | null;
+      colorTh: string | null;
+      price: number | null;
+      saleEnabled: boolean;
+      imageId: string | null;
+    }) => ({
+      sizeTh: v.sizeTh, colorTh: v.colorTh, price: v.price, saleEnabled: v.saleEnabled, imageId: v.imageId,
     });
     await writeAudit(txDb, {
       eventId,
