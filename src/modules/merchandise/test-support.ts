@@ -117,6 +117,7 @@ export async function openMerchTestDatabase(): Promise<MerchTestDb> {
     const migrationConn = await sql.reserve();
     try {
       await migrationConn.unsafe(await readFile("drizzle/0043_merchandise.sql", "utf8"));
+      await migrationConn.unsafe(await readFile("drizzle/0046_merch_variant_image.sql", "utf8"));
     } finally {
       migrationConn.release();
     }

@@ -2698,6 +2698,7 @@ export const merchVariants = pgTable(
     colorTh: text("color_th"),
     price: integer("price"),
     saleEnabled: boolean("sale_enabled").notNull().default(true),
+    imageId: uuid("image_id").references(() => merchImages.id, { onDelete: "set null" }),
     sortOrder: integer("sort_order").notNull().default(0),
     version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

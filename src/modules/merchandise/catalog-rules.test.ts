@@ -26,7 +26,7 @@ function product(o: Partial<ProductRow> = {}): ProductRow {
 }
 function variant(productId: string, o: Partial<VariantRow> = {}): VariantRow {
   return {
-    id: id(), productId, sizeTh: null, colorTh: null, price: null, saleEnabled: true,
+    id: id(), productId, sizeTh: null, colorTh: null, price: null, saleEnabled: true, imageId: null,
     sortOrder: 0, version: 1, createdAt: now, updatedAt: now, ...o,
   };
 }
