@@ -4057,7 +4057,11 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
 
         // Get event name from registrations
         const [reg] = await db
-          .select({ eventId: registrations.eventId })
+          .select({
+            eventId: registrations.eventId,
+            firstName: registrations.firstName,
+            lastName: registrations.lastName,
+          })
           .from(registrations)
           .where(eq(registrations.orderId, order.id))
           .limit(1);
@@ -4090,6 +4094,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           total,
           customerName: `${user.firstName} ${user.lastName}`,
           customerEmail: user.email,
+          participantName: reg ? `${reg.firstName} ${reg.lastName}` : undefined,
           taxInvoice: order.needTaxInvoice
             ? {
               taxName: order.taxName,

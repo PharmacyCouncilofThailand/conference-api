@@ -32,6 +32,7 @@ export interface ReceiptData {
   total: number;
   customerName: string;
   customerEmail: string;
+  participantName?: string;
   taxInvoice?: ReceiptTaxInvoiceInfo;
   eventName?: string;
 }
@@ -105,6 +106,10 @@ const FOOTER_NOTE =
 export function toReceiptViewData(data: ReceiptData): ReceiptViewData {
   const discount = data.discount && data.discount > 0 ? data.discount : 0;
   const fee = data.fee > 0 ? data.fee : 0;
+  const participantName = data.participantName?.trim();
+  const ticketDescription = participantName
+    ? `${TICKET_RECEIPT_LABEL}\nชื่อผู้เข้าร่วมงาน : ${participantName}`
+    : TICKET_RECEIPT_LABEL;
 
   return {
     receiptNo: data.orderNumber,
@@ -116,7 +121,7 @@ export function toReceiptViewData(data: ReceiptData): ReceiptViewData {
       address: data.taxInvoice?.taxFullAddress || "",
     },
     items: data.items.map((i) => ({
-      description: i.type === "ticket" ? TICKET_RECEIPT_LABEL : i.name,
+      description: i.type === "ticket" ? ticketDescription : i.name,
       quantity: i.quantity,
       unitPrice: i.price,
       amount: i.price * i.quantity,
