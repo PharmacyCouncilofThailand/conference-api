@@ -67,7 +67,12 @@ export async function merchandisePublicRoutes(
     const { state } = await readStore(db, eventId);
     const images: Map<string, ImageAsset> = await loadImages(
       db,
-      ids.flatMap((id) => catalog.products.get(id)?.imageIds ?? []),
+      ids.flatMap((id) => [
+        ...(catalog.products.get(id)?.imageIds ?? []),
+        ...(catalog.componentsByBundle.get(id) ?? []).flatMap(
+          (c) => catalog.products.get(c.componentProductId)?.imageIds ?? [],
+        ),
+      ]),
     );
     const dtos = ids.map((id) => toProductDto(id, catalog, state, images));
     await fillComponentNames(db, dtos);

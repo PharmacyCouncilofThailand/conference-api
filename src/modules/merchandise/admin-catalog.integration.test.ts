@@ -167,6 +167,29 @@ test("removing a photo from the product clears it from its variants", { skip }, 
   assert.equal(audit.after.clearedVariantImageIds.length, 1);
 });
 
+test("emptying product imageIds clears every variant image", { skip }, async () => {
+  const second = await insertImage(eventId);
+  const p = await mkProduct({ kind: "single", nameTh: "ผ้าห่มเขียว", imageIds: [imageId, second] });
+  const set = await call("PUT", `/products/${p.id}/variants`, [
+    { colorTh: "สีขาว", imageId },
+    { colorTh: "สีเขียว", imageId: second },
+    { colorTh: "สีเทา" },
+  ]);
+  assert.equal(set.statusCode, 200, set.body);
+  const withImage = (set.json().data.variants as { id: string; imageId: string | null }[])
+    .filter((v) => v.imageId)
+    .map((v) => v.id)
+    .sort();
+  assert.equal(withImage.length, 2);
+  const patched = await call("PATCH", `/products/${p.id}`, { expectedVersion: set.json().data.version, imageIds: [] });
+  assert.equal(patched.statusCode, 200, patched.body);
+  assert.ok((patched.json().data.variants as { imageId: string | null }[]).every((v) => v.imageId === null));
+  const [audit] = await t.sql<{ after: { clearedVariantImageIds: string[] } }[]>`
+    SELECT after FROM merch_audit_log WHERE entity_id = ${p.id} AND action = 'product.update'
+    ORDER BY created_at DESC LIMIT 1`;
+  assert.deepEqual([...audit.after.clearedVariantImageIds].sort(), withImage);
+});
+
 test("variants: replace semantics, shape, duplicate, bundle reference", { skip }, async () => {
   const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อยืด", imageIds: [imageId] });
   const defaultId = shirt.variants[0].id;

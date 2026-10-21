@@ -117,3 +117,6 @@ psql "<connection ของ environment นั้น>" -v ON_ERROR_STOP=1 -f dri
 ```
 
 ลำดับ deploy: migration → API → back office / storefront
+
+ข้อควรระวัง (release coupling): storefront (Pris2026 branch `feat/merchandise-preorder` ตั้งแต่ commit `4637adb` เป็นต้นไป) จะ **ปฏิเสธ** response ของสินค้าที่ variants ไม่มีฟิลด์ `imageId` ดังนั้น migration 0046 และ API เวอร์ชันนี้ต้องใช้งานจริงแล้วก่อน deploy storefront
+และการ rollback เฉพาะ API จะทำให้หน้า catalog / product / cart ของ storefront พัง — ถ้าต้อง rollback ให้ rollback storefront ก่อน แล้วค่อย rollback API

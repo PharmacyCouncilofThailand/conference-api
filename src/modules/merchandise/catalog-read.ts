@@ -109,6 +109,10 @@ function productImages(imageIds: string[], images: Map<string, ImageAsset>): Ima
   });
 }
 
+function resolvedImageIds(imageIds: string[], images: Map<string, ImageAsset>): ReadonlySet<string> {
+  return new Set(productImages(imageIds, images).map((i) => i.id));
+}
+
 export function toProductDto(
   productId: string,
   catalog: CatalogSnapshot,
@@ -118,13 +122,23 @@ export function toProductDto(
   const product = catalog.products.get(productId);
   if (!product) throw new MerchError(404, "MERCH_PRODUCT_NOT_FOUND", "ไม่พบสินค้า");
   const variantRows = catalog.variantsByProduct.get(productId) ?? [];
+  const ownImageIds = resolvedImageIds(product.imageIds, images);
+  const componentIdSets = new Map<string, ReadonlySet<string>>();
   const components: BundleComponentDto[] = (catalog.componentsByBundle.get(productId) ?? []).map(
     (c) => {
       const componentProduct = catalog.products.get(c.componentProductId);
+      const componentImageIds = (cp: ProductRow): ReadonlySet<string> => {
+        let ids = componentIdSets.get(cp.id);
+        if (!ids) {
+          ids = resolvedImageIds(cp.imageIds, images);
+          componentIdSets.set(cp.id, ids);
+        }
+        return ids;
+      };
       const componentVariants = catalog.variantsByProduct.get(c.componentProductId) ?? [];
       const dto = (id: string): VariantDto | null => {
         const row = componentVariants.find((v) => v.id === id);
-        return row && componentProduct ? toVariantDto(componentProduct, row, new Set(componentProduct.imageIds)) : null;
+        return row && componentProduct ? toVariantDto(componentProduct, row, componentImageIds(componentProduct)) : null;
       };
       return {
         id: c.id,
@@ -155,7 +169,7 @@ export function toProductDto(
     categoryId: product.categoryId,
     sortOrder: product.sortOrder,
     hasOptions,
-    variants: variantRows.map((v) => toVariantDto(product, v, new Set(product.imageIds))),
+    variants: variantRows.map((v) => toVariantDto(product, v, ownImageIds)),
     components,
     price: displayPrice(productId, catalog),
     purchasable: codes.length === 0,
