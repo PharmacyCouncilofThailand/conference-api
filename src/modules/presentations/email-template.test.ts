@@ -139,8 +139,32 @@ test('reminder shares initial notification formatting with reminder wording and 
   const templateLink = '<a href="https://pub-7078151ee47d4cc6a2666843e2f4cb5d.r2.dev/Template%20Abstract/Presentation%20Poster%20Template.zip">ดาวน์โหลด Template สำหรับ Poster (.ZIP)</a>';
   assert.ok(initial.html.includes(templateLink));
   assert.ok(result.html.includes(templateLink));
-  assert.equal(result.html, initial.html.replace('ขอเรียนแจ้ง', 'ขอเรียนเตือน'));
+  assert.ok(result.html.includes('ส่งไฟล์ฉบับสมบูรณ์ (Final)'));
+  assert.ok(!result.html.includes('แจ้งเตือนครั้งสุดท้าย:'));
+  assert.ok(!initial.html.includes('ส่งไฟล์ฉบับสมบูรณ์ (Final)'));
   assert.throws(() => renderPresentationEmail({ ...payload, kind: 'reminder', closesAt: null }), /PRESENTATION_MAIL_DEADLINE_MISSING/);
+});
+
+test('final reminder emphasizes the current deadline and one-time submission conditions', () => {
+  for (const presentationType of ['oral', 'poster', 'highlighted-poster'] as const) {
+    const result = renderPresentationEmail({ ...payload, presentationType, kind: 'reminder', closesAt: '2026-10-24T01:00:00Z' });
+    const notice = result.html.match(/<p style="margin:16px 0;color:#b91c1c;[^\"]*"><strong>([\s\S]*?)<\/strong><\/p>/)?.[1];
+    assert.ok(notice);
+    assert.equal((notice.match(/<br>/g) ?? []).length, 2);
+    assert.ok(notice.startsWith('ส่งไฟล์ฉบับสมบูรณ์ (Final) ภายในวันที่ 24 ตุลาคม 2569 เวลา 07.59.59 น. (เวลาประเทศไทย)<br>'));
+    assert.ok(result.html.includes('font-size:16px;font-weight:700;line-height:1.7;text-align:left;'));
+    assert.equal(notice.replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim(),
+      'ส่งไฟล์ฉบับสมบูรณ์ (Final) ภายในวันที่ 24 ตุลาคม 2569 เวลา 07.59.59 น. (เวลาประเทศไทย) สามารถส่งได้เพียงครั้งเดียวเท่านั้น และไม่สามารถแก้ไขได้หลังส่ง หากไม่ส่งภายในเวลาที่กำหนดทางทีมงานขออนุญาตตัดชื่อผลงานของท่านออกจากรายการ');
+    assert.equal(result.html.includes('<div'), false);
+    assert.equal(result.html.includes('border:'), false);
+    assert.equal(result.html.split('24 ตุลาคม 2569 เวลา 07.59.59').length - 1, 2);
+    assert.ok(result.html.includes('สามารถส่งได้เพียงครั้งเดียวเท่านั้น และไม่สามารถแก้ไขได้หลังส่ง'));
+    assert.ok(result.html.includes('หากไม่ส่งภายในเวลาที่กำหนดทางทีมงานขออนุญาตตัดชื่อผลงานของท่านออกจากรายการ'));
+    assert.ok(!result.html.includes('ทีมงานจะตัดสิทธิ์การนำเสนอทุกกรณี'));
+    assert.ok(result.html.indexOf('ส่งไฟล์ฉบับสมบูรณ์ (Final)') < result.html.indexOf('รหัสผลงาน:'));
+  }
+  const changed = renderPresentationEmail({ ...payload, kind: 'reminder', closesAt: '2026-10-25T02:00:00Z' });
+  assert.equal(changed.html.split('25 ตุลาคม 2569 เวลา 08.59.59').length - 1, 2);
 });
 
 test('revision drafts preserve details and bind their link and deadline to the request', () => {

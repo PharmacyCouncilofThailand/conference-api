@@ -103,8 +103,30 @@ export function renderInvitationEmail(
   const deadlinePart = (type: Intl.DateTimeFormatPartTypes) => deadlineParts.find((part) => part.type === type)?.value;
   const formattedDeadline = `วันที่ ${deadlinePart("day")} ${deadlinePart("month")} ${deadlinePart("year")} เวลา ${deadlinePart("hour")}.${deadlinePart("minute")} น.`;
 
-  const subject = `คำเชิญเข้าร่วมเซสชัน ${snapshot.sessionName} ในงาน ${snapshot.eventName}`;
-  const html = `<!doctype html>
+  const isPrisPolicyWorkshop = snapshot.eventName === "PRIS 2026"
+    && snapshot.sessionName === "Policy Innovation Workshop";
+  const policyTitle = "Policy Workshop for Pharmacy Council of Thailand";
+  const subject = isPrisPolicyWorkshop
+    ? `ขอเรียนเชิญท่านเข้าร่วมงาน ${snapshot.eventName} ในหัวข้อ ${policyTitle}`
+    : `คำเชิญเข้าร่วมเซสชัน ${snapshot.sessionName} ในงาน ${snapshot.eventName}`;
+  const html = isPrisPolicyWorkshop ? `<!doctype html>
+<html lang="th">
+  <body>
+    <p>เรียน เภสัชกรที่ได้รับการคัดเลือกให้เข้าร่วมหัวข้อนี้</p>
+    <p>ด้วยทางสภาเภสัชกรรมได้จัดงาน PRIS 2026 ในวันที่ 29–30 ตุลาคม 2569 ณ อิมแพค เมืองทองธานี และท่านได้ให้เกียรติเข้าร่วมงาน</p>
+    <p>ทางสภาเภสัชกรรมเห็นว่าท่านเป็นบุคคลที่มีความสำคัญ จึงขอเรียนเชิญท่านเข้าร่วมงานในหัวข้อ<br>
+    ${escapeHtml(policyTitle)}<br>
+    ใน${escapeHtml(formattedTime)} (เวลาประเทศไทย)<br>
+    ณ ห้อง ${escapeHtml(room)}</p>
+    <p>เพื่อให้ความคิดเห็นและร่วมสร้างนโยบายอันเป็นประโยชน์ต่อวิชาชีพเภสัชกรรมต่อไป โดยในหัวข้อนี้ทางสภาเภสัชกรรมได้คัดเลือกผู้เข้าร่วมจำนวน 60 ท่านเท่านั้น มาร่วมสร้างนโยบาย</p>
+    <p>ทางสภาเภสัชกรรมหวังว่าท่านจะตอบรับการเข้าร่วมในครั้งนี้</p>
+    <p>จึงขอรบกวนท่านยืนยันการเข้าร่วมผ่านลิงก์นี้</p>
+    <p><a href="${escapeHtml(responsePageUrl)}">${escapeHtml(responsePageUrl)}</a></p>
+    <p>กรุณาตอบรับภายใน ${escapeHtml(formattedDeadline)} (เวลาประเทศไทย)</p>
+    <p>แล้วพบกันในวันเวลาดังกล่าว</p>
+    <p>สภาเภสัชกรรม</p>
+  </body>
+</html>` : `<!doctype html>
 <html lang="th">
   <body>
     <p>เรียน คุณ${escapeHtml(personName)}</p>

@@ -130,19 +130,19 @@ test("invitation email validates and escapes response URL and deadline", () => {
   assert.match(rendered.html, /เวลาประเทศไทย/);
 });
 
-test("invitation email matches the requested formal copy with seven plain bullets and a scoped link", () => {
+test("other session invitations keep the formal copy with seven plain bullets and a scoped link", () => {
   const responseUrl = "https://pris.example.com/th/sessions/confirm?token=" + "c".repeat(64);
   const rendered = renderInvitationEmail({
     ...baseSnapshot,
     personName: "ณัฐกานต์ กลองกระโทก",
     eventName: "PRIS 2026",
     eventVenue: "Impact Challenger Jupiter Room 4-13",
-    sessionName: "Policy Innovation Workshop",
+    sessionName: "Clinical Pharmacy Workshop",
     startTime: "2026-10-29T06:00:00.000Z",
     endTime: "2026-10-29T10:00:00.000Z",
     room: "Impact Challenger Jupiter Room 11",
   }, responseUrl, "2026-10-29T06:00:00.000Z");
-  assert.equal(rendered.subject, "คำเชิญเข้าร่วมเซสชัน Policy Innovation Workshop ในงาน PRIS 2026");
+  assert.equal(rendered.subject, "คำเชิญเข้าร่วมเซสชัน Clinical Pharmacy Workshop ในงาน PRIS 2026");
   for (const copy of [
     "เรียน คุณณัฐกานต์ กลองกระโทก",
     "สภาเภสัชกรรมขอเรียนเชิญท่านเข้าร่วมเซสชัน โดยไม่มีค่าใช้จ่ายเพิ่มเติม ทั้งนี้ มีรายละเอียดดังนี้",
@@ -162,6 +162,46 @@ test("invitation email matches the requested formal copy with seven plain bullet
   assert.doesNotMatch(rendered.html, /style=|<strong>|<button|conference\.example\.com/);
   assert.equal((rendered.html.match(/<em>/g) ?? []).length, 1);
   assert.match(rendered.html, /<em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้<\/em>/);
+});
+
+test("PRIS policy invitation uses the selected pharmacists copy and Bangkok session times", () => {
+  const responseUrl = "https://pris.example.com/th/sessions/confirm?token=" + "d".repeat(64);
+  const rendered = renderInvitationEmail({
+    ...baseSnapshot,
+    eventName: "PRIS 2026",
+    sessionName: "Policy Innovation Workshop",
+    startTime: "2026-10-29T03:30:00.000Z",
+    endTime: "2026-10-29T06:00:00.000Z",
+    room: "Impact Challenger Jupiter Room 11",
+  }, responseUrl, "2026-10-29T03:30:00.000Z");
+  assert.equal(rendered.subject, "ขอเรียนเชิญท่านเข้าร่วมงาน PRIS 2026 ในหัวข้อ Policy Workshop for Pharmacy Council of Thailand");
+  const plainText = rendered.html.replace(/<[^>]*>/g, "").replace(/\s+/g, " ");
+  for (const copy of [
+    "เรียน เภสัชกรที่ได้รับการคัดเลือกให้เข้าร่วมหัวข้อนี้",
+    "29–30 ตุลาคม 2569 ณ อิมแพค เมืองทองธานี",
+    "Policy Workshop for Pharmacy Council of Thailand",
+    "วันที่ 29 ตุลาคม 2569 เวลา 10.30 – 13.00 น.",
+    "ห้อง Impact Challenger Jupiter Room 11",
+    "ได้คัดเลือกผู้เข้าร่วมจำนวน 60 ท่านเท่านั้น",
+    "เพื่อให้ความคิดเห็นและร่วมสร้างนโยบายอันเป็นประโยชน์ต่อวิชาชีพเภสัชกรรมต่อไป",
+    "กรุณาตอบรับภายใน วันที่ 29 ตุลาคม 2569 เวลา 10.30 น.",
+    "แล้วพบกันในวันเวลาดังกล่าว",
+  ]) assert.ok(plainText.includes(copy), copy);
+  assert.equal((rendered.html.match(/href=/g) ?? []).length, 1);
+  assert.ok(rendered.html.includes(`href="${responseUrl}"`));
+  assert.ok(rendered.html.includes(`href="${responseUrl}">${responseUrl}</a>`));
+  assert.doesNotMatch(rendered.html, /หมายเหตุ:|กรุณาอย่าตอบกลับอีเมลนี้|>ยืนยันการเข้าร่วม<\/a>/);
+  assert.doesNotMatch(rendered.html, /style=|<strong>|<table|<button|<em>/);
+  assert.doesNotMatch(rendered.html, /13\.00 – 17\.00|<li>/);
+
+  const changed = renderInvitationEmail({
+    ...baseSnapshot,
+    eventName: "PRIS 2026",
+    sessionName: "Policy Innovation Workshop",
+    room: "<Jupiter & 12>",
+  }, responseUrl, "2026-10-29T03:30:00.000Z");
+  assert.match(changed.html, /&lt;Jupiter &amp; 12&gt;/);
+  assert.ok(changed.html.includes("วันที่ 1 ตุลาคม 2569 เวลา 09.00 – 12.00 น."));
 });
 
 test("grant email does not require or include a participant URL", () => {
