@@ -31,3 +31,14 @@ test("canonical input deduplicates and sorts without mutating caller", () => {
   assert.deepEqual(canonicalResendInput(input), { sessionId: 2, invitationIds: ["a", "b"] });
   assert.deepEqual(input.invitationIds, ["b", "a", "b"]);
 });
+
+test("UUID case is normalized before deduplication for stable request identity", () => {
+  const lower = "abcdefab-1234-4abc-8def-abcdefabcdef";
+  const upper = lower.toUpperCase();
+  const input = { sessionId: 2, invitationIds: [upper, lower] };
+  const canonical = canonicalResendInput(input);
+  assert.equal(canonical.invitationIds.length, 1);
+  assert.deepEqual(canonical, { sessionId: 2, invitationIds: [lower] });
+  assert.deepEqual(canonical, canonicalResendInput({ sessionId: 2, invitationIds: [lower] }));
+  assert.deepEqual(input.invitationIds, [upper, lower]);
+});

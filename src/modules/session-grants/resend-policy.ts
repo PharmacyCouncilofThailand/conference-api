@@ -3,7 +3,7 @@ import type { ResendCandidate, ResendInput, ResendSkip } from "./resend-types.js
 
 export const RESEND_COOLDOWN_MS = 5 * 60 * 1000;
 export function canonicalResendInput(input: ResendInput): ResendInput {
-  return { sessionId: input.sessionId, invitationIds: [...new Set(input.invitationIds)].sort() };
+  return { sessionId: input.sessionId, invitationIds: [...new Set(input.invitationIds.map(id => id.toLowerCase()))].sort() };
 }
 export function resendCooldownUntil(lastSuccessfulSentAt: Date | null, lastResendQueuedAt: Date | null): Date | null {
   const values = [lastSuccessfulSentAt, lastResendQueuedAt].filter((value): value is Date => value !== null).map(value => value.getTime());
