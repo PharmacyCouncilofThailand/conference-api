@@ -738,6 +738,10 @@ export const registrations = pgTable("registrations", {
   status: registrationStatusEnum("status").notNull().default("confirmed"),
   source: varchar("source", { length: 20 }).notNull().default("purchase"),
   attendeeType: varchar("attendee_type", { length: 20 }), // e.g. 'parent', 'student' — used by quick-register flow
+  // PRIS holder category is independent of the purchased ticket and its price.
+  holderType: varchar("holder_type", { length: 32 }),
+  holderTypeSource: text("holder_type_source"),
+  holderTypeUpdatedAt: timestamp("holder_type_updated_at"),
   addedBy: integer("added_by").references(() => backofficeUsers.id),
   addedNote: text("added_note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
