@@ -91,9 +91,11 @@ test("resends preserve originals at capacity, queue 500 mixed recipients, replay
   const raced = await Promise.all([database, otherDatabase].map(db => queueInvitationResends(db, { sessionId: session.id, invitationIds: [racingId], actorId: actor.id, idempotencyKey: randomUUID() })));
   assert.equal(raced.reduce((n, row) => n + row.result.queued.length, 0), 1);
   assert.equal(raced.reduce((n, row) => n + row.result.skipped.length, 0), 1);
-  const concurrentKey = randomUUID();
-  const repeated = await Promise.all([database, otherDatabase].map(db => queueInvitationResends(db, { sessionId: session.id, invitationIds: [originals[502]!.id], actorId: actor.id, idempotencyKey: concurrentKey })));
+  const concurrentKey = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+  const repeated = await Promise.all([database, otherDatabase].map((db, index) => queueInvitationResends(db, { sessionId: session.id, invitationIds: [originals[502]!.id], actorId: actor.id, idempotencyKey: index ? concurrentKey.toUpperCase() : concurrentKey })));
   assert.deepEqual(repeated[0]!.result, repeated[1]!.result);
+  assert.equal(repeated[0]!.result.requestId, repeated[1]!.result.requestId);
+  assert.equal((await sql`SELECT count(*) AS n FROM session_invitation_resend_requests WHERE actor_id=${actor.id} AND idempotency_key=${concurrentKey}::uuid`)[0]!.n, "1");
   assert.deepEqual(repeated.map(row => row.replayed).sort(), [false, true]);
   const constraint = `resend_test_${unique.replaceAll('-', '')}`;
   const ledgerBeforeFailure = (await sql`SELECT count(*) AS n FROM session_invitation_resend_requests WHERE session_id=${session.id}`)[0]!.n;

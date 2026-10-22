@@ -65,10 +65,11 @@ export async function previewInvitationResends(database: GrantDatabase, input: R
 
 export async function queueInvitationResends(database: GrantDatabase, input: ResendInput & { actorId: number; idempotencyKey: string }): Promise<{ replayed: boolean; result: ResendResult }> {
   const canonical = canonicalInput(input);
+  const idempotencyKey = input.idempotencyKey.toLowerCase();
   const hash = createHash("sha256").update(JSON.stringify({ operation: "invitation-resend", ...canonical })).digest("hex");
   return database.transaction(async tx => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.actorId}:invitation-resend:${input.idempotencyKey}`}, 0))`);
-    const [existing] = await tx.select().from(sessionInvitationResendRequests).where(and(eq(sessionInvitationResendRequests.actorId, input.actorId), eq(sessionInvitationResendRequests.idempotencyKey, input.idempotencyKey))).limit(1);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.actorId}:invitation-resend:${idempotencyKey}`}, 0))`);
+    const [existing] = await tx.select().from(sessionInvitationResendRequests).where(and(eq(sessionInvitationResendRequests.actorId, input.actorId), eq(sessionInvitationResendRequests.idempotencyKey, idempotencyKey))).limit(1);
     if (existing) {
       if (existing.requestHash !== hash) throw new GrantError(409, "IDEMPOTENCY_KEY_MISMATCH", "Idempotency key was already used with a different request");
       return { replayed: true, result: existing.result as ResendResult };
@@ -88,7 +89,7 @@ export async function queueInvitationResends(database: GrantDatabase, input: Res
     const { eligible, skipped } = evaluate(canonical, await readResendCandidates(tx, canonical), now);
     const result: ResendResult = { requestId: randomUUID(), sessionId: canonical.sessionId, requestedCount: canonical.invitationIds.length,
       queued: eligible.map(({ candidate }) => ({ invitationId: candidate.invitationId, itemId: candidate.itemId })), skipped };
-    await tx.insert(sessionInvitationResendRequests).values({ id: result.requestId, actorId: input.actorId, sessionId: canonical.sessionId, idempotencyKey: input.idempotencyKey, requestHash: hash, result });
+    await tx.insert(sessionInvitationResendRequests).values({ id: result.requestId, actorId: input.actorId, sessionId: canonical.sessionId, idempotencyKey, requestHash: hash, result });
     if (eligible.length) await tx.update(registrationSessionGrantItems).set({ emailStatus: "pending", nextTrigger: "admin", nextTriggeredBy: input.actorId,
       nextEmailPurpose: "resend", nextResendRequestId: result.requestId, lastResendQueuedAt: now, claimToken: null, claimedUntil: null, lastErrorCode: null,
     }).where(inArray(registrationSessionGrantItems.id, result.queued.map(row => row.itemId)));
