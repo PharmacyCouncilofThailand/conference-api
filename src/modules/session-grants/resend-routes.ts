@@ -49,4 +49,3 @@ export async function registerInvitationResendRoutes(fastify: FastifyInstance, o
     }
   });
 }
-

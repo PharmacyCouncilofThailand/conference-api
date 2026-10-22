@@ -71,5 +71,3 @@ test("resend routes enforce Admin, flag, strict validation, replay status and pr
   const status = await app.inject({ method: "GET", url: "/status", headers });
   assert.deepEqual(status.json(), { enabled: false, resendSupported: true });
 });
-
-

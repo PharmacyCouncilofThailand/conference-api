@@ -109,4 +109,3 @@ test("resends preserve originals at capacity, queue 500 mixed recipients, replay
   await assert.rejects(queueInvitationResends(database, { sessionId: session.id, invitationIds: [originals[501]!.id], actorId: actor.id, idempotencyKey: randomUUID() }), { code: 'SESSION_INVITATION_CONFIG_ERROR' });
   assert.equal((await sql`SELECT count(*) AS n FROM session_invitation_resend_requests WHERE session_id=${session.id}`)[0]!.n, beforeBadConfig);
 });
-
