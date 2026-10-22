@@ -98,6 +98,8 @@ test("resend delivery shares template/link, attributes retry, and suppresses clo
   const retried = await retryGrantEmails(db, { actorId: actor.id, batchId: batch.batch.batchId,
     itemIds: [itemId], acknowledgeUnknown: false });
   assert.deepEqual(retried.queued, [itemId]);
+  assert.equal((await getResendOperation(db, failed.result.requestId, 1, 50))?.summary.waiting, 1,
+    "a matching queued retry remains active before the worker creates its next attempt");
   assert.equal((await runGrantEmailsOnce(db, transport, new Date())).sent, 1);
   const [attempt] = await client`SELECT purpose,resend_request_id FROM registration_session_grant_email_attempts
     WHERE item_id=${itemId} ORDER BY attempt_no DESC LIMIT 1`;
