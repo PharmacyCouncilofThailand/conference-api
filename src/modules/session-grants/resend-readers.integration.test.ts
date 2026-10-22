@@ -93,6 +93,10 @@ test("resend reads preserve originals, successful history and operation-scoped a
     assert.equal(queuedRetry?.summary.failed, 0);
     assert.equal(queuedRetry?.entries[0].state, 'waiting');
     assert.equal(queuedRetry?.entries[0].attemptNo, 5);
+    const uppercaseRetry = await getResendOperation(database, retryRequestId.toUpperCase(), 1, 100);
+    assert.equal(uppercaseRetry?.summary.waiting, 1);
+    assert.equal(uppercaseRetry?.entries[0].state, 'waiting');
+    assert.deepEqual(uppercaseRetry, queuedRetry);
     assert.equal((await getResendOperation(database, requestId, 1, 100))?.entries[0].state, 'failed',
       'a newer queued request must not replace the previous operation result');
     await client`UPDATE registration_session_grant_items SET email_status='sending' WHERE id=${ids[0].itemId}`;

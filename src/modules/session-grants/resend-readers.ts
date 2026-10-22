@@ -63,6 +63,7 @@ export function buildResendSnapshot(candidate: ResendCandidate): InvitationNotif
 }
 
 export async function getResendOperation(database: GrantDatabase, requestId: string, page: number, limit: number): Promise<ResendOperationDto | null> {
+  requestId = requestId.toLowerCase();
   return database.transaction(async tx => {
     const [request] = await tx.select({ result: requests.result, actorId: requests.actorId, createdAt: requests.createdAt })
       .from(requests).where(eq(requests.id, requestId)).limit(1);
