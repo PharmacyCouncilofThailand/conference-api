@@ -174,3 +174,7 @@ Private backup: `backups/pris-holder-types/pris-2026-holder-import-20261022.json
 Validation: 37 API unit tests, 8 PostgreSQL integration tests (PGlite; includes parent test), 20 frontend tests including nearby registration/session flows; API TypeScript build and frontend production build passed. These scoped checks do not claim all unrelated repository tests pass or cover native PostgreSQL concurrent load.
 
 Both repositories remain on `feature/pris-holder-type-and-gift`; no merge or deployment performed for this task. Local preview uses the branch API on port 3005 against Railway data and the frontend on port 3004. The preview accepts normal login and read requests; other API writes are blocked.
+
+The real Brave UI export was also checked by reopening the downloaded XLSX: 571 data rows, columns ordered `Ticket`, `TICKET TYPE`, `GIFT`, `Promo Code`; 559 assigned and 12 unassigned. Gift totals matched the database/catalog: activity set2 397, Mug set1 40, large set3 6, no gift 116, unassigned 12. Browser inspection verified VIP gold with green Mug, speaker/large gift gold with sparkles, exhibitor/activity gift orange, and unassigned neutral.
+
+Local preview runs in temporary user services `conference-holder-preview-api` and `conference-holder-preview-web` (not enabled at boot). Stop after review with `systemctl --user stop conference-holder-preview-api conference-holder-preview-web`. Private runtime connection configuration and preview scripts remain outside tracked source; the preview login uses normal backoffice authentication, not a bypass.
