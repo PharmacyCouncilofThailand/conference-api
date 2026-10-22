@@ -54,10 +54,17 @@ test("resend delivery shares template/link, attributes retry, and suppresses clo
   const itemId = batch.batch.results[0].id;
   const [invitation] = await client`SELECT id FROM session_invitations WHERE grant_item_id=${itemId}`;
   const capture: Array<{ subject: string; html: string; recipient: string }> = [];
+  let providerFinishedAt = new Date(0);
   const transport = { async send(input: { subject: string; html: string; recipient: string }) {
-    capture.push(input); return { providerMessageId: `fake-${capture.length}` };
+    capture.push(input);
+    const [clock] = await client`SELECT clock_timestamp() AS now`;
+    providerFinishedAt = new Date(clock.now);
+    return { providerMessageId: `fake-${capture.length}` };
   } };
-  assert.equal((await runGrantEmailsOnce(db, transport, new Date())).sent, 1);
+  assert.equal((await runGrantEmailsOnce(db, transport, new Date(Date.now() - 60_000))).sent, 1);
+  const [completed] = await client`SELECT finished_at FROM registration_session_grant_email_attempts WHERE item_id=${itemId}`;
+  assert.ok(new Date(completed.finished_at).getTime() >= providerFinishedAt.getTime(),
+    "cooldown starts after provider completion rather than at worker startup");
   const credential = async () => JSON.stringify(await client`SELECT id,token_hash,token_ciphertext,expires_at,status
     FROM session_invitations WHERE id=${invitation.id}`);
   const original = await credential();

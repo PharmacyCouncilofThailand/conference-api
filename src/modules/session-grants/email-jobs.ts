@@ -552,7 +552,6 @@ async function relationStillActive(
 async function finalize(
   database: GrantDatabase,
   claim: ClaimedMail,
-  now: Date,
   state: "sent" | "failed" | "unknown" | "suppressed",
   details: { errorCode?: string; errorMessage?: string; providerMessageId?: string } = {},
 ): Promise<boolean> {
@@ -564,17 +563,20 @@ async function finalize(
       .limit(1)
       .for("update");
     if (!current || current.claimToken !== claim.claimToken) return false;
+    // Cooldown starts at completed delivery, including time spent at the provider.
+    const [clock] = await tx.execute<{ now: Date | string }>(sql`SELECT clock_timestamp() AS now`);
+    const finishedAt = invitationMailDate(clock.now, "delivery completion");
 
     await tx.update(registrationSessionGrantEmailAttempts).set({
       result: state,
-      finishedAt: now,
+      finishedAt,
       errorCode: details.errorCode ?? null,
       errorMessage: details.errorMessage ?? null,
       providerMessageId: details.providerMessageId ?? null,
     }).where(eq(registrationSessionGrantEmailAttempts.id, claim.attemptId));
     await tx.update(registrationSessionGrantItems).set({
       emailStatus: state,
-      sentAt: state === "sent" ? now : null,
+      sentAt: state === "sent" ? finishedAt : null,
       lastErrorCode: details.errorCode ?? null,
       claimToken: null,
       claimedUntil: null,
@@ -606,7 +608,7 @@ export async function runGrantEmailsOnce(
     !(await relationStillActive(database, claim))
   ) {
     const invitation = claim.kind === "invited";
-    if (await finalize(database, claim, now, "suppressed", {
+    if (await finalize(database, claim, "suppressed", {
       errorCode: invitation
         ? "INVITATION_NOT_PENDING"
         : "ENTITLEMENT_NOT_ACTIVE",
@@ -638,12 +640,12 @@ export async function runGrantEmailsOnce(
       subject: claim.subject,
       html: claim.html,
     });
-    if (await finalize(database, claim, now, "sent", { providerMessageId: result.providerMessageId })) {
+    if (await finalize(database, claim, "sent", { providerMessageId: result.providerMessageId })) {
       stats.sent = 1;
     }
   } catch (error) {
     const failure = classifyGrantMailFailure(error);
-    if (await finalize(database, claim, now, failure.state, {
+    if (await finalize(database, claim, failure.state, {
       errorCode: failure.code,
       errorMessage: failure.message,
     })) {
