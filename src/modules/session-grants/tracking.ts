@@ -6,6 +6,7 @@ import {
   sessionInvitations as invitations,
   sessions,
 } from "../../database/schema.js";
+import { resendCooldownUntil, resendDisabledReason } from "./resend-policy.js";
 import { effectiveDeadline, effectiveInvitationStatus } from "./invitation-policy.js";
 import type {
   EmailStatus, GrantDatabase, GrantOutcome, GrantTrackingDto,
@@ -42,6 +43,10 @@ export async function getGrantTracking(
       emailStatus: items.emailStatus, attemptCount: items.attemptCount,
       lastErrorCode: items.lastErrorCode, sentAt: items.sentAt,
       lastAttemptAt: items.lastAttemptAt,
+      lastResendQueuedAt: items.lastResendQueuedAt,
+      lastSuccessfulSentAt: sql<Date | null>`(SELECT CASE WHEN count(*) FILTER (WHERE a.result = 'sent') > 0 THEN max(a.finished_at) FILTER (WHERE a.result = 'sent') ELSE ${items.sentAt} END FROM registration_session_grant_email_attempts a WHERE a.item_id = ${items.id})`
+        .mapWith((value: string | Date | null) => value === null ? null : new Date(value)).as("last_successful_sent_at"),
+      successfulResendCount: sql<number>`(SELECT count(DISTINCT a.resend_request_id)::integer FROM registration_session_grant_email_attempts a WHERE a.item_id = ${items.id} AND a.result = 'sent')`.mapWith(Number).as("successful_resend_count"),
       invitationId: sql<string | null>`${invitations.id}`.as("invitation_id"),
       invitationStoredStatus: sql<InvitationStatus | null>`${invitations.status}`.as("invitation_stored_status"),
       invitationExpiresAt: invitations.expiresAt,
@@ -93,7 +98,17 @@ export async function getGrantTracking(
       if (group.invitationStatus) summary.invitationCounts[group.invitationStatus] += group.total;
     }
     return {
-      items: rows.map((row) => ({
+      items: rows.map((row) => {
+        const disabled = row.outcome === "invited" && row.invitationId && row.invitationStoredStatus && row.invitationExpiresAt
+          ? resendDisabledReason({ invitationId: row.invitationId, invitationStatus: row.invitationStoredStatus,
+            expiresAt: row.invitationExpiresAt, sessionStartTime: row.sessionStartTime,
+            sessionIsActive: row.sessionIsActive, registrationStatus: row.registrationStatus ?? "",
+            registrationEventId: row.registrationEventId ?? -1, sessionEventId: row.sessionEventId,
+            emailStatus: row.emailStatus as EmailStatus,
+            lastSuccessfulSentAt: row.lastSuccessfulSentAt, lastResendQueuedAt: row.lastResendQueuedAt }, now)
+          : { reasonCode: "INVITATION_NOT_FOUND" as const };
+        const eligibleAt = resendCooldownUntil(row.lastSuccessfulSentAt, row.lastResendQueuedAt);
+        return ({
         id: row.id, batchId: row.batchId, registrationId: row.registrationId,
         regCode: row.regCode, name: row.name, recipientEmail: row.recipientEmail,
         eventId: row.eventId, sessionId: row.sessionId, sessionName: row.sessionName,
@@ -104,6 +119,12 @@ export async function getGrantTracking(
         lastErrorCode: row.lastErrorCode,
         sentAt: row.sentAt?.toISOString() ?? null,
         lastAttemptAt: row.lastAttemptAt?.toISOString() ?? null,
+        lastSuccessfulSentAt: row.lastSuccessfulSentAt?.toISOString() ?? null,
+        lastResendQueuedAt: row.lastResendQueuedAt?.toISOString() ?? null,
+        resendEligibleAt: eligibleAt?.toISOString() ?? null,
+        successfulResendCount: row.successfulResendCount,
+        resendEligible: disabled === null,
+        resendDisabledReason: disabled?.reasonCode ?? null,
         invitation: row.invitationId && row.invitationStoredStatus && row.invitationExpiresAt ? {
           invitationId: row.invitationId,
           invitationStatus: effectiveInvitationStatus({
@@ -117,7 +138,7 @@ export async function getGrantTracking(
           effectiveDeadline: effectiveDeadline(row.invitationExpiresAt, row.sessionStartTime).toISOString(),
           respondedAt: row.invitationRespondedAt?.toISOString() ?? null,
         } : null,
-      })),
+      }); }),
       summary,
       pagination: {
         page: query.page, limit: query.limit, total: summary.total,

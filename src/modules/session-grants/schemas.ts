@@ -39,3 +39,8 @@ export const trackingQuerySchema = resultQuerySchema.extend({
   ]).optional(),
   search: z.string().trim().max(200).optional(),
 }).strict();
+
+export const resendInvitationSchema = z.object({
+  sessionId: z.number().int().positive(),
+  invitationIds: z.array(z.string().uuid()).min(1).max(500),
+}).strict();

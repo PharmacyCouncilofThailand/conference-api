@@ -102,7 +102,7 @@ test("invitation email is Thai, preserves names, and links only to the response 
     rendered.subject,
     "คำเชิญเข้าร่วมเซสชัน Clinical Pharmacy & AI ในงาน ACCP 2026 งานเภสัชกรรม",
   );
-  assert.equal(rendered.templateVersion, "session-invitation-v2");
+  assert.equal(rendered.templateVersion, "session-invitation-v3");
   assert.match(rendered.html, /สมชาย Smith/);
   assert.match(rendered.html, /Clinical Pharmacy &amp; AI/);
   assert.match(rendered.html, /Bangkok Convention Centre/);
