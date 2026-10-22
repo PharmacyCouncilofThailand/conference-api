@@ -50,7 +50,7 @@ export type WheelImageStorage = {
     cacheControl: string;
     signal?: AbortSignal;
   }): Promise<void>;
-  deleteObject(key: string): Promise<void>;
+  deleteObject(key: string, signal?: AbortSignal): Promise<void>;
 };
 
 export type WheelImageLogger = {
@@ -174,11 +174,11 @@ export function createR2ImageStorage(config: R2ImageConfig): WheelImageStorage {
         CacheControl: input.cacheControl,
       }), { abortSignal: input.signal });
     },
-    async deleteObject(key) {
+    async deleteObject(key, signal) {
       await client.send(new DeleteObjectCommand({
         Bucket: config.bucket,
         Key: key,
-      }));
+      }), { abortSignal: signal });
     },
   };
 }

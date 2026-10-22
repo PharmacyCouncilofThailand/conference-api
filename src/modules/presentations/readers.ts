@@ -80,8 +80,9 @@ async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:num
   LEFT JOIN users u ON u.id=ab.user_id WHERE a.event_id=${eventId} AND (a.source_row->>'presentationType' IN ('oral','poster','highlighted-poster')) AND ${typeScope}
   ORDER BY (a.source_row->>'round')::int,(a.source_row->>'categoryId')::int,(a.source_row->>'sequence')::int NULLS LAST,a.source_key`);
  const files=await rows<UploadDto&{targetId:string}>(q,sql`SELECT u.id,u.target_id AS "targetId",u.version,u.original_filename AS "fileName",u.stored_filename AS "storedFileName",u.mime_type AS "mimeType",
-  u.size_bytes AS "sizeBytes",u.file_url AS "fileUrl",u.storage_provider AS "storageProvider",u.drive_file_id AS "driveFileId",u.received_at AS "receivedAt",u.request_id AS "revisionRequestId"
-  FROM presentation_uploads u JOIN presentation_targets t ON t.id=u.target_id WHERE t.event_id=${eventId} ORDER BY u.version DESC`);
+  u.size_bytes AS "sizeBytes",u.file_url AS "fileUrl",u.storage_provider AS "storageProvider",u.drive_file_id AS "driveFileId",u.received_at AS "receivedAt",u.request_id AS "revisionRequestId",
+  u.file_status AS "fileStatus",u.deleted_at AS "deletedAt"
+  FROM presentation_upload_files u JOIN presentation_targets t ON t.id=u.target_id WHERE t.event_id=${eventId} ORDER BY u.version DESC`);
  const requests=await rows<RevisionDto&{targetId:string}>(q,sql`SELECT r.id,r.target_id AS "targetId",r.details,r.closes_at AS "closesAt",r.status,
   r.created_at AS "createdAt",r.requested_by AS "requestedBy",r.submitted_at AS "submittedAt",r.cancelled_at AS "cancelledAt",
   r.cancelled_by AS "cancelledBy",r.cancellation_reason AS "cancellationReason" FROM presentation_revision_requests r
@@ -90,7 +91,7 @@ async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:num
   sql`SELECT DISTINCT ON(j.target_id) j.target_id AS "targetId",j.id,j.kind,j.state,j.created_at AS "createdAt",j.error_code AS "errorCode"
    FROM presentation_email_jobs j JOIN presentation_targets t ON t.id=j.target_id WHERE t.event_id=${eventId} ORDER BY j.target_id,j.created_at DESC,j.id DESC`);
  const [setting]=await rows<{closes_at:Date;reconcile_ready:boolean}>(q,sql`SELECT closes_at,reconcile_ready FROM presentation_settings WHERE event_id=${eventId}`);
- const uploads=new Map(files.map(({targetId: _targetId,...u})=>[u.id,{...u,receivedAt:iso(u.receivedAt)}]));
+ const uploads=new Map(files.map(({targetId: _targetId,...u})=>[u.id,{...u,receivedAt:iso(u.receivedAt),deletedAt:maybeIso(u.deletedAt)}]));
  const latest=new Map<string,RevisionDto>();
  for(const {targetId,...request} of requests)if(!latest.has(targetId))latest.set(targetId,revisionDto(request,now));
  const lastEmail=new Map(mails.map(j=>[j.targetId,{id:j.id,kind:j.kind,state:j.state,createdAt:iso(j.createdAt),errorCode:j.errorCode}]));

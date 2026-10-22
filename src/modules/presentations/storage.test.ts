@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { cleanupFailedAttempt, createPresentationStorage, storePresentationAttempt, readUploadDto, type PresentationStorage, type R2PresentationStorage } from './storage.js';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { createR2ImageStorage } from '../lucky-wheel/images.js';
@@ -55,7 +55,7 @@ test('failed Put cannot mark stored; lost mark cannot delete object', async () =
 test('read DTO uses server timestamp and returns null for missing upload', async () => {
   assert.equal(await readUploadDto(database(async () => []), attempt.attemptId), null);
   const dto = { id: attempt.attemptId, version: 1, fileName: file.filename, mimeType: file.mimeType,
-    storedFileName: file.filename, storageProvider: 'r2', driveFileId: null,
+    storedFileName: file.filename, storageProvider: 'r2', driveFileId: null, fileStatus: 'available', deletedAt: null,
     sizeBytes: file.sizeBytes, fileUrl: 'https://test.r2.dev/file.pdf', receivedAt: new Date('2026-10-07T00:00:00Z'), revisionRequestId: null };
   assert.deepEqual(await readUploadDto(database(async () => [dto]), attempt.attemptId),
     { ...dto, receivedAt: '2026-10-07T00:00:00.000Z' });
@@ -97,6 +97,20 @@ test('existing R2 helper forwards optional AbortSignal to fake SDK transport', a
   const storage = createR2ImageStorage({ accountId: 'synthetic', bucket: 'synthetic', accessKeyId: 'synthetic',
     secretAccessKey: 'synthetic', publicBaseUrl: 'https://test.r2.dev' });
   await storage.putObject({ key: attempt.identity.objectKey!, body: file.buffer, contentType: file.mimeType, cacheControl: 'immutable', signal });
+});
+
+test('R2 deletion forwards the bounded worker signal and exact object key', async t => {
+  const signal = AbortSignal.timeout(15_000);
+  t.mock.method(S3Client.prototype, 'send', async (command: unknown, options: any) => {
+    assert.ok(command instanceof DeleteObjectCommand);
+    assert.equal(command.input.Key, attempt.identity.objectKey);
+    assert.equal(command.input.Bucket, 'synthetic');
+    assert.strictEqual(options.abortSignal, signal);
+    return {};
+  });
+  const storage = createR2ImageStorage({ accountId: 'synthetic', bucket: 'synthetic', accessKeyId: 'synthetic',
+    secretAccessKey: 'synthetic', publicBaseUrl: 'https://test.r2.dev' });
+  await storage.deleteObject(attempt.identity.objectKey!, signal);
 });
 
 test('Drive persists complete identity before bytes, marks stored after sharing and reuses allocated IDs', async () => {

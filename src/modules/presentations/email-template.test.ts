@@ -19,7 +19,7 @@ test('all four student email kinds identify the group, retain Oral PDF rules and
   const input={...payload,kind,participantGroup:'student' as const,presentationType:'oral' as const,
    revisionRequestId:kind==='revision'?requestId:null,revisionDetails:'Fix <title>',upload:kind==='receipt'?{
     id:requestId,version:1,fileName:'student.pdf',storedFileName:'student.pdf',mimeType:'application/pdf' as const,
-    sizeBytes:100,fileUrl:'https://example.invalid/student.pdf',storageProvider:'drive' as const,driveFileId:'file',
+    sizeBytes:100,fileUrl:'https://example.invalid/student.pdf',fileStatus:'available' as const,deletedAt:null,storageProvider:'drive' as const,driveFileId:'file',
     receivedAt:'2026-10-09T07:12:34Z',revisionRequestId:null}:null};
   const rendered=renderPresentationEmail(input);
   assert.ok(rendered.subject.includes('Oral (ผลงานนักศึกษา)'));
@@ -65,7 +65,7 @@ test('all four emails select trusted type wording, requirements and Template for
         closesAt: '2026-10-20T17:00:00Z', revisionRequestId: kind === 'revision' ? requestId : null,
         revisionDetails: '<script>change</script>\nKeep originals', upload: kind === 'receipt' ? {
           id: requestId, version: 2, fileName: '<slides>.pdf', storedFileName: 'PRIS_<slides>.pdf', mimeType: 'application/pdf',
-          sizeBytes: 100, fileUrl: 'https://drive.google.com/file/d/test/view', storageProvider: 'drive', driveFileId: 'test',
+          sizeBytes: 100, fileUrl: 'https://drive.google.com/file/d/test/view', fileStatus: 'available', deletedAt: null, storageProvider: 'drive', driveFileId: 'test',
           receivedAt: '2026-10-09T07:12:34Z', revisionRequestId: requestId,
         } : null });
       assert.ok(result.subject.includes(label)); assert.ok(result.html.includes(label));
@@ -196,7 +196,7 @@ test('revision drafts preserve details and bind their link and deadline to the r
 test('receipt uses persisted file, version and server receivedAt without approval claims', () => {
   const receiptPayload: MailPayload = { ...payload, kind: 'receipt', closesAt: null, upload: {
     id: requestId, version: 3, fileName: '<poster>.pdf', mimeType: 'application/pdf', sizeBytes: 100, storedFileName: 'poster.pdf', storageProvider: 'r2', driveFileId: null,
-    fileUrl: 'https://files.example.invalid/poster.pdf', receivedAt: '2026-10-09T07:12:34Z', revisionRequestId: null,
+    fileUrl: 'https://files.example.invalid/poster.pdf', fileStatus: 'available', deletedAt: null, receivedAt: '2026-10-09T07:12:34Z', revisionRequestId: null,
   } };
   const result = renderPresentationEmail(receiptPayload);
   assert.equal(result.subject, `แจ้งการได้รับไฟล์นำเสนอ Poster รหัส ${payload.trackingId} ในงาน PRIS 2026`);

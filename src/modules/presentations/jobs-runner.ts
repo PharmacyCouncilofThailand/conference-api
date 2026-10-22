@@ -9,6 +9,7 @@ import { createPresentationMailTransport, runPresentationMailOnce, recoverPresen
 import { createPresentationStorage, cleanupFailedAttempt, type PresentationStorage } from './storage.js';
 import { rows, type PresentationDatabase } from './access.js';
 import { initializePresentations } from './startup.js';
+import { runReplacedFileDeletionOnce } from './file-deletions.js';
 
 export const presentationHeartbeatPath = join(tmpdir(), 'pris-presentation-worker-heartbeat');
 
@@ -30,6 +31,7 @@ export async function runPresentationWorkerIteration(database: PresentationDatab
     for (const attempt of expired) await cleanupFailedAttempt(database, attempt.id, configuredStorage);
   }
   await runPresentationMailOnce(database, transport);
+  await runReplacedFileDeletionOnce(database, storage ?? createPresentationStorage());
   await writeFile(presentationHeartbeatPath, String(Date.now()));
 }
 

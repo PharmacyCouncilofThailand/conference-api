@@ -119,5 +119,5 @@ Implementation scope is local source, migrations, documentation, and verificatio
 - Options and design: recorded above; recommended direction matches the user's selection.
 - Design document: written for user review; commit before handoff.
 - Self-review: checked scope, explicit timing, atomicity, retries, current-file protection, compatibility, and test criteria; no placeholders or contradictory retention requirements remain.
-- Written-spec review: pending the user's review of this document.
-- Next step after review: invoke the writing-plans skill, then implement the approved plan.
+- Written-spec review: approved by the user on 2026-10-22 (Asia/Bangkok).
+- Next step: implement the accompanying writing-plans plan and verify locally.

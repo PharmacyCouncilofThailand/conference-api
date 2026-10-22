@@ -21,6 +21,7 @@ export async function preparePresentationScenario(t: TestContext, options: { typ
   await client.unsafe(await readFile(new URL('../../../drizzle/0039_pris2026_presentations.sql', import.meta.url), 'utf8'));
   await client.unsafe(await readFile(new URL('../../../drizzle/0041_pris2026_poster_png.sql', import.meta.url), 'utf8'));
   await client.unsafe(await readFile(new URL('../../../drizzle/0045_pris2026_oral_100mb.sql', import.meta.url), 'utf8'));
+  await client.unsafe(await readFile(new URL('../../../drizzle/0047_presentation_file_deletions.sql', import.meta.url), 'utf8'));
   const fixture = await seedPresentationScenario(client);
   const database = drizzle(client, { schema });
   const type = options.type ?? 'poster';

@@ -28,9 +28,9 @@ function fixture(role:string,templateVersion='presentation-initial-v1') {
   if(sql.includes('clock_timestamp() AS now'))return [{now}];
   if(sql.includes('FROM presentation_announcements'))return roster;
   if(sql.includes('FROM presentation_targets WHERE'))return [{id:`target-${params[1]}`}];
-  if(sql.includes('FROM presentation_uploads u JOIN'))return [upload];
+  if(sql.includes('FROM presentation_upload_files u JOIN'))return [upload];
   if(sql.includes('SELECT id FROM presentation_uploads'))return [{id:upload.id}];
-  if(sql.includes('FROM presentation_uploads WHERE'))return [upload];
+  if(sql.includes('FROM presentation_upload_files WHERE'))return [upload];
   if(sql.includes('FROM presentation_revision_requests'))return [];
   if(sql.includes('FROM presentation_email_attempts'))return [];
   if(sql.includes('FROM presentation_email_jobs'))return [{targetId:'target-1',id:'private-job',kind:'initial',state:'sent',createdAt:now,

@@ -40,10 +40,34 @@ After accepting PNG, keep the expanded constraints when rolling back application
 | Initial/reminder | Preview `.../presentation-email-previews`, review recipients, confirm `.../presentation-notification-batches`. Stale queues nothing. |
 | Revision | Preview immutable details/close/proposed ID, create one active request. Cancel with reason; terminal cannot reopen. Mail failure leaves rights intact. |
 | Failed/unknown mail | Inspect stored body/attempt. Pending/sending cannot resend. Unknown requires acknowledgment/fresh preview. Ambiguous HTTP retry keeps exact key/payload. |
-| Files | Original names/current pointer/all accepted versions. Oral opens Drive; Poster opens R2 PDF/PNG. Display original names, not stored prefixes. |
+| Files | Keep metadata for every accepted version. After a new revision succeeds, old versions are queued for physical deletion; only available files have download links. Oral opens Drive; Poster opens R2 PDF/PNG. |
 | Pause | Independent receiving/mail flags; accepted data readable. |
 | Storage/DB uncertainty | Keep file/key; verify accepted binding before cleanup. Worker handles expired proven orphans and protects successful history. |
 | Announcement PDF | Existing approved-announcement PDF asset/button process unchanged. |
+
+## Delete replaced files (migration 0047)
+
+Release Pris2026 and Backoffice clients that handle nullable `fileUrl` and optional `fileStatus` first. Apply `drizzle/0047_presentation_file_deletions.sql` through the selected environment's migration process, then release matching API and worker versions. API/worker startup requires the queue table and availability view. This is additive: do not rerun migration 0039 or reset a runtime schema.
+
+The migration creates an empty `presentation_file_deletions` queue and `presentation_upload_files` view. It does not queue existing history. Only a newly accepted revision queues all lower versions of the same target, including predeployment history on that target. Initial submissions, retries, reconciliation, cancellation and expiration do not queue old files. New acceptance, pointer change, receipt and deletion intents commit together.
+
+The existing worker handles one deletion per iteration, using the stored provider and resource identity. It verifies an accepted higher replacement and protects current file references. A claim lasts three minutes; the provider request is bounded to 15 seconds. Failed/unknown outcomes retry after one minute with exponential delay capped at one hour. Already absent files succeed. No retry limit abandons work. A worker crash after deletion is recovered by retrying the same identity; claim tokens fence stale acknowledgements.
+
+`pending` and `deleting` jobs appear as `deletion_pending`, with no API download URL. Completed jobs appear as `deleted` with a timestamp. Version/name/size/received time and receipt references remain. Previously queued receipt snapshots remain immutable. The current upload stays available. Failed-upload cleanup retains its accepted-file protection; replaced-file deletion is a separate path.
+
+Monitor queue states and error codes through read-only SQL:
+
+```sql
+SELECT state,count(*),min(created_at) AS oldest
+FROM presentation_file_deletions GROUP BY state;
+SELECT upload_id,replacement_upload_id,attempt_count,next_attempt_at,error_code
+FROM presentation_file_deletions WHERE state='pending' AND error_code IS NOT NULL
+ORDER BY next_attempt_at;
+```
+
+`PRESENTATION_DELETE_UNSAFE` requires inspection of the current pointer, accepted attempt states and target/resource references. `PRESENTATION_DELETE_FAILED` covers provider or completion failures; review worker/provider availability. Do not bypass guards by manually calling storage delete or clearing history. `file_deleted` audit events identify the old and replacement upload IDs.
+
+Successful deletion removes the provider origin object; cached copies and prior downloads are not revoked. Stop the worker to pause further deletion work. Rollback cannot restore deleted bytes; preserve the additive schema, queue, metadata and compatible clients. Runtime migration/deployment and live storage operations require the named environment's normal release authorization; local fake-provider tests do not perform them.
 
 ## Rollback
 

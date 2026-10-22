@@ -556,9 +556,9 @@ function getFileExtension(filename: string): string {
 /**
  * Delete a file from Google Drive by ID
  */
-export async function deleteFromGoogleDrive(fileId: string): Promise<void> {
+export async function deleteFromGoogleDrive(fileId: string, signal?: AbortSignal): Promise<void> {
   const drive = getDriveClient();
-  await drive.files.delete({ fileId });
+  await drive.files.delete({ fileId }, signal ? { timeout: 15_000, signal } : undefined);
 }
 
 /**
