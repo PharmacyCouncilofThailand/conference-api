@@ -81,6 +81,30 @@ test("resend reads preserve originals, successful history and operation-scoped a
     assert.equal(tracked.resendDisabledReason, 'EMAIL_NOT_RESENDABLE');
     const batch = await getGrantBatch(database, ids[0].batchId, 1, 100);
     assert.equal(batch?.results[0].successfulResendCount, 1);
+    const retryRequestId = randomUUID();
+    const retryResult = { requestId: retryRequestId, sessionId: session.id, requestedCount: 1,
+      queued: [{ invitationId: ids[0].invitationId, itemId: ids[0].itemId }], skipped: [] };
+    await client`INSERT INTO session_invitation_resend_requests (id,actor_id,session_id,idempotency_key,request_hash,result)
+      VALUES (${retryRequestId},${actor.id},${session.id},${randomUUID()},${'d'.repeat(64)},${JSON.stringify(retryResult)}::jsonb)`;
+    await insertAttempt(5, 'failed', retryRequestId, 'resend', '2026-10-23T03:35:00Z');
+    await client`UPDATE registration_session_grant_items SET email_status='pending',next_email_purpose='retry',next_resend_request_id=${retryRequestId} WHERE id=${ids[0].itemId}`;
+    const queuedRetry = await getResendOperation(database, retryRequestId, 1, 100);
+    assert.equal(queuedRetry?.summary.waiting, 1);
+    assert.equal(queuedRetry?.summary.failed, 0);
+    assert.equal(queuedRetry?.entries[0].state, 'waiting');
+    assert.equal(queuedRetry?.entries[0].attemptNo, 5);
+    assert.equal((await getResendOperation(database, requestId, 1, 100))?.entries[0].state, 'failed',
+      'a newer queued request must not replace the previous operation result');
+    await client`UPDATE registration_session_grant_items SET email_status='sending' WHERE id=${ids[0].itemId}`;
+    assert.equal((await getResendOperation(database, retryRequestId, 1, 100))?.summary.sending, 1);
+    await client`UPDATE registration_session_grant_items SET next_resend_request_id=${olderRequestId} WHERE id=${ids[0].itemId}`;
+    assert.equal((await getResendOperation(database, retryRequestId, 1, 100))?.entries[0].state, 'failed',
+      'another request active on the item must not override the failed operation');
+    await insertAttempt(6, 'sent', retryRequestId, 'retry', '2026-10-23T03:40:00Z');
+    await client`UPDATE registration_session_grant_items SET email_status='sent',next_email_purpose='initial',next_resend_request_id=NULL WHERE id=${ids[0].itemId}`;
+    const deliveredRetry = await getResendOperation(database, retryRequestId, 1, 100);
+    assert.equal(deliveredRetry?.summary.sent, 1);
+    assert.equal(deliveredRetry?.entries[0].attemptNo, 6);
     for (const dto of [operation, tracking, batch]) {
       const serialized = JSON.stringify(dto);
       for (const secret of ['tokenCiphertext', 'tokenHash', 'notificationSnapshot', 'https://saved.invalid', 'private']) assert.equal(serialized.includes(secret), false);

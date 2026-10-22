@@ -70,7 +70,8 @@ export async function getResendOperation(database: GrantDatabase, requestId: str
     const result = request.result as ResendResult;
     const queuedIds = result.queued.map(entry => entry.itemId);
     const itemRows = queuedIds.length ? await tx.select({ id: items.id, batchId: items.batchId,
-      recipient: items.recipientEmailSnapshot, name: items.nameSnapshot }).from(items).where(inArray(items.id, queuedIds)) : [];
+      recipient: items.recipientEmailSnapshot, name: items.nameSnapshot,
+      emailStatus: items.emailStatus, nextResendRequestId: items.nextResendRequestId }).from(items).where(inArray(items.id, queuedIds)) : [];
     const attemptRows = queuedIds.length ? await tx.select({ itemId: attempts.itemId, attemptNo: attempts.attemptNo,
       result: attempts.result, finishedAt: attempts.finishedAt, errorCode: attempts.errorCode })
       .from(attempts).where(and(eq(attempts.resendRequestId, requestId), inArray(attempts.itemId, queuedIds)))
@@ -82,7 +83,12 @@ export async function getResendOperation(database: GrantDatabase, requestId: str
     const entries = result.queued.map(entry => {
       const item = byItem.get(entry.itemId);
       const attempt = latest.get(entry.itemId);
-      const state = (attempt?.result ?? "waiting") as ResendDeliveryState;
+      // A retry may be queued before its next attempt exists. Only this operation's
+      // active queue metadata can override its latest historical attempt.
+      const activeState = item?.nextResendRequestId === requestId
+        ? item.emailStatus === "pending" ? "waiting" : item.emailStatus === "sending" ? "sending" : null
+        : null;
+      const state = (activeState ?? attempt?.result ?? "waiting") as ResendDeliveryState;
       summary[state]++;
       return { ...entry, batchId: item?.batchId ?? "", recipient: item?.recipient ?? null, name: item?.name ?? null,
         state, attemptNo: attempt?.attemptNo ?? null, finishedAt: attempt?.finishedAt?.toISOString() ?? null, errorCode: attempt?.errorCode ?? null };
