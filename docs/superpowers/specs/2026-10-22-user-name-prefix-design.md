@@ -10,7 +10,7 @@ The user approved a nullable free-text prefix on the existing user table, displa
 
 The real table is `users`. Add `users.name_prefix VARCHAR(50) NULL`, mapped to `users.namePrefix` in Drizzle. There is no default string, enum, index, new table, or backfill. Existing rows and new signups that omit the field have SQL NULL.
 
-Use the next available additive migration, currently `drizzle/0048_user_name_prefix.sql`. Apply it before releasing an API built against the extended schema: existing unrestricted Drizzle selects, including login's internal user lookup, will include the new column. No runtime migration is part of local implementation.
+Use the next available additive migration, currently `drizzle/0049_user_name_prefix.sql`. Apply it before releasing an API built against the extended schema: existing unrestricted Drizzle selects, including login's internal user lookup, will include the new column. No runtime migration is part of local implementation.
 
 ## Read paths
 

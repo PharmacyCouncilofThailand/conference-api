@@ -22,7 +22,7 @@ test('operational preflight, replacement migration, paused startup and compiled 
   const fixture = await seedPresentationScenario(client);
   await client.unsafe(preflight);
   await client.unsafe(await readFile('drizzle/0039_pris2026_presentations.sql', 'utf8'));
-  await client.unsafe(await readFile('drizzle/0047_presentation_file_deletions.sql', 'utf8'));
+  await client.unsafe(await readFile('drizzle/0048_presentation_file_deletions.sql', 'utf8'));
   await rejectsSql(preflight, /Presentation schema already exists/);
   await rejectsSql(verify, /Expected exactly one PRIS/);
   const previousFlag = process.env.PRESENTATION_SUBMISSIONS_ENABLED;

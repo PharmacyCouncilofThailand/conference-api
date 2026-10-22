@@ -201,7 +201,7 @@ test('migration preserves historical versions, rejects invalid links, and queues
     assert.equal(await presentationReadiness(s.database), 'unavailable');
   } finally { if (previousFlag === undefined) delete process.env.PRESENTATION_SUBMISSIONS_ENABLED;
     else process.env.PRESENTATION_SUBMISSIONS_ENABLED = previousFlag; }
-  await s.client.unsafe(await readFile(new URL('../../../drizzle/0047_presentation_file_deletions.sql', import.meta.url), 'utf8'));
+  await s.client.unsafe(await readFile(new URL('../../../drizzle/0048_presentation_file_deletions.sql', import.meta.url), 'utf8'));
   assert.deepEqual(await s.client`SELECT * FROM presentation_uploads ORDER BY version`, before);
   assert.equal((await s.client`SELECT count(*)::int AS n FROM presentation_file_deletions`)[0].n, 0);
   await assert.rejects(s.client`INSERT INTO presentation_file_deletions(upload_id,target_id,replacement_upload_id)

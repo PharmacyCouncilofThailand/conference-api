@@ -19,7 +19,7 @@
 
 ### Task 1: Nullable persistence and list reads
 
-**Files:** API `drizzle/0048_user_name_prefix.sql`, `src/database/schema.ts`, `src/routes/backoffice/members.ts`, `src/routes/backoffice/registrations.ts`.
+**Files:** API `drizzle/0049_user_name_prefix.sql`, `src/database/schema.ts`, `src/routes/backoffice/members.ts`, `src/routes/backoffice/registrations.ts`.
 
 **Interface:** List rows gain `namePrefix: string | null`; the nullable Registration user relation is preserved.
 
@@ -90,4 +90,4 @@ Verification on 2026-10-22:
 
 Ephemeral verification scripts live outside the repos in parent workspace `.codex-tmp/user-name-prefix-check.mts` and `.codex-tmp/user-name-prefix-ui-check.cjs`. No permanent implementation-mirroring test scaffold was added for the small display change.
 
-Release requirement: apply `drizzle/0048_user_name_prefix.sql` before API deployment; clients tolerate the previous API. No runtime migration, data backfill, push or deployment was performed.
+Release requirement: apply `drizzle/0049_user_name_prefix.sql` before API deployment; clients tolerate the previous API. No runtime migration, data backfill, push or deployment was performed.

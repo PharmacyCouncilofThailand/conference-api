@@ -24,7 +24,7 @@ API root: `D:/confer/confer/conference/conference-api`.
 Owner root: `D:/confer/confer/conference/Pris2026`.
 Staff root: `D:/confer/confer/conference/conference-backoffice`.
 
-- API `drizzle/0047_presentation_file_deletions.sql`: additive queue, constraints/indexes, read-only availability view.
+- API `drizzle/0048_presentation_file_deletions.sql`: additive queue, constraints/indexes, read-only availability view.
 - API `src/modules/presentations/file-deletions.ts`: enqueue, claim, safety checks, provider operation, retry and completion audit.
 - API `src/modules/presentations/uploads.ts`, `jobs-runner.ts`: acceptance/worker integration.
 - API `storage.ts`, `readers.ts`, `email-jobs.ts`, `types.ts`: shared availability contract; bounded deletion adapters.
@@ -104,7 +104,7 @@ const retrySeconds = Math.min(3600, 60 * 2 ** Math.min(attemptCount - 1, 6));
 - [x] Update unit fixtures for the API DTO; fix the full workflow's obsolete PNG-rejection expectations. Verify metadata survives worker deletion.
 - [x] Run `npm run test:presentations`, `npm run build`, then `npm run test:presentations:integration` serially against the guarded DB using injected fake providers. Expected: all pass; record unrelated baseline failures separately if encountered.
 - [x] Run focused frontend lint/type checks; inspect rendered component assertions for both statuses and locales. Run `git diff --check` in each repo.
-- [x] Update `docs/superpowers/runbooks/pris2026-presentations.md` with client-first rollout, additive migration 0047, matching API/worker, origin/cache limitation and irreversible deletion rollback boundary. Verify no runtime migration or external deletion occurred.
+- [x] Update `docs/superpowers/runbooks/pris2026-presentations.md` with client-first rollout, additive migration 0048, matching API/worker, origin/cache limitation and irreversible deletion rollback boundary. Verify no runtime migration or external deletion occurred.
 - [x] Review full diff and commit only task files per repo with `feat(presentations): delete replaced files after acceptance`. Record check results and any infrastructure limitation here.
 
 ## Plan self-review
@@ -125,6 +125,6 @@ Verification completed:
 - Full owner type check is blocked by the existing unchanged `src/lib/agendaPrintRendering.test.ts:29` error: `NextIntlClientProvider` props lack required `children`. No error was reported in the changed files. This unrelated test was not edited.
 - All repository whitespace checks passed. Schema creation/reset was confined to the existing dedicated PostgreSQL test container/database; no runtime migration, provider deletion, mail delivery, deployment or global deletion backfill was performed.
 
-Release remains: compatible clients first, migration 0047, then matching API/worker. Deletion removes origin bytes and cannot revoke cached/downloaded copies.
+Release remains: compatible clients first, migration 0048, then matching API/worker. Deletion removes origin bytes and cannot revoke cached/downloaded copies.
 
 Client commits: Pris2026 `754751b`; Backoffice `c2289dc`.

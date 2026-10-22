@@ -45,9 +45,9 @@ After accepting PNG, keep the expanded constraints when rolling back application
 | Storage/DB uncertainty | Keep file/key; verify accepted binding before cleanup. Worker handles expired proven orphans and protects successful history. |
 | Announcement PDF | Existing approved-announcement PDF asset/button process unchanged. |
 
-## Delete replaced files (migration 0047)
+## Delete replaced files (migration 0048)
 
-Release Pris2026 and Backoffice clients that handle nullable `fileUrl` and optional `fileStatus` first. Apply `drizzle/0047_presentation_file_deletions.sql` through the selected environment's migration process, then release matching API and worker versions. API/worker startup requires the queue table and availability view. This is additive: do not rerun migration 0039 or reset a runtime schema.
+Release Pris2026 and Backoffice clients that handle nullable `fileUrl` and optional `fileStatus` first. Apply `drizzle/0048_presentation_file_deletions.sql` through the selected environment's migration process, then release matching API and worker versions. API/worker startup requires the queue table and availability view. This is additive: do not rerun migration 0039 or reset a runtime schema.
 
 The migration creates an empty `presentation_file_deletions` queue and `presentation_upload_files` view. It does not queue existing history. Only a newly accepted revision queues all lower versions of the same target, including predeployment history on that target. Initial submissions, retries, reconciliation, cancellation and expiration do not queue old files. New acceptance, pointer change, receipt and deletion intents commit together.
 
