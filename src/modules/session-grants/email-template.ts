@@ -1,5 +1,5 @@
 export const GRANT_EMAIL_TEMPLATE_VERSION = "session-grant-v2" as const;
-export const INVITATION_EMAIL_TEMPLATE_VERSION = "session-invitation-v2" as const;
+export const INVITATION_EMAIL_TEMPLATE_VERSION = "session-invitation-v3" as const;
 
 export interface GrantNotificationSnapshot {
   personName: string | null;

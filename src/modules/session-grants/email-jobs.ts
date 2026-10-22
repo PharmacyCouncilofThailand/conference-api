@@ -23,6 +23,7 @@ import {
   effectiveInvitationStatus,
 } from "./invitation-policy.js";
 import { closeInactiveInvitations } from "./invitations.js";
+import { buildResendSnapshot, readResendCandidates } from "./resend-readers.js";
 import {
   buildInvitationUrl,
   decryptInvitationToken,
@@ -154,6 +155,8 @@ interface ClaimedMail {
   recipient: string;
   subject: string;
   html: string;
+  purpose: "initial" | "retry" | "resend";
+  resendRequestId: string | null;
 }
 
 export function classifyGrantMailFailure(error: unknown): {
@@ -255,6 +258,8 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
         attemptCount: registrationSessionGrantItems.attemptCount,
         nextTrigger: registrationSessionGrantItems.nextTrigger,
         nextTriggeredBy: registrationSessionGrantItems.nextTriggeredBy,
+        purpose: registrationSessionGrantItems.nextEmailPurpose,
+        resendRequestId: registrationSessionGrantItems.nextResendRequestId,
       })
       .from(registrationSessionGrantItems)
       .where(eq(registrationSessionGrantItems.emailStatus, "pending"))
@@ -277,13 +282,14 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
       if (!item.recipient || !item.notificationSnapshot) {
         throw new Error("Missing durable recipient/template snapshot");
       }
-      const snapshot =
+      let snapshot =
         item.notificationSnapshot as unknown as GrantNotificationSnapshot;
 
       if (kind === "invited") {
         const [invitation] = await tx
           .select({
             id: sessionInvitations.id,
+            sessionId: sessions.id,
             status: sessionInvitations.status,
             tokenHash: sessionInvitations.tokenHash,
             tokenCiphertext: sessionInvitations.tokenCiphertext,
@@ -366,6 +372,18 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
               { code: "INVITATION_PAYLOAD_INVALID" },
             );
           }
+          if (item.resendRequestId) {
+            const [candidate] = await readResendCandidates(tx, {
+              sessionId: invitation.sessionId,
+              invitationIds: [invitation.id],
+            });
+            if (!candidate) {
+              throw Object.assign(new Error("Invitation email payload is unavailable"), {
+                code: "INVITATION_PAYLOAD_INVALID",
+              });
+            }
+            snapshot = buildResendSnapshot(candidate);
+          }
           rendered = renderInvitationEmail(
             snapshot,
             buildInvitationUrl(rawToken, responseOrigin),
@@ -393,6 +411,8 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
         lastErrorCode: errorCode,
         claimToken: null,
         claimedUntil: null,
+        nextEmailPurpose: "initial",
+        nextResendRequestId: null,
       }).where(eq(registrationSessionGrantItems.id, item.id));
       await tx.insert(registrationSessionGrantEmailAttempts).values({
         id: attemptId,
@@ -401,6 +421,8 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
         claimToken,
         trigger: item.nextTrigger,
         triggeredBy: item.nextTriggeredBy,
+        purpose: item.purpose,
+        resendRequestId: item.resendRequestId,
         recipientEmail: item.recipient ?? "invalid@example.invalid",
         templateVersion:
           kind === "invited" ? INVITATION_EMAIL_TEMPLATE_VERSION : GRANT_EMAIL_TEMPLATE_VERSION,
@@ -432,6 +454,8 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
       claimToken,
       trigger: item.nextTrigger,
       triggeredBy: item.nextTriggeredBy,
+      purpose: item.purpose,
+      resendRequestId: item.resendRequestId,
       recipientEmail: item.recipient!,
       templateVersion: rendered.templateVersion,
       subjectSnapshot: rendered.subject,
@@ -451,6 +475,8 @@ async function claimOne(database: GrantDatabase, now: Date): Promise<ClaimedMail
       recipient: item.recipient!,
       subject: rendered.subject,
       html: rendered.html,
+      purpose: item.purpose as ClaimedMail["purpose"],
+      resendRequestId: item.resendRequestId,
     };
   });
 }
@@ -552,6 +578,8 @@ async function finalize(
       lastErrorCode: details.errorCode ?? null,
       claimToken: null,
       claimedUntil: null,
+      nextEmailPurpose: "initial",
+      nextResendRequestId: null,
     }).where(and(
       eq(registrationSessionGrantItems.id, claim.itemId),
       eq(registrationSessionGrantItems.claimToken, claim.claimToken),
@@ -827,6 +855,11 @@ export async function retryGrantEmails(
           continue;
         }
       }
+      const [previousAttempt] = await tx.select({
+        resendRequestId: registrationSessionGrantEmailAttempts.resendRequestId,
+      }).from(registrationSessionGrantEmailAttempts)
+        .where(eq(registrationSessionGrantEmailAttempts.itemId, itemId))
+        .orderBy(desc(registrationSessionGrantEmailAttempts.attemptNo)).limit(1);
       await tx.update(registrationSessionGrantItems).set({
         emailStatus: "pending",
         claimToken: null,
@@ -834,6 +867,8 @@ export async function retryGrantEmails(
         lastErrorCode: null,
         nextTrigger: "admin",
         nextTriggeredBy: input.actorId,
+        nextEmailPurpose: "retry",
+        nextResendRequestId: previousAttempt?.resendRequestId ?? null,
       }).where(eq(registrationSessionGrantItems.id, itemId));
       queued.push(itemId);
     }
