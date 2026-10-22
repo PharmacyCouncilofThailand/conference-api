@@ -5,6 +5,7 @@ import {
   events,
   registrationSessionGrantBatches,
   registrationSessionGrantItems,
+  registrationSessionGrantEmailAttempts,
   registrationSessions,
   registrations,
   sessionInvitations,
@@ -22,6 +23,8 @@ import {
   readInvitationEncryptionKey,
   parseInvitationFrontendOrigin,
 } from "./invitation-token.js";
+import { readResendCandidates } from "./resend-readers.js";
+import { resendCooldownUntil, resendDisabledReason } from "./resend-policy.js";
 import { readInvitationCapacity } from "./invitations.js";
 import {
   canonicalRequest,
@@ -202,6 +205,18 @@ async function readBatch(
     });
   }
 
+  const resendCandidates = invitationRows.length ? await database.transaction(tx => readResendCandidates(tx, {
+    sessionId: batch.sessionId, invitationIds: invitationRows.map(row => row.invitationId),
+  }), { isolationLevel: "repeatable read", accessMode: "read only" }) : [];
+  const resendByItem = new Map(resendCandidates.map(candidate => [candidate.itemId, candidate]));
+  const successCounts = items.length ? await database.select({ itemId: registrationSessionGrantEmailAttempts.itemId,
+    total: sql<number>`count(distinct ${registrationSessionGrantEmailAttempts.resendRequestId})::integer`.mapWith(Number),
+  }).from(registrationSessionGrantEmailAttempts).where(and(
+    inArray(registrationSessionGrantEmailAttempts.itemId, items.map(item => item.id)),
+    eq(registrationSessionGrantEmailAttempts.result, "sent"),
+  )).groupBy(registrationSessionGrantEmailAttempts.itemId) : [];
+  const successByItem = new Map(successCounts.map(row => [row.itemId, row.total]));
+
   const total = totalRows[0]?.total ?? 0;
   const emailCounts = emptyEmailCounts();
   for (const row of statusRows) {
@@ -236,9 +251,16 @@ async function readBatch(
     occupiedCount,
     seatsRemaining,
     createdAt: batch.createdAt.toISOString(),
-    results: items.map((item) =>
-      toItemDto(item, invitationByItem.get(item.id) ?? null),
-    ),
+    results: items.map((item) => {
+      const candidate = resendByItem.get(item.id);
+      const disabled = candidate ? resendDisabledReason(candidate, now) : { reasonCode: "INVITATION_NOT_FOUND" as const };
+      return { ...toItemDto(item, invitationByItem.get(item.id) ?? null),
+        lastSuccessfulSentAt: candidate?.lastSuccessfulSentAt?.toISOString() ?? item.sentAt?.toISOString() ?? null,
+        lastResendQueuedAt: item.lastResendQueuedAt?.toISOString() ?? null,
+        resendEligibleAt: candidate ? resendCooldownUntil(candidate.lastSuccessfulSentAt, candidate.lastResendQueuedAt)?.toISOString() ?? null : null,
+        successfulResendCount: successByItem.get(item.id) ?? 0,
+        resendEligible: disabled === null, resendDisabledReason: disabled?.reasonCode ?? null };
+    }),
     emailCounts,
     pagination: {
       page,

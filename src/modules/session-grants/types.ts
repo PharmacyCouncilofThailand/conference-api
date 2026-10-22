@@ -96,6 +96,12 @@ export interface GrantItemDto {
   attemptCount: number;
   lastErrorCode: string | null;
   invitation: InvitationMetadata | null;
+  lastSuccessfulSentAt?: string | null;
+  lastResendQueuedAt?: string | null;
+  resendEligibleAt?: string | null;
+  successfulResendCount?: number;
+  resendEligible?: boolean;
+  resendDisabledReason?: import("./resend-types.js").ResendSkipCode | null;
 }
 
 export interface GrantBatchDto {
