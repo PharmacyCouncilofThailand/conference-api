@@ -21,6 +21,7 @@ import { BoothError } from "../../modules/booths/policy.js";
 import { registrationBlock, sessionBlock } from "../../modules/session-grants/policy.js";
 import { effectiveDeadline, effectiveInvitationStatus } from "../../modules/session-grants/invitation-policy.js";
 import type { InvitationStatus } from "../../modules/session-grants/types.js";
+import { holderTypeDisplay } from "../../modules/registration-holder-types/catalog.js";
 import {
     AttendanceReaderError,
     readRegistrationAttendanceHistory,
@@ -159,6 +160,7 @@ export default async function (fastify: FastifyInstance) {
                     status: registrations.status,
                     createdAt: registrations.createdAt,
                     ticketName: ticketTypes.name,
+                    holderType: registrations.holderType,
                     eventName: events.eventName,
                     eventCode: events.eventCode,
                     source: registrations.source,
@@ -306,7 +308,10 @@ export default async function (fastify: FastifyInstance) {
             }
 
             return reply.send({
-                registrations: registrationResponse,
+                registrations: registrationResponse.map((registration) => ({
+                    ...registration,
+                    ...holderTypeDisplay(registration.holderType, registration.eventCode),
+                })),
                 pagination: {
                     page,
                     limit,
@@ -360,6 +365,7 @@ export default async function (fastify: FastifyInstance) {
                     eventCode: events.eventCode,
                     ticketTypeId: registrations.ticketTypeId,
                     ticketName: ticketTypes.name,
+                    holderType: registrations.holderType,
                     ticketCategory: ticketTypes.category,
                     ticketPrice: ticketTypes.price,
                     ticketCurrency: ticketTypes.currency,
@@ -511,6 +517,7 @@ export default async function (fastify: FastifyInstance) {
             return reply.send({
                 registration: {
                     ...reg,
+                    ...holderTypeDisplay(reg.holderType, reg.eventCode),
                     sessions: sessionsWithAttendance,
                     invitations,
                 },
