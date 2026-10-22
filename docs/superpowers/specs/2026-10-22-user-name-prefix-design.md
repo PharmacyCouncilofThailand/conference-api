@@ -50,6 +50,6 @@ Free-text `VARCHAR(50)` is selected because the user requested a simple nullable
 
 Release the additive migration before the API. Backoffice can be released first because the display tolerates an absent field. Reverting the UI/API need not drop the nullable column; avoid destroying subsequently populated values.
 
-The concise design above was approved in chat. This written specification records the same scope and is awaiting the user's written-spec review required by the brainstorming workflow. After that review, create the writing-plans implementation plan and execute locally.
+The concise design and this written specification were approved in chat on 2026-10-22. Implementation follows the accompanying writing-plans plan and local verification.
 
 Self-review: storage name, API property, null behavior, join semantics, display locations, rollout order and exclusions are explicit. No placeholders or unresolved implementation choices remain.

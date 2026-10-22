@@ -154,6 +154,7 @@ export default async function (fastify: FastifyInstance) {
                     id: registrations.id,
                     userId: registrations.userId,
                     regCode: registrations.regCode,
+                    namePrefix: users.namePrefix,
                     firstName: registrations.firstName,
                     lastName: registrations.lastName,
                     email: registrations.email,
@@ -181,6 +182,7 @@ export default async function (fastify: FastifyInstance) {
                     addedByLastName: backofficeUsers.lastName,
                 })
                 .from(registrations)
+                .leftJoin(users, eq(registrations.userId, users.id))
                 .leftJoin(ticketTypes, eq(registrations.ticketTypeId, ticketTypes.id))
                 .leftJoin(events, eq(registrations.eventId, events.id))
                 .leftJoin(orders, eq(registrations.orderId, orders.id))
