@@ -1,7 +1,7 @@
 # Session invitation resend
 
 Date: 2026-10-23 (Asia/Bangkok)
-Status: Design approved in conversation; written specification awaiting review.
+Status: Written specification approved by the user on 2026-10-23; ready for implementation planning.
 
 ## 1. Approved scope
 
@@ -168,4 +168,4 @@ Acceptance: Admin can select one or multiple eligible pending invitations, inspe
 
 ## 11. Review checkpoint
 
-This document records the conversation-approved design and shared-template clarification. Implementation starts only after the user reviews the written spec. The next skill is writing-plans, producing a bounded implementation plan; it is not an instruction to change code or send emails during this review step.
+The user approved this written specification on 2026-10-23. The next step is writing-plans, producing a bounded implementation plan. Specification approval does not authorize sending operational emails or changing production data during planning.
