@@ -10,7 +10,7 @@ import {
   resolveReviewInput,
   reviewListQuery,
 } from "./admin-orders.js";
-import { resendNotification } from "./email.js";
+import { previewNotification, resendNotification } from "./email.js";
 import { adminRoute } from "./http.js";
 import { editOrder, orderEditInput } from "./order-edit.js";
 import { contextFrom } from "./payments/attempts.js";
@@ -92,6 +92,13 @@ export async function merchandiseAdminOrderRoutes(
     }),
   );
 
+  app.get(
+    `${P}/orders/:id/notifications/:type/preview`,
+    route(async ({ eventId, request }) => {
+      const type = notificationType.parse((request.params as { type?: unknown }).type);
+      return { data: await previewNotification(db, eventId, idParam(request), type) };
+    }),
+  );
   app.post(
     `${P}/orders/:id/notifications/:type/resend`,
     route(async ({ admin, eventId, request }) => {

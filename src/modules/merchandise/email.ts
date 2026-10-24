@@ -204,6 +204,25 @@ export async function sendDueEmails(
   return result;
 }
 
+/** Admin preview: the exact subject and HTML a send of this notification would produce now. */
+export async function previewNotification(
+  db: MerchDb,
+  eventId: number,
+  orderId: string,
+  type: EmailType,
+): Promise<{ recipient: string; subject: string; html: string }> {
+  const [row] = await db
+    .select({ id: merchOrders.id })
+    .from(merchOrders)
+    .where(and(eq(merchOrders.id, orderId), eq(merchOrders.eventId, eventId)))
+    .limit(1);
+  if (!row) throw new MerchError(404, "MERCH_ORDER_NOT_FOUND", "ไม่พบคำสั่งซื้อ");
+  const ctx = { db, payso: null, paysoConfig: null, nodeEnv: "" };
+  const order = await readOrderDetail(ctx, orderId, { ownerId: null });
+  const message = type === "paid" ? renderPaidEmail(order) : renderShippedEmail(order);
+  return { recipient: order.buyer.email, ...message };
+}
+
 /** Admin resend (§10): only `failed` or `unknown` notifications go back to `queued`. */
 export async function resendNotification(
   db: MerchDb,
