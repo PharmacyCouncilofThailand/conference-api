@@ -58,20 +58,27 @@ function variantLabel(sizeTh: string | null, colorTh: string | null): string {
 }
 
 function itemsHtml(order: OrderDetail): string {
+  const cell = "padding:8px 10px;border:1px solid #ddd";
+  const head = `${cell};background:#f5f5f5;font-weight:bold`;
   const rows = order.items
     .map((item) => {
       const components = item.components
         .map((c) => `<li>${e(c.nameTh)}${e(variantLabel(c.sizeTh, c.colorTh))} x ${c.quantityPerBundle}</li>`)
         .join("");
       return (
-        `<tr><td>${e(item.nameTh)}${e(variantLabel(item.sizeTh, item.colorTh))}` +
-        `${components ? `<ul>${components}</ul>` : ""}</td>` +
-        `<td style="text-align:right">x ${item.quantity}</td>` +
-        `<td style="text-align:right">${formatBaht(item.lineTotalBaht)}</td></tr>`
+        `<tr><td style="${cell}">${e(item.nameTh)}${e(variantLabel(item.sizeTh, item.colorTh))}` +
+        `${components ? `<ul style="margin:4px 0 0;padding-left:18px">${components}</ul>` : ""}</td>` +
+        `<td style="${cell};text-align:center">${item.quantity}</td>` +
+        `<td style="${cell};text-align:right">${formatBaht(item.lineTotalBaht)}</td></tr>`
       );
     })
     .join("");
-  return `<table style="width:100%;border-collapse:collapse">${rows}</table>`;
+  return (
+    `<table style="width:100%;max-width:560px;border-collapse:collapse">` +
+    `<tr><th style="${head};text-align:left">สินค้า</th>` +
+    `<th style="${head};text-align:center;width:60px">จำนวน</th>` +
+    `<th style="${head};text-align:right;width:100px">ราคา (บาท)</th></tr>${rows}</table>`
+  );
 }
 
 function recipientHtml(order: OrderDetail): string {
