@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { ApiError } from '../../errors/ApiError.js';
 import { fail, rows, type PresentationDatabase } from './access.js';
 import { loadCurrentPresentationAnnouncements } from './data/index.js';
 import { sourceKey } from './policy.js';
@@ -42,7 +43,13 @@ export const presentationKioskRoutes: FastifyPluginAsync<{ database: Presentatio
     const { eventCode } = z.object({ eventCode: z.string() }).strict().parse(request.params);
     z.object({}).strict().parse(request.query);
     if (eventCode !== 'PRIS-2026') fail('PRESENTATION_EVENT_NOT_FOUND', 404);
+    let items: PosterKioskItem[];
+    try { items = await readPosterKiosk(database, roster()); }
+    catch (error) {
+      if (error instanceof ApiError) throw error;
+      return fail('PRESENTATION_KIOSK_UNAVAILABLE', 503);
+    }
     reply.header('cache-control', 'public, max-age=60');
-    return { success: true, data: { items: await readPosterKiosk(database, roster()) } };
+    return { success: true, data: { items } };
   });
 };

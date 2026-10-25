@@ -34,8 +34,8 @@ test('posterKioskItems exposes exactly the public keys', () => {
     ['affiliation', 'categoryName', 'file', 'presentationType', 'submitterName', 'title', 'trackingId']);
 });
 
-async function buildApp() {
-  const database = { execute: async () => [] } as unknown as PresentationDatabase;
+async function buildApp(execute: () => Promise<unknown[]> = async () => []) {
+  const database = { execute } as unknown as PresentationDatabase;
   const app = Fastify({ logger: false });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ApiError) return reply.code(error.statusCode).send(error.toJSON());
@@ -61,4 +61,12 @@ test('route rejects other events and query strings', async t => {
   assert.equal(other.json().code, 'PRESENTATION_EVENT_NOT_FOUND');
   const query = await app.inject({ method: 'GET', url: '/api/events/PRIS-2026/poster-kiosk?x=1' });
   assert.equal(query.statusCode, 400);
+});
+
+test('route returns 503 without cache header when the database fails', async t => {
+  const app = await buildApp(async () => { throw new Error('db down'); }); t.after(() => app.close());
+  const res = await app.inject({ method: 'GET', url: '/api/events/PRIS-2026/poster-kiosk' });
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.json().code, 'PRESENTATION_KIOSK_UNAVAILABLE');
+  assert.notEqual(res.headers['cache-control'], 'public, max-age=60');
 });
