@@ -117,7 +117,12 @@ export async function priceCart(
   const catalog = await loadCatalog(db, eventId, { includeDrafts: false });
   const images: Map<string, ImageAsset> = await loadImages(
     db,
-    rows.flatMap((r) => catalog.products.get(r.productId)?.imageIds ?? []),
+    rows.flatMap((r) => [
+      ...(catalog.products.get(r.productId)?.imageIds ?? []),
+      ...(catalog.componentsByBundle.get(r.productId) ?? []).flatMap(
+        (c) => catalog.products.get(c.componentProductId)?.imageIds ?? [],
+      ),
+    ]),
   );
 
   const lines: PricedLine[] = rows.map((row) => {

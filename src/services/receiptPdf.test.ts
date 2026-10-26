@@ -102,7 +102,10 @@ test("ticket receipt label omits the attendee name when registration is unavaila
 
 test("receipt PDF renders on one page with the remarks", async () => {
   const stream = await generateReceiptPdf(
-    orderOf([{ name: "Early Bird", type: "ticket", price: 1250, quantity: 1 }]),
+    {
+      ...orderOf([{ name: "Early Bird", type: "ticket", price: 1250, quantity: 1 }]),
+      participantName: "นายตัวอย่าง ทดสอบ",
+    },
   );
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
@@ -111,4 +114,30 @@ test("receipt PDF renders on one page with the remarks", async () => {
   assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
   assert.equal(pdf.toString("latin1").match(/\/Type \/Page\b/g)?.length, 1);
   assert.equal(RECEIPT_REMARKS.length, 2);
+});
+
+test("ticket description uses the registration participant independently of buyer and tax recipient", () => {
+  const view = toReceiptViewData({
+    ...orderOf([
+      { name: "Early Bird", type: "ticket", price: 1000, quantity: 1 },
+      { name: "Workshop", type: "addon", price: 250, quantity: 1 },
+    ]),
+    participantName: "  สมชาย ใจดี  ",
+    taxInvoice: { taxName: "หน่วยงานตัวอย่าง", taxId: null, taxFullAddress: null },
+  });
+
+  assert.equal(view.items[0].description, `${TICKET_RECEIPT_LABEL}\nชื่อผู้เข้าร่วมงาน : สมชาย ใจดี`);
+  assert.equal(view.items[1].description, "Workshop");
+  assert.equal(view.recipient.name, "หน่วยงานตัวอย่าง");
+});
+
+test("missing or blank registration name does not substitute the buyer name", () => {
+  for (const participantName of [undefined, "", "   "]) {
+    const view = toReceiptViewData({
+      ...orderOf([{ name: "Early Bird", type: "ticket", price: 1250, quantity: 1 }]),
+      participantName,
+    });
+    assert.equal(view.items[0].description, TICKET_RECEIPT_LABEL);
+    assert.equal(view.recipient.name, "Receipt User");
+  }
 });

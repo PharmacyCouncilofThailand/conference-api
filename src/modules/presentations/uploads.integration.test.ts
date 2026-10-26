@@ -38,7 +38,7 @@ test('Highlighted Poster uploads original PNG to R2, replays once, and switches 
   const key = randomUUID();
   const first = await submitPresentationUpload(database,f.owner,f.abstractId,key,null,input,storage);
   assert.equal(first.upload.mimeType,'image/png'); assert.equal(first.upload.storageProvider,'r2');
-  assert.ok(first.upload.fileUrl.endsWith('.png')); assert.equal(objects.size,1);
+  assert.ok(first.upload.fileUrl?.endsWith('.png')); assert.equal(objects.size,1);
   assert.deepEqual([...objects.values()][0],image); assert.deepEqual(contentTypes,['image/png']);
   const replay = await submitPresentationUpload(database,f.owner,f.abstractId,key,null,input,storage);
   assert.equal(replay.upload.id,first.upload.id); assert.equal(objects.size,1);

@@ -21,7 +21,8 @@ export type PresentationFileInput = { buffer: Buffer; filename: string; mimetype
 export type StorageIdentity = { storageProvider: StorageProvider; objectKey: string | null; driveFileId: string | null;
   driveFolderId: string | null; storedFileName: string; fileUrl: string | null };
 export type UploadDto = { id: string; version: number; fileName: string; storedFileName: string; mimeType: 'application/pdf' | 'image/png';
-  sizeBytes: number; fileUrl: string; storageProvider: StorageProvider; driveFileId: string | null;
+  sizeBytes: number; fileUrl: string | null; fileStatus: 'available' | 'deletion_pending' | 'deleted'; deletedAt: string | null;
+  storageProvider: StorageProvider; driveFileId: string | null;
   receivedAt: string; revisionRequestId: string | null };
 export type RevisionDto = { id: string; details: string; closesAt: string; status: RevisionStatus;
   createdAt: string; requestedBy: number; submittedAt: string | null; cancelledAt: string | null;

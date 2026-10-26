@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+/node_modules
 .venv/
 __pycache__/
 *.pyc
@@ -33,3 +34,42 @@ review/session-invitations-review-tokens.env
 
 # TypeScript
 *.tsbuildinfo
+
+# Graft local context graph (regenerable cache)
+/graft/
+
+# Local agent context and generated graphs
+/graphify-out/
+/.graphify_cache/
+/AGENTS.md
+/.ignore
+/.codex/
+/.claude/
+
+# Secrets (keep the documented example)
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+/.ssh/
+id_rsa
+id_ed25519
+
+# Local data, database dumps, caches and test artifacts
+*.dump
+*.sql.gz
+/backups/
+/pgdata/
+/.cache/
+/coverage/
+/test-results/
+/playwright-report/
+*~
+
+# Private registration workbooks and import/export working files
+registrations_*.xlsx
+registrations_*.csv
+/imports/
+/exports/

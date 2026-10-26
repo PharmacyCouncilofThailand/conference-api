@@ -8,6 +8,7 @@ import { buildMailPayload } from './email-jobs.js';
 import { renderPresentationEmail } from './email-template.js';
 import type { DriveLocation, StorageIdentity, StorageProvider, PresentationActor, UploadDto } from './types.js';
 import { validatePresentationFile } from './file-validation.js';
+import { enqueueReplacedFileDeletions } from './file-deletions.js';
 
 export type ValidatedFile = Awaited<ReturnType<typeof validatePresentationFile>>;
 export type UploadGate = { targetId: string; eventId: number; abstractId: number; closesAt: Date; requestId: string | null;
@@ -147,6 +148,7 @@ export async function finalizePresentationAttempt(database: PresentationDatabase
         ${a.storage_provider},${a.object_key},${a.drive_file_id},${a.drive_folder_id},${fileUrl},${a.original_filename},${a.stored_filename},
         ${a.mime_type},${a.size_bytes},${a.digest},${acceptedAt.toISOString()}::timestamptz)`);
     await tx.execute(sql`UPDATE presentation_targets SET current_upload_id=${a.id}::uuid WHERE id=${gate.targetId}::uuid`);
+    if (requestId) await enqueueReplacedFileDeletions(tx, gate.targetId, a.id);
     if (requestId) await tx.execute(sql`UPDATE presentation_revision_requests SET status='submitted',
       submitted_at=${acceptedAt.toISOString()}::timestamptz WHERE id=${requestId}::uuid AND target_id=${gate.targetId}::uuid AND status='open'`);
     await tx.execute(sql`UPDATE presentation_upload_attempts SET state='accepted',error_code=NULL WHERE id=${a.id}::uuid`);

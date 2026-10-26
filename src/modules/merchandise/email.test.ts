@@ -43,7 +43,7 @@ test("formatBaht groups thousands with two decimals", () => {
 test("paid email lists items, shipping, total, recipient, address and support copy", () => {
   const { subject, html } = renderPaidEmail(order);
   assert.equal(subject, "ยืนยันการชำระเงิน คำสั่งซื้อ EVT-M-000001");
-  for (const s of ["EVT-M-000001", "เสื้อ (L / ดำ)", "x 2", "50.00", "1,280.00", "สมชาย ใจดี", "99/1 ถนนสุขุมวิท", "คลองเตย", "กรุงเทพมหานคร", "10110", SUPPORT]) {
+  for (const s of ["EVT-M-000001", "เสื้อ (L / ดำ)", ">2</td>", "50.00", "1,280.00", "สมชาย ใจดี", "99/1 ถนนสุขุมวิท", "คลองเตย", "กรุงเทพมหานคร", "10110", SUPPORT]) {
     assert.ok(html.includes(s), `missing ${s}`);
   }
 });

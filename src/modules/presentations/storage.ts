@@ -11,12 +11,12 @@ import { generatePresentationDriveFileId, getOrCreatePresentationDriveFolder, wr
 export type R2PresentationStorage = {
   publicBaseUrl: string;
   putObject(input: { key: string; body: Buffer; contentType: string; cacheControl: string; signal?: AbortSignal }): Promise<void>;
-  deleteObject(key: string): Promise<void>;
+  deleteObject(key: string, signal?: AbortSignal): Promise<void>;
 };
 export type DrivePresentationStorage = { rootFolderId(): string; generateId(): Promise<string>;
   folder(parentId: string, name: string): Promise<string>;
   write(input: DriveWriteInput): Promise<{ fileId: string; fileUrl: string; storedFileName: string }>;
-  delete(fileId: string): Promise<void> };
+  delete(fileId: string, signal?: AbortSignal): Promise<void> };
 export type PresentationStorage = { r2: () => R2PresentationStorage; drive: DrivePresentationStorage };
 
 export function createPresentationStorage(): PresentationStorage {
@@ -29,8 +29,8 @@ export function createPresentationStorage(): PresentationStorage {
     rootFolderId: () => { const id = process.env.GOOGLE_DRIVE_FOLDER_ABSTRACTS?.trim();
       if (!id) return fail('PRESENTATION_STORAGE_CONFIG', 503); return id; },
     generateId: () => generatePresentationDriveFileId(), folder: (parent, name) => getOrCreatePresentationDriveFolder(parent, name),
-    write: input => writePresentationDriveFile(input), delete: async id => {
-      try { await deleteFromGoogleDrive(id); }
+    write: input => writePresentationDriveFile(input), delete: async (id, signal) => {
+      try { await deleteFromGoogleDrive(id, signal); }
       catch (error) { if ((error as { code?: number }).code !== 404) throw error; }
     },
   } };
@@ -39,9 +39,10 @@ export function createPresentationStorage(): PresentationStorage {
 export async function readUploadDto(q: Pick<PresentationDatabase, 'execute'>, id: string): Promise<UploadDto | null> {
   const [upload] = await rows<UploadDto>(q, sql`SELECT id,version,original_filename AS "fileName",stored_filename AS "storedFileName",mime_type AS "mimeType",
     size_bytes AS "sizeBytes",file_url AS "fileUrl",storage_provider AS "storageProvider",drive_file_id AS "driveFileId",
-    received_at AS "receivedAt",request_id AS "revisionRequestId"
-    FROM presentation_uploads WHERE id=${id}::uuid`);
-  return upload ? { ...upload, receivedAt: new Date(upload.receivedAt).toISOString() } : null;
+    received_at AS "receivedAt",request_id AS "revisionRequestId",file_status AS "fileStatus",deleted_at AS "deletedAt"
+    FROM presentation_upload_files WHERE id=${id}::uuid`);
+  return upload ? { ...upload, receivedAt: new Date(upload.receivedAt).toISOString(),
+    deletedAt: upload.deletedAt ? new Date(upload.deletedAt).toISOString() : null } : null;
 }
 
 async function resolveOralFolder(database: PresentationDatabase, location: DriveLocation, storage: PresentationStorage): Promise<string> {

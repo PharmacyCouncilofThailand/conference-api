@@ -42,15 +42,21 @@ export function renderPresentationEmail(p: MailPayload): { subject: string; html
   if (p.kind !== 'receipt') {
     if (!p.closesAt) throw Error('PRESENTATION_MAIL_DEADLINE_MISSING');
     const href = escape(buildSubmissionUrl(p.websiteOrigin, p.abstractId, p.kind === 'revision' ? p.revisionRequestId ?? undefined : undefined));
+    const deadline = escape(dateTime(p.closesAt, 'th', -1000).replace(/:/g, '.'));
+    const finalNotice = p.kind === 'reminder' ? `
+    <p style="margin:16px 0;color:#b91c1c;font-size:16px;font-weight:700;line-height:1.7;text-align:left;"><strong>ส่งไฟล์ฉบับสมบูรณ์ (Final) ภายในวันที่ ${deadline} น. (เวลาประเทศไทย)<br>
+      สามารถส่งได้เพียงครั้งเดียวเท่านั้น และไม่สามารถแก้ไขได้หลังส่ง<br>
+      หากไม่ส่งภายในเวลาที่กำหนดทางทีมงานขออนุญาตตัดชื่อผลงานของท่านออกจากรายการ</strong></p>` : '';
     const html = `<!doctype html>
 <html lang="th">
   <body>
     <p>เรียน คุณ${escape(p.submitterName)}</p>
+    ${finalNotice}
     <p>สภาเภสัชกรรมขอเรียน${p.kind === 'reminder' ? 'เตือน' : 'แจ้ง'}ให้ท่านดำเนินการ${p.kind === 'revision' ? 'แก้ไขและ' : ''}ส่งไฟล์นำเสนอ ${type} สำหรับผลงานดังต่อไปนี้</p>
     <ul>
       <li><strong>รหัสผลงาน:</strong> ${escape(p.trackingId)}</li>
       <li><strong>ชื่อผลงาน:</strong> ${escape(p.title)}</li>${p.kind === 'revision' ? `\n      <li><strong>รายละเอียดการแก้ไข:</strong> ${escape(p.revisionDetails ?? '').replace(/\r?\n/g, '<br>')}</li>` : ''}
-      <li><strong>กำหนดส่ง:</strong> วันที่ ${escape(dateTime(p.closesAt, 'th', -1000).replace(/:/g, '.'))} น. (เวลาประเทศไทย)</li>
+      <li><strong>กำหนดส่ง:</strong> วันที่ ${deadline} น. (เวลาประเทศไทย)</li>
     </ul>
     <p><strong>${preparationNotice ? oral ? `ข้อกำหนดการจัดทำไฟล์นำเสนอ ${type}` : 'ข้อกำหนดการจัดทำโปสเตอร์' : 'ข้อกำหนดของไฟล์'}</strong></p>
     <ul>

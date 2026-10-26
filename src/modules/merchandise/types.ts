@@ -23,7 +23,7 @@ export interface StoreDto {
 }
 export interface VariantDto {
   id: string; sizeTh: string | null; colorTh: string | null;
-  priceBaht: Baht | null; saleEnabled: boolean;
+  priceBaht: Baht | null; saleEnabled: boolean; imageId: string | null;
 }
 export interface BundleComponentDto {
   id: string; productId: string; nameTh: string; quantityPerBundle: number;

@@ -4097,6 +4097,7 @@ export default async function paymentRoutes(fastify: FastifyInstance) {
           total,
           customerName: `${user.firstName} ${user.lastName}`,
           customerEmail: user.email,
+          participantName: reg ? `${reg.firstName} ${reg.lastName}` : undefined,
           taxInvoice: order.needTaxInvoice
             ? {
               taxName: order.taxName,

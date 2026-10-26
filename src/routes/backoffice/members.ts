@@ -133,6 +133,7 @@ export default async function (fastify: FastifyInstance) {
         .select({
           id: users.id,
           email: users.email,
+          namePrefix: users.namePrefix,
           firstName: users.firstName,
           lastName: users.lastName,
           role: users.role,

@@ -9,6 +9,7 @@ import { ApiError } from "./errors/ApiError.js";
 import { db } from "./database/index.js";
 import { initializePresentations, presentationReadiness } from "./modules/presentations/startup.js";
 import { presentationAnnouncementRoutes, presentationOwnerRoutes } from "./modules/presentations/public.routes.js";
+import { presentationKioskRoutes } from "./modules/presentations/kiosk.js";
 import { presentationBackofficeRoutes } from "./modules/presentations/backoffice.routes.js";
 import { abstractTrackingRuntime } from "./database/schema.js";
 import { eq } from "drizzle-orm";
@@ -292,6 +293,7 @@ fastify.register(backofficeLoginRoutes, { prefix: "/backoffice" });
 // Public API routes
 fastify.register(publicEventsRoutes, { prefix: "/api/events" });
 fastify.register(presentationAnnouncementRoutes, { prefix: "/api/events" });
+fastify.register(presentationKioskRoutes, { prefix: "/api/events", database: db });
 fastify.register(async app => {
   app.addHook('preHandler', fastify.authenticate);
   app.register(presentationOwnerRoutes, { database: db });

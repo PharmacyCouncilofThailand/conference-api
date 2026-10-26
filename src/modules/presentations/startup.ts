@@ -11,6 +11,7 @@ export async function initializePresentations(database: PresentationDatabase): P
     if (process.env.PRESENTATION_SUBMISSIONS_ENABLED === 'true') fail('PRESENTATION_SCHEMA_NOT_READY', 503);
     return;
   }
+  await requireFileDeletionSchema(database);
   // Source synchronization runs on every start, including while receiving is paused.
   await reconcilePresentations(database);
 }
@@ -18,10 +19,18 @@ export async function initializePresentations(database: PresentationDatabase): P
 export async function presentationReadiness(database: PresentationDatabase): Promise<'paused' | 'ok' | 'unavailable'> {
   if (process.env.PRESENTATION_SUBMISSIONS_ENABLED !== 'true') return 'paused';
   try {
+    await requireFileDeletionSchema(database);
     const [setting] = await rows<{ ready: boolean }>(database, sql`SELECT s.reconcile_ready AS ready
       FROM presentation_settings s JOIN events e ON e.id=s.event_id WHERE e.event_code='PRIS-2026'`);
     return setting?.ready ? 'ok' : 'unavailable';
   } catch { return 'unavailable'; }
+}
+
+async function requireFileDeletionSchema(database: PresentationDatabase): Promise<void> {
+  const [schema] = await rows<{ ready: boolean }>(database, sql`SELECT
+    to_regclass('public.presentation_file_deletions') IS NOT NULL
+      AND to_regclass('public.presentation_upload_files') IS NOT NULL AS ready`);
+  if (!schema?.ready) fail('PRESENTATION_SCHEMA_NOT_READY', 503);
 }
 
 // Importing startup for the API/worker never runs the operational CLI.

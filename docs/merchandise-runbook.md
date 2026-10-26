@@ -106,3 +106,17 @@ merchant ร้านใช้เฉพาะ merchandise จึงไม่ก�
 ทำตาม checklist ใน spec ส่วนที่ 15 หัวข้อ "User Test (local + ngrok, PRIS-2026, เงินจริง)" ให้ครบ
 และเก็บหลักฐาน โดยเฉพาะข้อแรก: ยืนยันว่า Legacy Inquiry เห็นรายการ Direct QR (ถ้าไม่เห็นต้องติดต่อ
 PaySolution ก่อนไปต่อ) และค่า `MerchantID` จริงใน Inquiry (8 หลักหรือ 5 หลักท้าย — ระบบรับทั้งสองแบบ)
+
+## Migration 0046 `drizzle/0046_merch_variant_image.sql` (รันด้วยมือ)
+
+เพิ่มคอลัมน์ `merch_variants.image_id` (nullable, FK ไป `merch_images`, `ON DELETE SET NULL`) สำหรับผูกรูปสินค้ากับตัวเลือก
+ไฟล์รันซ้ำได้ (`IF NOT EXISTS`)
+
+```bash
+psql "<connection ของ environment นั้น>" -v ON_ERROR_STOP=1 -f drizzle/0046_merch_variant_image.sql
+```
+
+ลำดับ deploy: migration → API → back office / storefront
+
+ข้อควรระวัง (release coupling): storefront (Pris2026 branch `feat/merchandise-preorder` ตั้งแต่ commit `4637adb` เป็นต้นไป) จะ **ปฏิเสธ** response ของสินค้าที่ variants ไม่มีฟิลด์ `imageId` ดังนั้น migration 0046 และ API เวอร์ชันนี้ต้องใช้งานจริงแล้วก่อน deploy storefront
+และการ rollback เฉพาะ API จะทำให้หน้า catalog / product / cart ของ storefront พัง — ถ้าต้อง rollback ให้ rollback storefront ก่อน แล้วค่อย rollback API

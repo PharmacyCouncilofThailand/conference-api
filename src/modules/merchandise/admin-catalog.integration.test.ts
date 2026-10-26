@@ -124,6 +124,72 @@ test("create: single gets default variant, bundle gets none, image and kind rule
   assert.equal(search.json().data.length, 1);
 });
 
+test("variants: imageId must be a photo of the product; omitted keeps, null clears", { skip }, async () => {
+  const second = await insertImage(eventId);
+  const p = await mkProduct({ kind: "single", nameTh: "แก้ว", imageIds: [imageId, second] });
+  const set = await call("PUT", `/products/${p.id}/variants`, [
+    { sizeTh: "46Oz", imageId },
+    { sizeTh: "32Oz", imageId: second },
+  ]);
+  assert.equal(set.statusCode, 200, set.body);
+  const [big, small] = set.json().data.variants;
+  assert.deepEqual([big.imageId, small.imageId], [imageId, second]);
+
+  const kept = await call("PUT", `/products/${p.id}/variants`, [
+    { id: big.id, sizeTh: "46Oz" },
+    { id: small.id, sizeTh: "32Oz", imageId: null },
+    { sizeTh: "20Oz" },
+  ]);
+  assert.equal(kept.statusCode, 200, kept.body);
+  assert.deepEqual(kept.json().data.variants.map((v: { imageId: string | null }) => v.imageId), [imageId, null, null]);
+
+  const unrelated = await insertImage(eventId);
+  for (const bad of [unrelated, otherImageId, MISSING]) {
+    const res = await call("PUT", `/products/${p.id}/variants`, [{ id: big.id, sizeTh: "46Oz", imageId: bad }]);
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.json().code, "MERCH_VARIANT_IMAGE_INVALID");
+  }
+});
+
+test("removing a photo from the product clears it from its variants", { skip }, async () => {
+  const second = await insertImage(eventId);
+  const p = await mkProduct({ kind: "single", nameTh: "ผ้าห่มฟ้า", imageIds: [imageId, second] });
+  const set = await call("PUT", `/products/${p.id}/variants`, [
+    { colorTh: "สีขาว", imageId },
+    { colorTh: "สีฟ้า", imageId: second },
+  ]);
+  const patched = await call("PATCH", `/products/${p.id}`, { expectedVersion: set.json().data.version, imageIds: [imageId] });
+  assert.equal(patched.statusCode, 200, patched.body);
+  assert.deepEqual(patched.json().data.variants.map((v: { imageId: string | null }) => v.imageId), [imageId, null]);
+  const [audit] = await t.sql<{ after: { clearedVariantImageIds: string[] } }[]>`
+    SELECT after FROM merch_audit_log WHERE entity_id = ${p.id} AND action = 'product.update'
+    ORDER BY created_at DESC LIMIT 1`;
+  assert.equal(audit.after.clearedVariantImageIds.length, 1);
+});
+
+test("emptying product imageIds clears every variant image", { skip }, async () => {
+  const second = await insertImage(eventId);
+  const p = await mkProduct({ kind: "single", nameTh: "ผ้าห่มเขียว", imageIds: [imageId, second] });
+  const set = await call("PUT", `/products/${p.id}/variants`, [
+    { colorTh: "สีขาว", imageId },
+    { colorTh: "สีเขียว", imageId: second },
+    { colorTh: "สีเทา" },
+  ]);
+  assert.equal(set.statusCode, 200, set.body);
+  const withImage = (set.json().data.variants as { id: string; imageId: string | null }[])
+    .filter((v) => v.imageId)
+    .map((v) => v.id)
+    .sort();
+  assert.equal(withImage.length, 2);
+  const patched = await call("PATCH", `/products/${p.id}`, { expectedVersion: set.json().data.version, imageIds: [] });
+  assert.equal(patched.statusCode, 200, patched.body);
+  assert.ok((patched.json().data.variants as { imageId: string | null }[]).every((v) => v.imageId === null));
+  const [audit] = await t.sql<{ after: { clearedVariantImageIds: string[] } }[]>`
+    SELECT after FROM merch_audit_log WHERE entity_id = ${p.id} AND action = 'product.update'
+    ORDER BY created_at DESC LIMIT 1`;
+  assert.deepEqual([...audit.after.clearedVariantImageIds].sort(), withImage);
+});
+
 test("variants: replace semantics, shape, duplicate, bundle reference", { skip }, async () => {
   const shirt = await mkProduct({ kind: "single", nameTh: "เสื้อยืด", imageIds: [imageId] });
   const defaultId = shirt.variants[0].id;

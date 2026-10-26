@@ -12,9 +12,10 @@ import { reconcilePresentations } from './reconcile.js';
 import { presentationOwnerRoutes } from './public.routes.js';
 import { presentationBackofficeRoutes } from './backoffice.routes.js';
 import { runPresentationMailOnce } from './email-jobs.js';
+import { runReplacedFileDeletionOnce } from './file-deletions.js';
 import type { OwnerPresentationDto, PresentationDetailDto, PresentationListDto, PresentationPreviewDto, RevisionDto, UploadDto } from './types.js';
 
-test('synthetic full HTTP workflow: reconcile alias, two works/mail, rejected PNG, initial/revision PDF, cancel, replay and retained history', { timeout: 30000 }, async t => {
+test('synthetic full HTTP workflow: reconcile alias, invalid PNG, revision, cancel, replay and deletion with retained metadata', { timeout: 30000 }, async t => {
   const previousReceiving = process.env.PRESENTATION_SUBMISSIONS_ENABLED, previousMail = process.env.PRESENTATION_EMAILS_ENABLED;
   process.env.PRESENTATION_SUBMISSIONS_ENABLED = 'true'; process.env.PRESENTATION_EMAILS_ENABLED = 'true';
   t.after(() => {
@@ -70,7 +71,7 @@ test('synthetic full HTTP workflow: reconcile alias, two works/mail, rejected PN
     return app.inject({ method: 'POST', url: `/api/abstracts/${f.abstractId}/presentation-uploads`, headers: { ...owner, 'content-type': `multipart/form-data; boundary=${boundary}`, 'idempotency-key': key }, payload });
   };
   const png = await sharp({ create: { width: 5, height: 7, channels: 4, background: '#ffffff' } }).png().toBuffer();
-  const rejected = await upload(png, 'first.png', 'image/png'); assert.equal(rejected.statusCode, 415);
+  const rejected = await upload(png.subarray(0, 10), 'first.png', 'image/png'); assert.equal(rejected.statusCode, 422);
   const disguised = await upload(png, 'first.pdf', 'application/pdf'); assert.equal(disguised.statusCode, 415); assert.equal(objects.size, 0);
   const initialDocument = await PDFDocument.create(); initialDocument.addPage(); const initialPdf = Buffer.from(await initialDocument.save());
   const firstKey = randomUUID(), first = await upload(initialPdf, 'first.pdf', 'application/pdf', undefined, firstKey); assert.equal(first.statusCode, 201, first.body);
@@ -83,7 +84,7 @@ test('synthetic full HTTP workflow: reconcile alias, two works/mail, rejected PN
   const revision = await post<{ request: RevisionDto }>(`${base}/presentation-targets/${f.abstractId}/revision-requests`, { requestId: draft.requestId, details, closesAt: draft.closesAt, previewFingerprint: draft.fingerprint });
   assert.equal((await get<OwnerPresentationDto>(`/api/abstracts/${f.abstractId}/presentation?requestId=${revision.request.id}`, owner)).currentUpload!.id, firstFile.id);
   await drain(); const document = await PDFDocument.create(); document.addPage(); const pdf = Buffer.from(await document.save());
-  const rejectedRevision = await upload(png, 'revision.png', 'image/png', revision.request.id); assert.equal(rejectedRevision.statusCode, 415); assert.equal(objects.size, 1);
+  const rejectedRevision = await upload(png.subarray(0, 10), 'revision.png', 'image/png', revision.request.id); assert.equal(rejectedRevision.statusCode, 422); assert.equal(objects.size, 1);
   const revised = await upload(pdf, 'revision.pdf', 'application/pdf', revision.request.id); assert.equal(revised.statusCode, 201, revised.body);
   const secondFile = revised.json().data.upload as UploadDto; assert.equal(secondFile.version, 2); assert.equal(secondFile.revisionRequestId, revision.request.id);
   await drain(); assert.equal(mail.length, 5, 'initial pair + first receipt + revision notice + revision receipt');
@@ -102,5 +103,10 @@ test('synthetic full HTTP workflow: reconcile alias, two works/mail, rejected PN
   assert.equal(objects.size, 2); assert.deepEqual(deletes, []);
   assert.deepEqual([...objects.values()], [initialPdf, pdf]);
   assert.ok([...objects.keys()].every(key => key.startsWith(`events/${f.eventId}/presentations/${f.abstractId}/`)));
+  await runReplacedFileDeletionOnce(database, storage);
+  assert.equal(objects.size, 1); assert.equal(deletes.length, 1);
+  const afterDeletion = await get<PresentationDetailDto>(`${base}/presentation-targets/${f.abstractId}`);
+  assert.deepEqual(afterDeletion.uploads.map(file => file.version), [2, 1]);
+  assert.equal(afterDeletion.uploads[1].fileUrl, null); assert.equal(afterDeletion.uploads[1].fileStatus, 'deleted');
   console.log('A04/A09/A10/A13/A15/A18/A22 synthetic actual-route chain PASS; fake mail=5, original objects=2, retained versions=2, requests=2, no real providers');
 });

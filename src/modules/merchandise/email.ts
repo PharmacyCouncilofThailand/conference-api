@@ -58,20 +58,27 @@ function variantLabel(sizeTh: string | null, colorTh: string | null): string {
 }
 
 function itemsHtml(order: OrderDetail): string {
+  const cell = "padding:8px 10px;border:1px solid #ddd";
+  const head = `${cell};background:#f5f5f5;font-weight:bold`;
   const rows = order.items
     .map((item) => {
       const components = item.components
         .map((c) => `<li>${e(c.nameTh)}${e(variantLabel(c.sizeTh, c.colorTh))} x ${c.quantityPerBundle}</li>`)
         .join("");
       return (
-        `<tr><td>${e(item.nameTh)}${e(variantLabel(item.sizeTh, item.colorTh))}` +
-        `${components ? `<ul>${components}</ul>` : ""}</td>` +
-        `<td style="text-align:right">x ${item.quantity}</td>` +
-        `<td style="text-align:right">${formatBaht(item.lineTotalBaht)}</td></tr>`
+        `<tr><td style="${cell}">${e(item.nameTh)}${e(variantLabel(item.sizeTh, item.colorTh))}` +
+        `${components ? `<ul style="margin:4px 0 0;padding-left:18px">${components}</ul>` : ""}</td>` +
+        `<td style="${cell};text-align:center">${item.quantity}</td>` +
+        `<td style="${cell};text-align:right">${formatBaht(item.lineTotalBaht)}</td></tr>`
       );
     })
     .join("");
-  return `<table style="width:100%;border-collapse:collapse">${rows}</table>`;
+  return (
+    `<table style="width:100%;max-width:560px;border-collapse:collapse">` +
+    `<tr><th style="${head};text-align:left">สินค้า</th>` +
+    `<th style="${head};text-align:center;width:60px">จำนวน</th>` +
+    `<th style="${head};text-align:right;width:100px">ราคา (บาท)</th></tr>${rows}</table>`
+  );
 }
 
 function recipientHtml(order: OrderDetail): string {
@@ -195,6 +202,25 @@ export async function sendDueEmails(
     result.sent += 1;
   }
   return result;
+}
+
+/** Admin preview: the exact subject and HTML a send of this notification would produce now. */
+export async function previewNotification(
+  db: MerchDb,
+  eventId: number,
+  orderId: string,
+  type: EmailType,
+): Promise<{ recipient: string; subject: string; html: string }> {
+  const [row] = await db
+    .select({ id: merchOrders.id })
+    .from(merchOrders)
+    .where(and(eq(merchOrders.id, orderId), eq(merchOrders.eventId, eventId)))
+    .limit(1);
+  if (!row) throw new MerchError(404, "MERCH_ORDER_NOT_FOUND", "ไม่พบคำสั่งซื้อ");
+  const ctx = { db, payso: null, paysoConfig: null, nodeEnv: "" };
+  const order = await readOrderDetail(ctx, orderId, { ownerId: null });
+  const message = type === "paid" ? renderPaidEmail(order) : renderShippedEmail(order);
+  return { recipient: order.buyer.email, ...message };
 }
 
 /** Admin resend (§10): only `failed` or `unknown` notifications go back to `queued`. */

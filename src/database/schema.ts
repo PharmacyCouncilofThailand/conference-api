@@ -195,6 +195,7 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 255 }).notNull().unique(),
   passwordHash: varchar("password_hash", { length: 255 }).notNull(),
   role: userRoleEnum("role").notNull(),
+  namePrefix: varchar("name_prefix", { length: 50 }),
   firstName: varchar("first_name", { length: 100 }).notNull(),
   lastName: varchar("last_name", { length: 100 }).notNull(),
   phone: varchar("phone", { length: 20 }),
@@ -738,6 +739,10 @@ export const registrations = pgTable("registrations", {
   status: registrationStatusEnum("status").notNull().default("confirmed"),
   source: varchar("source", { length: 20 }).notNull().default("purchase"),
   attendeeType: varchar("attendee_type", { length: 20 }), // e.g. 'parent', 'student' — used by quick-register flow
+  // PRIS holder category is independent of the purchased ticket and its price.
+  holderType: varchar("holder_type", { length: 32 }),
+  holderTypeSource: text("holder_type_source"),
+  holderTypeUpdatedAt: timestamp("holder_type_updated_at"),
   addedBy: integer("added_by").references(() => backofficeUsers.id),
   addedNote: text("added_note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -1277,6 +1282,20 @@ export const registrationSessionGrantBatches = pgTable(
   ],
 );
 
+export const sessionInvitationResendRequests = pgTable("session_invitation_resend_requests", {
+  id: uuid("id").primaryKey(),
+  actorId: integer("actor_id").notNull().references(() => backofficeUsers.id),
+  sessionId: integer("session_id").notNull().references(() => sessions.id),
+  idempotencyKey: uuid("idempotency_key").notNull(),
+  requestHash: varchar("request_hash", { length: 64 }).notNull(),
+  result: jsonb("result").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("session_invitation_resend_actor_key_unique").on(table.actorId, table.idempotencyKey),
+  index("session_invitation_resend_session_time_idx").on(table.sessionId, table.createdAt),
+  check("session_invitation_resend_result_object", sql`jsonb_typeof(${table.result}) = 'object'`),
+]);
+
 export const registrationSessionGrantItems = pgTable(
   "registration_session_grant_items",
   {
@@ -1304,6 +1323,9 @@ export const registrationSessionGrantItems = pgTable(
     claimedUntil: timestamp("claimed_until", { withTimezone: true }),
     nextTrigger: varchar("next_trigger", { length: 16 }).notNull().default("system"),
     nextTriggeredBy: integer("next_triggered_by"),
+    nextEmailPurpose: varchar("next_email_purpose", { length: 16 }).notNull().default("initial"),
+    nextResendRequestId: uuid("next_resend_request_id").references(() => sessionInvitationResendRequests.id),
+    lastResendQueuedAt: timestamp("last_resend_queued_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -1324,6 +1346,8 @@ export const registrationSessionGrantItems = pgTable(
       table.requestedRegistrationId,
       table.createdAt,
     ),
+    check("session_grant_next_purpose_check", sql`${table.nextEmailPurpose} in ('initial', 'retry', 'resend')`),
+    check("session_grant_resend_request_check", sql`${table.nextEmailPurpose} <> 'resend' or ${table.nextResendRequestId} is not null`),
     check(
       "registration_session_grant_items_requested_registration_check",
       sql`${table.requestedRegistrationId} > 0`,
@@ -1407,6 +1431,8 @@ export const registrationSessionGrantEmailAttempts = pgTable(
     claimToken: uuid("claim_token").notNull(),
     trigger: varchar("trigger", { length: 16 }).notNull(),
     triggeredBy: integer("triggered_by"),
+    purpose: varchar("purpose", { length: 16 }).notNull().default("initial"),
+    resendRequestId: uuid("resend_request_id").references(() => sessionInvitationResendRequests.id),
     recipientEmail: text("recipient_email").notNull(),
     templateVersion: varchar("template_version", { length: 32 }).notNull(),
     subjectSnapshot: text("subject_snapshot").notNull(),
@@ -1423,6 +1449,8 @@ export const registrationSessionGrantEmailAttempts = pgTable(
       table.itemId,
       table.attemptNo,
     ),
+    index("session_grant_attempt_resend_request_idx").on(table.resendRequestId, table.itemId, table.attemptNo),
+    check("session_grant_attempt_purpose_check", sql`${table.purpose} in ('initial', 'retry', 'resend')`),
     check(
       "registration_session_grant_email_attempts_attempt_no_check",
       sql`${table.attemptNo} > 0`,
@@ -2698,6 +2726,7 @@ export const merchVariants = pgTable(
     colorTh: text("color_th"),
     price: integer("price"),
     saleEnabled: boolean("sale_enabled").notNull().default(true),
+    imageId: uuid("image_id").references(() => merchImages.id, { onDelete: "set null" }),
     sortOrder: integer("sort_order").notNull().default(0),
     version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

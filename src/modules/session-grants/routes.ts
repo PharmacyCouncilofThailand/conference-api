@@ -1,3 +1,4 @@
+import { registerInvitationResendRoutes, type InvitationResendRouteOptions } from "./resend-routes.js";
 import { getGrantTracking } from "./tracking.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { and, count, desc, eq, sql } from "drizzle-orm";
@@ -34,7 +35,7 @@ const historyQuerySchema = resultQuerySchema.extend({
   eventId: z.coerce.number().int().positive().optional(),
 });
 
-export interface SessionGrantRouteOptions {
+export interface SessionGrantRouteOptions extends InvitationResendRouteOptions {
   database?: GrantDatabase;
   createGrantFn?: typeof createGrant;
   getGrantBatchFn?: typeof getGrantBatch;
@@ -43,11 +44,11 @@ export interface SessionGrantRouteOptions {
   previewGrantEmailsFn?: typeof previewGrantEmails;
 }
 
-function featureEnabled(): boolean {
+export function featureEnabled(): boolean {
   return process.env.ADMIN_SESSION_GRANTS_ENABLED?.trim().toLowerCase() === "true";
 }
 
-function adminActor(request: FastifyRequest, reply: FastifyReply): { id: number; role: string } | null {
+export function adminActor(request: FastifyRequest, reply: FastifyReply): { id: number; role: string } | null {
   const actor = (request as any).user as { id?: number; role?: string } | undefined;
   if (!actor?.id) {
     reply.status(401).send({ error: "Authentication required", code: "AUTH_REQUIRED" });
@@ -60,7 +61,7 @@ function adminActor(request: FastifyRequest, reply: FastifyReply): { id: number;
   return { id: actor.id, role: actor.role };
 }
 
-function sendGrantError(reply: FastifyReply, error: unknown) {
+export function sendGrantError(reply: FastifyReply, error: unknown) {
   if (error instanceof GrantError) {
     return reply.status(error.statusCode).send({
       error: error.message,
@@ -75,6 +76,7 @@ export default async function sessionGrantRoutes(
   fastify: FastifyInstance,
   options: SessionGrantRouteOptions = {},
 ) {
+  await registerInvitationResendRoutes(fastify, options);
   const database = options.database ?? db;
   const createGrantFn = options.createGrantFn ?? createGrant;
   const getGrantBatchFn = options.getGrantBatchFn ?? getGrantBatch;
@@ -98,9 +100,11 @@ export default async function sessionGrantRoutes(
   });
 
   fastify.get("/status", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
     const actor = adminActor(request, reply);
     if (!actor) return;
-    return reply.send({ enabled: featureEnabled() });
+    reply.header("Cache-Control", "no-store");
+    return reply.send({ enabled: featureEnabled(), resendSupported: true });
   });
 
   fastify.post("/preview", async (request, reply) => {
@@ -356,6 +360,8 @@ export default async function sessionGrantRoutes(
         id: registrationSessionGrantEmailAttempts.id,
         attemptNo: registrationSessionGrantEmailAttempts.attemptNo,
         trigger: registrationSessionGrantEmailAttempts.trigger,
+        purpose: registrationSessionGrantEmailAttempts.purpose,
+        resendRequestId: registrationSessionGrantEmailAttempts.resendRequestId,
         triggeredBy: registrationSessionGrantEmailAttempts.triggeredBy,
         recipientEmail: registrationSessionGrantEmailAttempts.recipientEmail,
         templateVersion: registrationSessionGrantEmailAttempts.templateVersion,
