@@ -96,7 +96,7 @@ function getOrganization(): Organization {
 /** Receipts show every ticket type under one fee label; add-ons keep their own name. */
 // The explicit line break keeps the unspaced Thai text inside its table column.
 export const TICKET_RECEIPT_LABEL =
-  "ค่าธรรมเนียมการลงทะเบียนเข้าร่วมงานประชุมวิชาการวิจัยและ\nนวัตกรรมทางเภสัชกรรมระดับชาติ ประจำปี 2569 (PRIS 2026)";
+  "ค่าลงทะเบียนเข้าร่วมงานประชุมวิชาการวิจัยและ\nนวัตกรรมทางเภสัชกรรมระดับชาติ ประจำปี 2569 (PRIS 2026)";
 
 const FOOTER_NOTE =
   process.env.RECEIPT_FOOTER_NOTE ||
