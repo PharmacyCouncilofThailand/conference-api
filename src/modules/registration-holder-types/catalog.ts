@@ -37,8 +37,9 @@ export const HOLDER_TYPES: readonly HolderTypeConfig[] = [
 ];
 
 // Holder types that receive the meal coupon (2 per person) in addition to
-// Booth members within their Booth quota. Decided 27 Oct 2026.
-export const MEAL_COUPON_HOLDER_TYPES: readonly HolderTypeKey[] = ["vip"];
+// Booth members within their Booth quota. VIP was added and then removed on
+// 27 Oct 2026, so only Booth members qualify for now.
+export const MEAL_COUPON_HOLDER_TYPES: readonly HolderTypeKey[] = [];
 
 export function hasMealCoupon(
   holderType: unknown,
