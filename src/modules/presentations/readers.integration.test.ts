@@ -42,8 +42,9 @@ test('current event and type assignments scope Organizer/Reviewer before counts,
  const {client:sql,database,fixture:f,announcement}=await preparePresentationScenario(t,{type:'oral',round:2});
  process.env.PRESENTATION_SUBMISSIONS_ENABLED='true';
  assert.equal((await readOwnerPresentation(database,f.owner,f.abstractId)).canUpload,true);
+ const [posterCategory]=await sql`INSERT INTO abstract_categories(event_id,name) VALUES (${f.eventId},'Poster category') RETURNING id`;
  const [poster]=await sql`INSERT INTO abstracts(event_id,category_id,user_id,tracking_id,title,presentation_type)
-  VALUES(${f.eventId},${f.categoryId},${f.ownerId},'PRIS-2026-P002','Highlighted work','poster') RETURNING id`;
+  VALUES(${f.eventId},${posterCategory.id},${f.ownerId},'PRIS-2026-P002','Highlighted work','poster') RETURNING id`;
  await reconcilePresentations(database,[announcement,{...announcement,id:2,round:1,presentationType:'highlighted-poster',trackingId:'PRIS-2026-P002',title:'Highlighted work'}]);
  const storage:PresentationStorage={r2:()=>({publicBaseUrl:'https://test.r2.dev',putObject:async()=>{},deleteObject:async()=>{}}),drive:{
   rootFolderId:()=> 'root',generateId:async()=>randomUUID(),folder:async(_parent,name)=>name,
@@ -56,7 +57,7 @@ test('current event and type assignments scope Organizer/Reviewer before counts,
  const [staff]=await sql`INSERT INTO backoffice_users(email,role) VALUES ('scoped@example.invalid','organizer') RETURNING id`;
  await sql`INSERT INTO staff_event_assignments VALUES (${staff.id},${f.eventId})`;
  for(const role of ['organizer','reviewer']){
-  await sql`UPDATE backoffice_users SET role=${role},assigned_presentation_types='[]' WHERE id=${staff.id}`;
+  await sql`UPDATE backoffice_users SET role=${role},assigned_categories='["สาขาตัวอย่าง","Poster category"]',assigned_presentation_types='[]' WHERE id=${staff.id}`;
   const actor={id:staff.id,email:'scoped@example.invalid',role};
   assert.equal((await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({}))).total,0);
   await assert.rejects(readPresentationDetail(database,actor,f.eventId,f.abstractId),{statusCode:404});
@@ -64,12 +65,21 @@ test('current event and type assignments scope Organizer/Reviewer before counts,
    await sql`UPDATE backoffice_users SET assigned_presentation_types=${JSON.stringify([type])}::jsonb WHERE id=${staff.id}`;
    const list=await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({pageSize:1}));
    assert.equal(list.total,1);assert.equal(list.counts.submitted,1);
+   assert.equal(list.categories.length,2);
+   const deniedCategory=type==='oral'?posterCategory.id:f.categoryId;
+   const denied=await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({categoryId:deniedCategory,pageSize:1}));
+   assert.equal(denied.total,0);assert.equal(denied.counts.submitted,0);
    assert.equal(list.items[0].abstractId,type==='oral'?f.abstractId:poster.id);
    assert.equal(list.items[0].announcement.presentationType,type==='oral'?'oral':'highlighted-poster');
    assert.equal((await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({pageSize:1,page:2}))).items.length,0);
    await readPresentationDetail(database,actor,f.eventId,type==='oral'?f.abstractId:poster.id);
    await assert.rejects(readPresentationDetail(database,actor,f.eventId,type==='oral'?poster.id:f.abstractId),{statusCode:404});
   }
+  await sql`UPDATE backoffice_users SET assigned_presentation_types='["oral","poster"]',assigned_categories='["สาขาตัวอย่าง"]' WHERE id=${staff.id}`;
+  const categoryScoped=await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({pageSize:1,page:2}));
+  assert.equal(categoryScoped.total,1);assert.equal(categoryScoped.counts.submitted,1);assert.equal(categoryScoped.items.length,0);
+  assert.deepEqual([...categoryScoped.categories],[{id:f.categoryId,name:'สาขาตัวอย่าง'}]);
+  await assert.rejects(readPresentationDetail(database,actor,f.eventId,poster.id),{statusCode:404});
   await sql`UPDATE backoffice_users SET assigned_presentation_types='["unknown"]' WHERE id=${staff.id}`;
   assert.equal((await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({}))).total,0);
   await sql`UPDATE backoffice_users SET is_active=false WHERE id=${staff.id}`;
@@ -122,8 +132,8 @@ test('viewer keeps only accepted current file after replacement while admin reta
   const bytes = Buffer.from(await pdf.save());
   const first = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null,
     { buffer: bytes, filename: 'original.pdf', mimetype: 'application/pdf' }, storage);
-  const [staff] = await sql`INSERT INTO backoffice_users(email,role,assigned_presentation_types)
-    VALUES ('latest-viewer@example.invalid','organizer','["poster"]'::jsonb) RETURNING id`;
+  const [staff] = await sql`INSERT INTO backoffice_users(email,role,assigned_presentation_types,assigned_categories)
+    VALUES ('latest-viewer@example.invalid','organizer','["poster"]'::jsonb,'["สาขาตัวอย่าง"]'::jsonb) RETURNING id`;
   await sql`INSERT INTO staff_event_assignments VALUES (${staff.id},${f.eventId})`;
   const preview = await previewPresentationMail(database, f.admin, f.eventId, {
     kind: 'revision', abstractId: f.abstractId, details: 'private-revision-details',
@@ -164,4 +174,58 @@ test('viewer keeps only accepted current file after replacement while admin reta
   assert.equal(admin.uploads.length, 2);
   assert.ok(admin.requests.some(request => request.id === created.request.id));
   assert.ok(admin.audit.length > 0); assert.ok(admin.emailJobs.length > 0);
+});
+
+test('category scope uses current DB grants and actual Abstract category, with independent options and Admin filtering', async t=>{
+ const {client:sql,database,fixture:f,announcement}=await preparePresentationScenario(t);
+ process.env.PRESENTATION_SUBMISSIONS_ENABLED='true';
+ const [other]=await sql`INSERT INTO abstract_categories(event_id,name) VALUES (${f.eventId},'Other category') RETURNING id`;
+ const [otherEvent]=await sql`INSERT INTO events(event_code) VALUES ('OTHER') RETURNING id`;
+ const [foreign]=await sql`INSERT INTO abstract_categories(event_id,name) VALUES (${otherEvent.id},'สาขาตัวอย่าง') RETURNING id`;
+ const storage:PresentationStorage={r2:()=>({publicBaseUrl:'https://test.r2.dev',putObject:async()=>{},deleteObject:async()=>{}}),drive:{
+  rootFolderId:()=> 'root',generateId:async()=>randomUUID(),folder:async(_parent,name)=>name,
+  write:async input=>({fileId:input.fileId,fileUrl:`https://drive.google.com/file/d/${input.fileId}/view`,storedFileName:input.fileName}),delete:async()=>{},
+ }};
+ const pdf=await PDFDocument.create();pdf.addPage();
+ await submitPresentationUpload(database,f.owner,f.abstractId,randomUUID(),null,{buffer:Buffer.from(await pdf.save()),filename:'file.pdf',mimetype:'application/pdf'},storage);
+ // Forge only the announcement snapshot: it cannot grant access or satisfy categoryId.
+ await sql`UPDATE presentation_announcements SET source_row=source_row || ${JSON.stringify({categoryId:other.id,categoryName:'Other category'})}::jsonb`;
+ const [staff]=await sql`INSERT INTO backoffice_users(email,role,assigned_presentation_types) VALUES ('category@example.invalid','organizer','["poster"]') RETURNING id`;
+ await sql`INSERT INTO staff_event_assignments VALUES (${staff.id},${f.eventId})`;
+ for(const role of ['organizer','reviewer']){
+  await sql`UPDATE backoffice_users SET role=${role} WHERE id=${staff.id}`;
+  const actor={id:staff.id,email:'category@example.invalid',role,assignedCategories:['สาขาตัวอย่าง','Other category']};
+  for(const invalid of [[],null,{},'สาขาตัวอย่าง',[null,17,'','  '],['Other category']]){
+   await sql`UPDATE backoffice_users SET assigned_categories=${JSON.stringify(invalid)}::jsonb WHERE id=${staff.id}`;
+   const list=await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({}));
+   assert.equal(list.total,0);assert.equal(list.counts.submitted,0);
+   assert.deepEqual([...list.categories],Array.isArray(invalid)&&invalid.includes('Other category')?[{id:other.id,name:'Other category'}]:[]);
+   await assert.rejects(readPresentationDetail(database,actor,f.eventId,f.abstractId),{statusCode:404});
+  }
+  await sql`UPDATE backoffice_users SET assigned_categories='["สาขาตัวอย่าง",null,17,"", "Other category"]' WHERE id=${staff.id}`;
+  const list=await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({pageSize:1}));
+  assert.equal(list.total,1);assert.equal(list.counts.submitted,1);assert.equal(list.items[0].abstractId,f.abstractId);
+  const options=[{id:f.categoryId,name:'สาขาตัวอย่าง'},{id:other.id,name:'Other category'}];
+  assert.deepEqual([...list.categories].sort((a,b)=>a.id-b.id),options);
+  const empty=await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({page:2,search:'missing',presentationType:'oral',categoryId:other.id}));
+  assert.equal(empty.total,0);assert.deepEqual(empty.categories,list.categories);
+  for(const categoryId of [other.id,foreign.id,2147483000])assert.equal((await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({categoryId}))).total,0);
+  assert.equal((await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({categoryId:f.categoryId}))).total,1);
+  await readPresentationDetail(database,actor,f.eventId,f.abstractId);
+  await sql`UPDATE backoffice_users SET assigned_categories='["Other category"]' WHERE id=${staff.id}`;
+  assert.equal((await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({categoryId:f.categoryId}))).total,0);
+  await assert.rejects(readPresentationDetail(database,actor,f.eventId,f.abstractId),{statusCode:404});
+  // Even an assigned name on another Event cannot authorize an inconsistent Abstract link.
+  await sql`UPDATE abstracts SET category_id=${foreign.id} WHERE id=${f.abstractId}`;
+  await sql`UPDATE backoffice_users SET assigned_categories='["สาขาตัวอย่าง"]' WHERE id=${staff.id}`;
+  assert.equal((await readPresentationList(database,actor,f.eventId,listQuerySchema.parse({}))).total,0);
+  await sql`UPDATE abstracts SET category_id=${f.categoryId} WHERE id=${f.abstractId}`;
+ }
+ const admin=await readPresentationList(database,f.admin,f.eventId,listQuerySchema.parse({}));
+ assert.equal(admin.total,1);assert.equal(admin.categories.length,2);
+ assert.equal((await readPresentationList(database,f.admin,f.eventId,listQuerySchema.parse({categoryId:other.id}))).total,0);
+ assert.equal((await readPresentationList(database,f.admin,f.eventId,listQuerySchema.parse({categoryId:f.categoryId}))).total,1);
+ await reconcilePresentations(database,[announcement,{...announcement,id:2,trackingId:'MISSING'}]);
+ assert.equal((await readPresentationList(database,f.admin,f.eventId,listQuerySchema.parse({}))).total,2);
+ assert.equal((await readPresentationList(database,f.admin,f.eventId,listQuerySchema.parse({categoryId:f.categoryId}))).total,1);
 });

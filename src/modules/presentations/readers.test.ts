@@ -19,11 +19,13 @@ function fixture(role:string,templateVersion='presentation-initial-v1') {
   verification_reason:'private-certification',match_snapshot:{candidates:[{email:'private-candidate@example.invalid'}],match:{problems:['TITLE_MISMATCH']}}}));
  const audits=['match_changed','alias_verified','source_withdrawn','mail_resent','revision_created','revision_cancelled'].map(action=>({action,
   actor_id:1,created_at:now,after_state:action==='revision_created'?{request:{details:'Fix title'},emailJobId:'private-job'}:{status:'cancelled'}}));
+ const staff={role,assignedPresentationTypes:['poster'],assignedCategories:['Allowed'] as unknown};
  const queries:string[]=[];
  const dialect=new PgDialect();
  const database={execute:async(statement:SQL)=>{
   const {sql,params}=dialect.sqlToQuery(statement); queries.push(sql);
-  if(sql.includes('FROM backoffice_users'))return [{role,assignedPresentationTypes:['poster']}];
+  if(sql.includes('FROM backoffice_users'))return [staff];
+  if(sql.includes('FROM abstract_categories'))return [{id:1,name:'Allowed'}];
   if(sql.includes('FROM events'))return [{id:42}];
   if(sql.includes('FROM staff_event_assignments'))return [{ok:1}];
   if(sql.includes('clock_timestamp() AS now'))return [{now}];
@@ -41,7 +43,7 @@ function fixture(role:string,templateVersion='presentation-initial-v1') {
   if(sql.includes('FROM presentation_audit_events'))return sql.includes('AND action IN')?audits.filter(a=>['revision_created','revision_cancelled'].includes(a.action)):audits;
   throw new Error(`Unexpected reader query: ${sql}`);
  }} as unknown as PresentationDatabase;
- return {database,actor:{id:1,email:'staff@example.invalid',role},queries,roster};
+ return {database,staff,actor:{id:1,email:'staff@example.invalid',role},queries,roster};
 }
 
 test('participant groups filter before pagination/counts, preserve legacy general and intersect other filters',async()=>{
@@ -229,4 +231,23 @@ test('viewer retains unavailable current file without falling back to an older f
     assert.equal(detail.row.currentUpload?.fileStatus, 'deleted');
     assert.equal(JSON.stringify(detail).includes(f.old.fileUrl!), false);
   }
+});
+
+test('category filter validates positive IDs and returns independent authorized options',async()=>{
+ assert.equal(listQuerySchema.safeParse({categoryId:'2'}).success,true);
+ for(const categoryId of ['0','-1','1.5','unknown'])assert.equal(listQuerySchema.safeParse({categoryId}).success,false);
+ const {database,actor}=fixture('reviewer');
+ const list=await readPresentationList(database,actor,42,listQuerySchema.parse({search:'no matching work',page:2}));
+ assert.deepEqual(list.categories,[{id:1,name:'Allowed'}]);
+ assert.equal(list.total,0);
+});
+
+test('both viewers fail closed for missing, empty and malformed category grants',async()=>{
+ for(const role of ['organizer','reviewer'])for(const categories of [undefined,null,{},'Allowed',[],[null,17,'','  ']]){
+  const f=fixture(role);f.staff.assignedCategories=categories;
+  const list=await readPresentationList(f.database,f.actor,42,listQuerySchema.parse({}));
+  assert.equal(list.total,0);assert.equal(list.counts.submitted,0);
+  await assert.rejects(readPresentationDetail(f.database,f.actor,42,1),{statusCode:404});
+  assert.equal(f.queries.some(query=>query.includes('FROM presentation_announcements')),false);
+ }
 });

@@ -14,7 +14,7 @@ export const verificationInputSchema = z.object({ sourceKey: z.string().regex(/^
 export const batchInputSchema = z.object({ kind: z.enum(['initial', 'reminder']),
   abstractIds: z.array(idSchema).min(1).max(500), previewFingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export const listQuerySchema = z.object({ page: idSchema.default(1), pageSize: idSchema.max(100).default(25),
-  received: z.enum(['true']).optional(),
+  received: z.enum(['true']).optional(), categoryId: idSchema.optional(),
   round: z.enum(['1', '2']).optional(), search: z.string().max(500).optional(),
   participantGroup: z.enum(['general', 'student']).optional(),
   presentationType: z.enum(['oral', 'poster', 'highlighted-poster']).optional(),
