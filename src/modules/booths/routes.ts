@@ -81,6 +81,7 @@ export async function boothOwnerRoutes(app: FastifyInstance) {
             "student",
             "healthhack",
             "booth",
+            "speaker",
           ].includes(req.user.role)
         )
           return reply

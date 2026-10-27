@@ -20,6 +20,7 @@ const roleMapping = {
   undergraduateStudent: "student",
   healthhack: "healthhack",
   booth: "booth",
+  speaker: "speaker",
 } as const;
 
 const studentLevelMapping: Record<string, "postgraduate" | "undergraduate" | null> = {
@@ -30,6 +31,7 @@ const studentLevelMapping: Record<string, "postgraduate" | "undergraduate" | nul
   undergraduateStudent: "undergraduate",
   healthhack: null,
   booth: null,
+  speaker: null,
 };
 
 // Allowed file types for verification documents

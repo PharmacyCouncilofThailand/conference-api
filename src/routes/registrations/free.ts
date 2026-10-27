@@ -13,7 +13,7 @@ import { eq, and, sql, desc, count } from "drizzle-orm";
 import { freeRegistrationSchema } from "../../schemas/freeRegistration.schema.js";
 import { applyAutoHolderType } from "../../modules/registration-holder-types/auto-assign.js";
 import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
-import { resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
+import { resolveEffectiveTicketIdentity, resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
 import {
   lockBoothMembers,
   recordBoothTicketConfirmation,
@@ -84,6 +84,7 @@ async function resolveFreeTicket(
     general: ["general"],
     healthhack: ["healthhack"],
     booth: ["booth"],
+    speaker: ["speaker"],
   };
   const roles = roleMap[packageId];
   if (!roles) return null;
@@ -219,6 +220,22 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
             });
           }
           effectiveStudentLevel = eligibility.effectiveStudentLevel;
+        } else {
+          const eligibility = await resolveEffectiveTicketIdentity(userId, eventId);
+          if (!eligibility.allowed) {
+            return reply.status(403).send({
+              success: false,
+              code: eligibility.code,
+              error: eligibility.error,
+            });
+          }
+          if (eligibility.identity.effectiveRole !== packageId) {
+            return reply.status(403).send({
+              success: false,
+              code: "TICKET_ROLE_MISMATCH",
+              error: "This package is not available for your account role.",
+            });
+          }
         }
 
         // 1. Verify event exists and is published

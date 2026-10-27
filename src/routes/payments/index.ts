@@ -567,6 +567,7 @@ async function resolveTicketId(
       general: ["general"],
       healthhack: ["healthhack"],
       booth: ["booth"],
+      speaker: ["speaker"],
     };
     const roles = roleMap[packageId];
     if (roles) {

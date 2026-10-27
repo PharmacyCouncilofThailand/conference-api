@@ -103,6 +103,7 @@ export default async function (fastify: FastifyInstance) {
           delegateType = "general";
           break;
         case "healthhack":
+        case "speaker":
         case "booth":
           delegateType = user.role;
           break;

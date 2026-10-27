@@ -3,7 +3,7 @@ import test from "node:test";
 import { createTicketTypeSchema, updateTicketTypeSchema } from "./events.schema.js";
 
 test("ticket create/update permits new attendee roles but never staff roles", () => {
-  for (const role of ["healthhack", "booth"]) {
+  for (const role of ["healthhack", "booth", "speaker"]) {
     const allowedRoles = JSON.stringify([role]);
     assert.equal(createTicketTypeSchema.safeParse({ category: "primary", name: role, price: 1000, quota: 10, allowedRoles }).success, true);
     assert.equal(updateTicketTypeSchema.safeParse({ allowedRoles }).success, true);

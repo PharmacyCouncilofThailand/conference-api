@@ -48,3 +48,10 @@ test("legacy registration validation stays intact", () => {
   assert.equal(registerBodySchema.safeParse({ ...common, accountType: "pharmacist" }).success, false);
   assert.equal(registerBodySchema.safeParse({ ...common, accountType: "pharmacist", pharmacyLicenseId: "12345" }).success, true);
 });
+
+
+test("speaker account needs no pharmacy license, education level or booth", () => {
+  const result = registerBodySchema.safeParse({ ...common, accountType: "speaker", country: "Japan" });
+  assert.equal(result.success, true);
+  if (result.success) assert.equal(result.data.accountType, "speaker");
+});

@@ -12,6 +12,7 @@ export const BUYER_ROLES: readonly string[] = [
   "student",
   "healthhack",
   "booth",
+  "speaker",
 ];
 
 export type Buyer = { id: number; email: string; fullName: string; phone: string | null };
