@@ -802,6 +802,9 @@ export const sessionAttendancePolicies = pgTable(
       .references(() => sessions.id),
     mode: varchar("mode", { length: 16 }).notNull().default("daily"),
     enabled: boolean("enabled").notNull().default(false),
+    // Optional Bangkok "HH:MM" scan window applied on every day of the session.
+    dailyOpenTime: varchar("daily_open_time", { length: 5 }),
+    dailyCloseTime: varchar("daily_close_time", { length: 5 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

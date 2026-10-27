@@ -9,7 +9,7 @@ import {
     ticketTypes,
     users,
 } from "../../database/schema.js";
-import { checkinListSchema, createCheckinSchema, checkinStatsSchema, checkinTestSampleSchema, undoCheckinSchema } from "../../schemas/checkins.schema.js";
+import { checkinListSchema, createCheckinSchema, checkinDeskSummarySchema, checkinStatsSchema, checkinTestSampleSchema, undoCheckinSchema } from "../../schemas/checkins.schema.js";
 import { eq, desc, ilike, and, or, count, isNotNull, isNull, sql } from "drizzle-orm";
 import {
     AttendanceError,
@@ -27,6 +27,20 @@ import {
   readCheckinBooth,
   enrichCheckins,
 } from "../../modules/booths/readers.js";
+import { HOLDER_TYPES, holderTypeDisplay } from "../../modules/registration-holder-types/catalog.js";
+
+// PRIS holder type and gift shown on the check-in result (null outside PRIS).
+async function readHolderBadge(database: typeof defaultDatabase, registrationId: number) {
+  const [row] = (await database.execute(sql`
+    SELECT r.holder_type AS "holderType", e.event_code AS "eventCode"
+    FROM registrations r JOIN events e ON e.id = r.event_id
+    WHERE r.id = ${registrationId}`)) as unknown as Array<{ holderType: string | null; eventCode: string }>;
+  return {
+    eventCode: row?.eventCode ?? null,
+    holderType: row?.holderType ?? null,
+    ...holderTypeDisplay(row?.holderType, row?.eventCode ?? null),
+  };
+}
 
 export default async function (
   fastify: FastifyInstance,
@@ -296,6 +310,130 @@ export default async function (
   // Create Check-in (Scan)
   // Supports picker, specific session, all entitled sessions, and staff-assigned fast scan.
   // Every actual write routes through the shared attendance service.
+  // Check-in desk dashboard (PRIS): people-based attendance for the event's
+  // main session today, per holder type, plus gift and meal-coupon handout.
+  // Gift/coupon count as handed out once an eligible person has checked in
+  // on any day (decided by the organisers on 27 Oct 2026). Read-only.
+  fastify.get("/desk-summary", async (request, reply) => {
+    const query = checkinDeskSummarySchema.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({ error: "Invalid query", details: query.error.flatten() });
+    }
+    const { eventId } = query.data;
+    const actor = {
+      id: Number((request as any).user?.id),
+      role: (request as any).user?.role as string | undefined,
+    };
+    if (!["admin", "staff", "organizer"].includes(actor.role || ""))
+      return reply.code(403).send({ error: "Staff check-in access required" });
+
+    try {
+      if (actor.role !== "admin") {
+        const assigned = (await db.execute(
+          sql`SELECT 1 FROM staff_event_assignments WHERE staff_id=${actor.id} AND event_id=${eventId} LIMIT 1`,
+        )) as unknown as unknown[];
+        if (!assigned.length)
+          return reply.code(403).send({ error: "Event not assigned", code: "SESSION_NOT_ASSIGNED" });
+      }
+      const [main] = (await db.execute(sql`
+        SELECT s.id, s.session_name AS "sessionName", e.event_name AS "eventName", e.event_code AS "eventCode",
+               COALESCE(p.enabled AND p.mode = 'daily', false) AS daily,
+               p.daily_open_time AS "openTime", p.daily_close_time AS "closeTime",
+               ((clock_timestamp() AT TIME ZONE 'Asia/Bangkok')::date)::text AS "serverDate"
+        FROM sessions s
+        JOIN events e ON e.id = s.event_id
+        LEFT JOIN session_attendance_policies p ON p.event_id = s.event_id AND p.session_id = s.id
+        WHERE s.event_id = ${eventId} AND s.is_main_session = true
+        ORDER BY s.id LIMIT 1`)) as unknown as Array<{
+        id: number; sessionName: string; eventName: string; eventCode: string; daily: boolean;
+        openTime: string | null; closeTime: string | null; serverDate: string;
+      }>;
+      if (!main) return reply.status(404).send({ error: "Event has no main session", code: "NO_MAIN_SESSION" });
+
+      const rows = (await db.execute(sql`
+        WITH reg AS (
+          SELECT r.id, r.user_id, r.holder_type FROM registrations r
+          WHERE r.event_id = ${eventId} AND r.status = 'confirmed'
+        ),
+        checkins AS (
+          SELECT rs.registration_id, d.attendance_date AS day
+          FROM session_daily_checkins d
+          JOIN registration_sessions rs ON rs.id = d.registration_session_id
+          WHERE rs.session_id = ${main.id} AND d.cancelled_at IS NULL
+          UNION
+          SELECT rs.registration_id, ((rs.checked_in_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Bangkok')::date
+          FROM registration_sessions rs
+          WHERE rs.session_id = ${main.id} AND rs.checked_in_at IS NOT NULL
+        ),
+        today AS (SELECT DISTINCT registration_id FROM checkins WHERE day = ${main.serverDate}::date),
+        ever AS (SELECT DISTINCT registration_id FROM checkins),
+        coupon AS (
+          SELECT DISTINCT reg.id FROM reg
+          JOIN booth_members m ON m.user_id = reg.user_id AND m.event_id = ${eventId}
+          WHERE m.meal_coupon_eligible = true
+        )
+        SELECT reg.holder_type AS "holderType",
+               count(*)::int AS total,
+               count(today.registration_id)::int AS "checkedIn",
+               count(ever.registration_id)::int AS "everCheckedIn",
+               count(coupon.id)::int AS "couponEligible",
+               count(coupon.id) FILTER (WHERE ever.registration_id IS NOT NULL)::int AS "couponGiven"
+        FROM reg
+        LEFT JOIN today ON today.registration_id = reg.id
+        LEFT JOIN ever ON ever.registration_id = reg.id
+        LEFT JOIN coupon ON coupon.id = reg.id
+        GROUP BY reg.holder_type`)) as unknown as Array<{
+        holderType: string | null; total: number; checkedIn: number; everCheckedIn: number;
+        couponEligible: number; couponGiven: number;
+      }>;
+
+      const percent = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
+      const isPris = main.eventCode === "PRIS-2026";
+      const order = new Map<string | null, number>(HOLDER_TYPES.map((type, index) => [type.key, index]));
+      const byHolderType = rows
+        .map((row) => {
+          const display = holderTypeDisplay(row.holderType, main.eventCode);
+          return {
+            key: row.holderType,
+            label: display.holderTypeLabel ?? "ยังไม่ระบุ",
+            giftCode: display.holderGiftCode,
+            total: row.total,
+            checkedIn: row.checkedIn,
+            percentage: percent(row.checkedIn, row.total),
+          };
+        })
+        .sort((a, b) => (order.get(a.key) ?? 99) - (order.get(b.key) ?? 99));
+      const sum = (pick: (row: (typeof rows)[number]) => number) => rows.reduce((total, row) => total + pick(row), 0);
+      const total = sum((row) => row.total);
+      const checkedIn = sum((row) => row.checkedIn);
+      const giftRows = rows.filter((row) => isPris && holderTypeDisplay(row.holderType, main.eventCode).holderGiftCode === "gift");
+      const giftEligible = giftRows.reduce((acc, row) => acc + row.total, 0);
+      const giftGiven = giftRows.reduce((acc, row) => acc + row.everCheckedIn, 0);
+      const couponEligible = sum((row) => row.couponEligible);
+      const couponGiven = sum((row) => row.couponGiven);
+
+      return reply.send({
+        eventId,
+        eventName: main.eventName,
+        eventCode: main.eventCode,
+        mainSession: { id: main.id, sessionName: main.sessionName },
+        attendanceMode: main.daily ? "daily" : "single",
+        window: main.openTime && main.closeTime ? { open: main.openTime, close: main.closeTime } : null,
+        serverDate: main.serverDate,
+        total,
+        checkedIn,
+        remaining: Math.max(0, total - checkedIn),
+        percentage: percent(checkedIn, total),
+        byHolderType,
+        gift: { eligible: giftEligible, given: giftGiven, percentage: percent(giftGiven, giftEligible) },
+        mealCoupon: { eligible: couponEligible, given: couponGiven, percentage: percent(couponGiven, couponEligible) },
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: "Failed to load desk summary" });
+    }
+  });
+
   // Scanner self-test ("test" code): a random real registration shaped like the
   // check-in lookup response. Strictly read-only — never checks anyone in.
   fastify.get("/test-sample", async (request, reply) => {
@@ -364,6 +502,7 @@ export default async function (
         registration: {
           ...registration,
           booth: await readCheckinBooth(db, registration.id),
+          ...(await readHolderBadge(db, registration.id)),
         },
         sessions: regSessions.map((rs, index) => ({
           id: rs.id,
@@ -482,6 +621,7 @@ export default async function (
         ticketName: (registration as any).ticketType?.name,
         eventName: (registration as any).event?.eventName,
         booth: await readCheckinBooth(db, registration.id),
+        ...(await readHolderBadge(db, registration.id)),
       };
 
       const checkOne = async (regSession: any) => {

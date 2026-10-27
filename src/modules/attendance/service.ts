@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "../../database/index.js";
-import { bangkokDay, isWithinSession } from "./policy.js";
+import { bangkokDay, checkDailyWindow, isWithinSession } from "./policy.js";
 import { lockAttendanceCutover } from "./cutover-lock.js";
 
 export type AttendanceActor = {
@@ -35,6 +35,8 @@ type EntitlementRow = {
   legacy_checked_in_at: Date | string | null;
   legacy_checked_in_by: number | null;
   daily_enabled: boolean;
+  daily_open_time: string | null;
+  daily_close_time: string | null;
 };
 
 type DailyRow = {
@@ -94,7 +96,9 @@ async function entitlement(
       (s.end_time AT TIME ZONE 'UTC') AS session_end,
       (rs.checked_in_at AT TIME ZONE 'UTC') AS legacy_checked_in_at,
       rs.checked_in_by AS legacy_checked_in_by,
-      COALESCE(p.enabled = true AND p.mode = 'daily', false) AS daily_enabled
+      COALESCE(p.enabled = true AND p.mode = 'daily', false) AS daily_enabled,
+      p.daily_open_time,
+      p.daily_close_time
     FROM registration_sessions rs
     JOIN registrations r ON r.id = rs.registration_id
     JOIN sessions s ON s.id = rs.session_id AND s.event_id = r.event_id
@@ -235,7 +239,16 @@ export async function checkInSession(
     const clock = await databaseClock(txDb);
     const start = asDate(row.session_start);
     const end = asDate(row.session_end);
-    if (!isWithinSession(clock.now, start, end)) {
+    if (row.daily_enabled && row.daily_open_time && row.daily_close_time) {
+      const window = checkDailyWindow(clock.now, start, end, row.daily_open_time, row.daily_close_time);
+      const hours = `${row.daily_open_time}–${row.daily_close_time}`;
+      if (window === "before_event" || window === "before_open") {
+        throw new AttendanceError(400, "SESSION_NOT_STARTED", `ยังไม่เปิดสแกน (เปิด ${hours} น.)`);
+      }
+      if (window === "after_event" || window === "after_close") {
+        throw new AttendanceError(400, "SESSION_ENDED", `ปิดสแกนแล้ว (เปิด ${hours} น.)`);
+      }
+    } else if (!isWithinSession(clock.now, start, end)) {
       if (clock.now < start) {
         throw new AttendanceError(400, "SESSION_NOT_STARTED", "Session has not started yet");
       }
