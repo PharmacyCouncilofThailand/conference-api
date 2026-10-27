@@ -57,6 +57,10 @@ export function parseHolderTypeWorkbook(
     [normalize("กิจกรรม"), "activity_set2"],
     [normalize("ชุดใหญ่ไฟกระพริบ"), "large_set3"],
     ["-", "none"],
+    // Full labels used before the gifts were renamed on 27 Oct 2026.
+    [normalize("แก้ว Mug set1"), "mug_set1"],
+    [normalize("กิจกรรม set2"), "activity_set2"],
+    [normalize("ชุดใหญ่ไฟกระพริบ set3"), "large_set3"],
   ]);
   for (const type of HOLDER_TYPES) gifts.set(normalize(type.giftLabel), type.giftCode);
   const seen = new Set<string>();

@@ -22,17 +22,17 @@ export interface HolderTypeConfig {
 }
 
 export const HOLDER_TYPES: readonly HolderTypeConfig[] = [
-  { key: "council_committee", label: "กรรมการสภาเภสัชกรรม", giftCode: "mug_set1", giftLabel: "แก้ว Mug set1" },
-  { key: "college_committee", label: "กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย", giftCode: "mug_set1", giftLabel: "แก้ว Mug set1" },
-  { key: "vip", label: "VIP", giftCode: "mug_set1", giftLabel: "แก้ว Mug set1" },
-  { key: "speaker", label: "วิทยากร", giftCode: "large_set3", giftLabel: "ชุดใหญ่ไฟกระพริบ set3" },
-  { key: "presenter", label: "ผู้นำเสนอผลงาน", giftCode: "activity_set2", giftLabel: "กิจกรรม set2" },
-  { key: "participant", label: "ผู้เข้าร่วมงาน", giftCode: "activity_set2", giftLabel: "กิจกรรม set2" },
-  { key: "exhibitor", label: "เจ้าหน้าที่บูธ (Exhibitor)", giftCode: "activity_set2", giftLabel: "กิจกรรม set2" },
+  { key: "council_committee", label: "กรรมการสภาเภสัชกรรม", giftCode: "mug_set1", giftLabel: "Mug SET1" },
+  { key: "college_committee", label: "กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย", giftCode: "mug_set1", giftLabel: "Mug SET1" },
+  { key: "vip", label: "VIP", giftCode: "mug_set1", giftLabel: "Mug SET1" },
+  { key: "speaker", label: "วิทยากร", giftCode: "large_set3", giftLabel: "MAXIMUM SET3" },
+  { key: "presenter", label: "ผู้นำเสนอผลงาน", giftCode: "activity_set2", giftLabel: "Activity SET2" },
+  { key: "participant", label: "ผู้เข้าร่วมงาน", giftCode: "activity_set2", giftLabel: "Activity SET2" },
+  { key: "exhibitor", label: "เจ้าหน้าที่บูธ (Exhibitor)", giftCode: "activity_set2", giftLabel: "Activity SET2" },
   { key: "health_hack", label: "Health Hack", giftCode: "none", giftLabel: "—" },
-  { key: "media", label: "สื่อมวลชน", giftCode: "large_set3", giftLabel: "ชุดใหญ่ไฟกระพริบ set3" },
-  { key: "staff_mc", label: "เจ้าหน้าที่/MC", giftCode: "activity_set2", giftLabel: "กิจกรรม set2" },
-  { key: "reviewer", label: "กรรมการประเมินผลงาน", giftCode: "mug_set1", giftLabel: "แก้ว Mug set1" },
+  { key: "media", label: "สื่อมวลชน", giftCode: "large_set3", giftLabel: "MAXIMUM SET3" },
+  { key: "staff_mc", label: "เจ้าหน้าที่/MC", giftCode: "activity_set2", giftLabel: "Activity SET2" },
+  { key: "reviewer", label: "กรรมการประเมินผลงาน", giftCode: "mug_set1", giftLabel: "Mug SET1" },
 ];
 
 export function getHolderType(key: unknown): HolderTypeConfig | undefined {
