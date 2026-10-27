@@ -17,22 +17,23 @@ export type HolderTypeKey = (typeof HOLDER_TYPE_KEYS)[number];
 export interface HolderTypeConfig {
   readonly key: HolderTypeKey;
   readonly label: string;
-  readonly giftCode: "mug_set1" | "large_set3" | "activity_set2" | "none";
+  // Only VIPs and key people of the event receive a gift (decided 27 Oct 2026).
+  readonly giftCode: "gift" | "none";
   readonly giftLabel: string;
 }
 
 export const HOLDER_TYPES: readonly HolderTypeConfig[] = [
-  { key: "council_committee", label: "กรรมการสภาเภสัชกรรม", giftCode: "mug_set1", giftLabel: "Mug SET1" },
-  { key: "college_committee", label: "กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย", giftCode: "mug_set1", giftLabel: "Mug SET1" },
-  { key: "vip", label: "VIP", giftCode: "mug_set1", giftLabel: "Mug SET1" },
-  { key: "speaker", label: "วิทยากร", giftCode: "large_set3", giftLabel: "MAXIMUM SET3" },
-  { key: "presenter", label: "ผู้นำเสนอผลงาน", giftCode: "activity_set2", giftLabel: "Activity SET2" },
-  { key: "participant", label: "ผู้เข้าร่วมงาน", giftCode: "activity_set2", giftLabel: "Activity SET2" },
-  { key: "exhibitor", label: "เจ้าหน้าที่บูธ (Exhibitor)", giftCode: "activity_set2", giftLabel: "Activity SET2" },
-  { key: "health_hack", label: "Health Hack", giftCode: "none", giftLabel: "—" },
-  { key: "media", label: "สื่อมวลชน", giftCode: "large_set3", giftLabel: "MAXIMUM SET3" },
-  { key: "staff_mc", label: "เจ้าหน้าที่/MC", giftCode: "activity_set2", giftLabel: "Activity SET2" },
-  { key: "reviewer", label: "กรรมการประเมินผลงาน", giftCode: "mug_set1", giftLabel: "Mug SET1" },
+  { key: "council_committee", label: "กรรมการสภาเภสัชกรรม", giftCode: "gift", giftLabel: "ให้" },
+  { key: "college_committee", label: "กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย", giftCode: "gift", giftLabel: "ให้" },
+  { key: "vip", label: "VIP", giftCode: "gift", giftLabel: "ให้" },
+  { key: "speaker", label: "วิทยากร", giftCode: "none", giftLabel: "" },
+  { key: "presenter", label: "ผู้นำเสนอผลงาน", giftCode: "none", giftLabel: "" },
+  { key: "participant", label: "ผู้เข้าร่วมงาน", giftCode: "none", giftLabel: "" },
+  { key: "exhibitor", label: "เจ้าหน้าที่บูธ (Exhibitor)", giftCode: "none", giftLabel: "" },
+  { key: "health_hack", label: "Health Hack", giftCode: "none", giftLabel: "" },
+  { key: "media", label: "สื่อมวลชน", giftCode: "none", giftLabel: "" },
+  { key: "staff_mc", label: "เจ้าหน้าที่/MC", giftCode: "none", giftLabel: "" },
+  { key: "reviewer", label: "กรรมการประเมินผลงาน", giftCode: "gift", giftLabel: "ให้" },
 ];
 
 export function getHolderType(key: unknown): HolderTypeConfig | undefined {

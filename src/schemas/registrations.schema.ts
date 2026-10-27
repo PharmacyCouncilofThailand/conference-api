@@ -13,8 +13,8 @@ export const registrationListSchema = z.object({
     status: z.enum(['confirmed', 'cancelled']).optional(),
     ticketTypeId: z.coerce.number().optional(),
     source: z.enum(['purchase', 'manual', 'free', 'quick']).optional(),
-    // 'unassigned' = no holder type yet; 'review' = flagged by the auto rules.
-    holderType: z.union([holderTypeKey, z.enum(['unassigned', 'review'])]).optional(),
+    // 'unassigned' = no holder type yet; 'review' = flagged by the auto rules; 'gift' = gift recipients.
+    holderType: z.union([holderTypeKey, z.enum(['unassigned', 'review', 'gift'])]).optional(),
 }).superRefine((value, context) => {
     if (value.sessionId && !value.eventId) {
         context.addIssue({

@@ -8,19 +8,21 @@
 
 แหล่งอ้างอิงคือ `src/modules/registration-holder-types/catalog.ts` ของมอบ derive จากประเภท ไม่ใช่ฟิลด์รับอิสระ
 
+ตั้งแต่ 27 ต.ค. 2569 Gift ให้เฉพาะ VIP และบุคคลสำคัญของงาน (กรรมการสภาฯ, กรรมการราชวิทยาลัยฯ, VIP, กรรมการประเมินผลงาน) ค่าเป็น `ให้` ประเภทอื่นเป็นค่าว่าง ไม่มีชุด set1/set2/set3 อีกต่อไป หน้าหลังบ้านแสดงค่าว่างเป็น `-` ส่วน Excel export เว้นว่าง
+
 | Key | ประเภท | ของมอบ |
 |---|---|---|
-| `council_committee` | กรรมการสภาเภสัชกรรม | Mug SET1 |
-| `college_committee` | กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย | Mug SET1 |
-| `vip` | VIP | Mug SET1 |
-| `speaker` | วิทยากร | MAXIMUM SET3 |
-| `presenter` | ผู้นำเสนอผลงาน | Activity SET2 |
-| `participant` | ผู้เข้าร่วมงาน | Activity SET2 |
-| `exhibitor` | เจ้าหน้าที่บูธ (Exhibitor) | Activity SET2 |
-| `health_hack` | Health Hack | — |
-| `media` | สื่อมวลชน | MAXIMUM SET3 |
-| `staff_mc` | เจ้าหน้าที่/MC | Activity SET2 |
-| `reviewer` | กรรมการประเมินผลงาน | Mug SET1 |
+| `council_committee` | กรรมการสภาเภสัชกรรม | ให้ |
+| `college_committee` | กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย | ให้ |
+| `vip` | VIP | ให้ |
+| `speaker` | วิทยากร | (ว่าง) |
+| `presenter` | ผู้นำเสนอผลงาน | (ว่าง) |
+| `participant` | ผู้เข้าร่วมงาน | (ว่าง) |
+| `exhibitor` | เจ้าหน้าที่บูธ (Exhibitor) | (ว่าง) |
+| `health_hack` | Health Hack | (ว่าง) |
+| `media` | สื่อมวลชน | (ว่าง) |
+| `staff_mc` | เจ้าหน้าที่/MC | (ว่าง) |
+| `reviewer` | กรรมการประเมินผลงาน | ให้ |
 
 ข้อกำหนดที่แก้ไขล่าสุด: `PRISBOOTH2026` หมายถึง `exhibitor`; `PRISSTAFF2026` หมายถึง `staff_mc` แต่ importer ไม่ใช้ promo code infer ประเภท ผู้ใช้ยืนยันว่า `BOOTH` ใน workbook ชุดนี้ให้แปลงเป็น `exhibitor` ผ่าน option ชัดเจน ส่วน `PRISVIP2026` ใช้ร่วมหลายกลุ่ม จึงแยกกรรมการ/VIP จาก code อย่างเดียวไม่ได้
 
@@ -35,7 +37,7 @@
 - ปฏิเสธ formula ในฟิลด์ที่ใช้ import แม้มี cached result; ปฏิเสธ header ซ้ำ/ขาด ประเภทว่าง/ไม่รู้จัก และของมอบไม่ตรง catalog
 - `VIP (วิทยากร)` และ `VIPVIP (วิทยากร)` แปลงเป็น `speaker`; `VIP` เป็น `vip`; `Test` ข้ามโดยไม่นับเป็นประเภทที่ 12
 - รองรับชื่อ exhibitor เดิม `เจ้าหน้าที่บูธ/Exhibitor` และ `เจ้าหน้าที่บูธ(Exhibitor)`
-- ของมอบแบบย่อ `แก้ว Mug`, `กิจกรรม`, `ชุดใหญ่ไฟกระพริบ`, `-` ใช้ตรวจเทียบกับ gift code; รองรับ label เต็มจาก catalog ด้วย
+- ช่องของมอบรับเฉพาะ `ให้` (4 ประเภทที่ได้ Gift) หรือว่าง/`-`/`—` (ประเภทอื่น) ชื่อชุดเดิม (แก้ว Mug, กิจกรรม, ชุดใหญ่ไฟกระพริบ, Mug SET1 ฯลฯ) ถูกปฏิเสธ
 - ต้องไม่พบ parse/planning errors และจำนวน entry ต้องเท่ากับ `--expected-count` ทุกแถวต้องอยู่ Event ที่กำหนด
 - ประเภทเดิม `null` จึงเปลี่ยนได้; ถ้าตรงอยู่แล้วนับ unchanged; ถ้าต่างจากประเภทเดิมที่ไม่ใช่ null ให้หยุดทั้งงาน
 
@@ -204,4 +206,4 @@ Local preview runs in temporary user services `conference-holder-preview-api` an
 - เปลี่ยน `userId` ของทะเบียน PRIS แล้วประเภทเดิมจะถูกล้างเป็น `review:v1:owner-changed` และกฎอัตโนมัติจะไม่ตัดสินแถวนี้อีก
 - ทุกการเปลี่ยนบันทึกใน `registration_holder_type_events` (migration `drizzle/0051_registration_holder_type_events.sql` ต้อง apply ก่อน deploy)
 - เติมย้อนหลัง: `node dist/modules/registration-holder-types/auto-assign-runner.js` (dry-run, rollback) แล้วค่อยเพิ่ม `--apply`
-- รายการค้างตรวจดูได้ที่ list API ด้วย `holderType=review` หรือ `holderType=unassigned`
+- รายการค้างตรวจดูได้ที่ list API ด้วย `holderType=review` หรือ `holderType=unassigned` และรายชื่อผู้ได้ Gift ด้วย `holderType=gift`
