@@ -28,18 +28,25 @@ import {
   readCheckinBooth,
   enrichCheckins,
 } from "../../modules/booths/readers.js";
-import { HOLDER_TYPES, holderTypeDisplay } from "../../modules/registration-holder-types/catalog.js";
+import { HOLDER_TYPES, MEAL_COUPON_HOLDER_TYPES, hasMealCoupon, holderTypeDisplay } from "../../modules/registration-holder-types/catalog.js";
 
 // PRIS holder type and gift shown on the check-in result (null outside PRIS).
 async function readHolderBadge(database: typeof defaultDatabase, registrationId: number) {
   const [row] = (await database.execute(sql`
-    SELECT r.holder_type AS "holderType", e.event_code AS "eventCode"
+    SELECT r.holder_type AS "holderType", e.event_code AS "eventCode",
+           bool_or(m.meal_coupon_eligible) AS "boothCoupon"
     FROM registrations r JOIN events e ON e.id = r.event_id
-    WHERE r.id = ${registrationId}`)) as unknown as Array<{ holderType: string | null; eventCode: string }>;
+    LEFT JOIN booth_members m ON m.user_id = r.user_id AND m.event_id = r.event_id
+    WHERE r.id = ${registrationId}
+    GROUP BY r.holder_type, e.event_code`)) as unknown as Array<{
+    holderType: string | null; eventCode: string; boothCoupon: boolean | null;
+  }>;
   return {
     eventCode: row?.eventCode ?? null,
     holderType: row?.holderType ?? null,
     ...holderTypeDisplay(row?.holderType, row?.eventCode ?? null),
+    // Meal coupon: Booth quota or a coupon holder type (VIP).
+    mealCouponEligible: hasMealCoupon(row?.holderType, row?.eventCode ?? null, row?.boothCoupon),
   };
 }
 
@@ -81,7 +88,10 @@ export default async function (
           ...holderTypeDisplay(row.holderType, row.eventCode),
         }));
         return reply.send({
-          checkins: await enrichCheckins(db, withHolder),
+          checkins: (await enrichCheckins(db, withHolder)).map((row) => ({
+            ...row,
+            mealCouponEligible: hasMealCoupon(row.holderType, row.eventCode, row.booth?.mealCouponEligible),
+          })),
           pagination: result.pagination,
           serverNow: result.serverNow,
           serverDate: result.serverDate,
@@ -378,9 +388,13 @@ export default async function (
         today AS (SELECT DISTINCT registration_id FROM checkins WHERE day = ${main.serverDate}::date),
         ever AS (SELECT DISTINCT registration_id FROM checkins),
         coupon AS (
-          SELECT DISTINCT reg.id FROM reg
+          SELECT reg.id FROM reg
           JOIN booth_members m ON m.user_id = reg.user_id AND m.event_id = ${eventId}
           WHERE m.meal_coupon_eligible = true
+          UNION
+          SELECT reg.id FROM reg
+          WHERE ${main.eventCode === "PRIS-2026"}
+            AND reg.holder_type IN (${sql.join(MEAL_COUPON_HOLDER_TYPES.map((key) => sql`${key}`), sql`, `)})
         )
         SELECT reg.holder_type AS "holderType",
                count(*)::int AS total,

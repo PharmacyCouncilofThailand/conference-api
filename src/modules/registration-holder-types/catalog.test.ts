@@ -56,3 +56,13 @@ test("all holder types are hidden outside the exact PRIS-2026 event scope", () =
     }
   }
 });
+
+test("meal coupon: Booth quota or VIP (PRIS only)", async () => {
+  const { hasMealCoupon } = await import("./catalog.js");
+  assert.equal(hasMealCoupon("vip", "PRIS-2026", null), true);
+  assert.equal(hasMealCoupon("exhibitor", "PRIS-2026", true), true);
+  assert.equal(hasMealCoupon("exhibitor", "PRIS-2026", false), false);
+  for (const key of ["council_committee", "college_committee", "reviewer", "speaker", "participant", null])
+    assert.equal(hasMealCoupon(key, "PRIS-2026", null), false);
+  assert.equal(hasMealCoupon("vip", "OTHER", null), false);
+});
