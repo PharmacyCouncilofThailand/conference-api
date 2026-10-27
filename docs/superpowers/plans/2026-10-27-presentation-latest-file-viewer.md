@@ -79,7 +79,7 @@ Integration harness มีการ reset schema ใช้ได้เฉพา�
 - Produces: `readPresentationList` คืน `Promise<PresentationListDto>` และ `readPresentationDetail` คืน `Promise<PresentationDetailDto>` โดยคง parameters เดิม
 - `presentationViewerRow(row: PresentationListRow): PresentationListRow` เป็น helper ภายในไฟล์ คงชื่อเดิม ไม่ export API ใหม่
 
-- [ ] **Step 1: เพิ่ม fixture ประวัติที่ทดสอบการรั่วของข้อมูลได้จริง**
+- [x] **Step 1: เพิ่ม fixture ประวัติที่ทดสอบการรั่วของข้อมูลได้จริง**
 
 ใน `readers.test.ts` เพิ่ม type imports `UploadDto`, `RevisionDto` จาก `./types.js` แล้วเพิ่ม helper ต่อไปนี้หลัง `fixture()` ใช้ fixture เดิมสำหรับ grant/roster และแทนเฉพาะคำตอบไฟล์/คำขอ:
 
@@ -169,13 +169,13 @@ test('viewers receive only current file and cannot infer revision state through 
 
 แก้ assertion เดิมใน test `organizer/reviewer receive only uploaded works before pagination and no verification/email data` ให้ `detail.audit` เป็น `[]` และตรวจ `detail.requests` เป็น `[]` ด้วย เพราะข้อกำหนดเดิมที่ให้เห็น revision audit ถูกแทนที่แล้ว อย่าลบ test ของ Admin
 
-- [ ] **Step 2: รัน unit เพื่อยืนยัน failure**
+- [x] **Step 2: รัน unit เพื่อยืนยัน failure**
 
 API: `npx --no-install tsx --test src/modules/presentations/readers.test.ts`
 
 คาดว่า FAIL เพราะยังเห็น audit/คำขอ/ไฟล์เก่า และ `status` ยังลด total ตาม workflow ภายใน
 
-- [ ] **Step 3: ขยาย projection เดิมและใช้ก่อน filters/counts**
+- [x] **Step 3: ขยาย projection เดิมและใช้ก่อน filters/counts**
 
 แทน helper เดิมใน `readers.ts` ด้วย:
 
@@ -210,7 +210,7 @@ const scoped = grants.manage
 
 คงเงื่อนไข matchState ที่ข้ามการกรองให้ non-admin เดิม นับจาก `filtered` และแบ่งหน้าภายหลังเหมือนเดิม `items` ส่งได้ตรง ๆ เพราะ viewer ถูก project แล้ว ส่วน Admin ไม่ถูก project
 
-- [ ] **Step 4: ออกจาก detail reader ก่อนอ่านประวัติสำหรับ viewer**
+- [x] **Step 4: ออกจาก detail reader ก่อนอ่านประวัติสำหรับ viewer**
 
 หลังตรวจ `row` และ uploaded-only/404 เดิม ก่อน query `SELECT id FROM presentation_uploads` เพิ่ม:
 
@@ -228,7 +228,7 @@ if (!grants.manage) {
 
 คงเส้นทางอ่าน history ของ Admin ที่ตามหลังไว้ ไม่เพิ่ม query ไปยังไฟล์เก่าใน branch viewer และไม่เปลี่ยน `requirePresentationStaff()` หรือ write endpoints
 
-- [ ] **Step 5: เพิ่ม regression ของ Admin แล้วรันให้ผ่าน**
+- [x] **Step 5: เพิ่ม regression ของ Admin แล้วรันให้ผ่าน**
 
 ```ts
 test('admin keeps old files and real revision filters', async () => {
@@ -248,7 +248,7 @@ test('admin keeps old files and real revision filters', async () => {
 
 API: รัน reader unit ซ้ำ คาดว่า PASS รวม participantGroup และ roster regression เดิม
 
-- [ ] **Step 6: Commit เฉพาะ runtime/test ของ Task 1**
+- [x] **Step 6: Commit เฉพาะ runtime/test ของ Task 1**
 
 ```bash
 git add src/modules/presentations/readers.ts src/modules/presentations/readers.test.ts
@@ -261,7 +261,7 @@ git commit -m "fix(presentations): restrict viewers to current accepted file"
 
 **Interfaces:** Consumes `UserRole`, `hasAccess(page: string): boolean`, AuthGuard เดิม; Produces allowlist `/presentations` และเมนูของ Organizer/Reviewer โดยคง page access อื่น
 
-- [ ] **Step 1: ปรับ role matrix ใน test เดิม**
+- [x] **Step 1: ปรับ role matrix ใน test เดิม**
 
 ใน test `page access, real sidebar links and assigned-event scope agree for every role` เปลี่ยน `readable` และ assertions ของ Guard เป็น:
 
@@ -280,13 +280,13 @@ assert.deepEqual(redirects, []);
 
 คง assertions `/abstracts`, `/abstract-categories`, Event access และ role ที่เหลือไว้
 
-- [ ] **Step 2: รันเฉพาะ role matrix ให้เห็น failure**
+- [x] **Step 2: รันเฉพาะ role matrix ให้เห็น failure**
 
 Backoffice: `../conference-api/node_modules/.bin/tsx --test --test-name-pattern='page access, real sidebar' src/lib/presentationUi.test.ts`
 
 คาดว่า FAIL ที่ Organizer ยังเข้า `/presentations` ไม่ได้
 
-- [ ] **Step 3: เพิ่ม page และเมนูตาม pattern เดิม**
+- [x] **Step 3: เพิ่ม page และเมนูตาม pattern เดิม**
 
 ใน `AuthContext.tsx` เพิ่ม `'/presentations'` ใน array ของ organizer และเปลี่ยน reviewer เป็น:
 
@@ -302,7 +302,7 @@ reviewer: ['/abstracts', '/presentations'],
 
 AuthGuard ใช้ `hasAccess()` อยู่แล้ว จึงไม่ต้องแก้ redirect logic หรือขยายสิทธิ์หน้าอื่น
 
-- [ ] **Step 4: รัน role matrix อีกครั้ง คาดว่า PASS แล้ว commit**
+- [x] **Step 4: รัน role matrix อีกครั้ง คาดว่า PASS แล้ว commit**
 
 ```bash
 git add src/contexts/AuthContext.tsx src/components/layout/Sidebar.tsx src/lib/presentationUi.test.ts
@@ -315,7 +315,7 @@ git commit -m "feat(presentations): allow organizer and reviewer page access"
 
 **Interfaces:** Consumes list DTO จาก Task 1 และ role allowlist จาก Task 2; Produces list API query ที่ไม่ส่ง status/matchState สำหรับ viewer และ `PresentationTable` props เดิม (`manage`, `showAdminDetails`, `rows`, `view`, `closesAt`)
 
-- [ ] **Step 1: เปลี่ยน test เดิมที่ปิดสิทธิ์ list เป็น test received-only**
+- [x] **Step 1: เปลี่ยน test เดิมที่ปิดสิทธิ์ list เป็น test received-only**
 
 เปลี่ยนชื่อ test `Organizer and Reviewer cannot read the Presentation page or trigger its API reads` เป็น `Organizer and Reviewer read received files without management history` ใช้ harness/API spies เดิมซึ่งตรวจ Event=42, received=true และไม่มี matchState อยู่แล้ว เพิ่ม `id: 1` ใน `auth.user` เพื่อใช้ทดสอบเปลี่ยนบัญชี และเพิ่มใน mock `list()`:
 
@@ -360,13 +360,13 @@ assert.ok(JSON.stringify(readonly).includes('ได้รับไฟล์แ�
 
 การใช้ payload ที่มี `revision_pending` และ `activeRequest` ช่วยยืนยันว่า UI ปิดข้อมูลได้เอง แม้ไม่ได้รับ projection จาก API ใหม่
 
-- [ ] **Step 2: รัน filtered tests ให้เห็น failure**
+- [x] **Step 2: รัน filtered tests ให้เห็น failure**
 
 Backoffice: `../conference-api/node_modules/.bin/tsx --test --test-name-pattern='received files without management|real table gates' src/lib/presentationUi.test.ts`
 
 คาดว่า FAIL เพราะ list ยังบล็อก viewer และ table แสดง deadline/request
 
-- [ ] **Step 3: เปิด readable และทำ scope ให้ครอบคลุม session/grants**
+- [x] **Step 3: เปิด readable และทำ scope ให้ครอบคลุม session/grants**
 
 ใน `page.tsx` เปลี่ยน readable เป็น:
 
@@ -383,7 +383,7 @@ const accessScope = JSON.stringify([
 
 คง useEffect ล้าง selected/dialog เดิมที่ผูกกับ scope ไว้ ส่วน effect เดิมที่ล้าง `batch`, reset page และ recheck key เมื่อ `eventId` เปลี่ยน ให้เพิ่ม `accessScope` ใน dependencies และล้าง `notice` ใน effect นั้นด้วย ไม่ล้าง batch/notice ทุกครั้งที่เปลี่ยน filter หรือ refresh เพราะจะเปลี่ยน workflow ของ Admin เกินขอบเขต
 
-- [ ] **Step 4: จำกัดตัวนับ/ตัวกรองใน list**
+- [x] **Step 4: จำกัดตัวนับ/ตัวกรองใน list**
 
 ก่อนเรียก `.map` เพื่อแสดงสี่ stat cards เดิม เพิ่ม:
 
@@ -393,7 +393,7 @@ const accessScope = JSON.stringify([
 
 ใช้ grid class หนึ่งคอลัมน์สำหรับ viewer และ grid เดิมสำหรับ Admin ห่อ select ที่มี `aria-label="สถานะไฟล์นำเสนอ"` ทั้ง node ด้วยเงื่อนไข `isAdmin &&` เช่นเดียวกับ select ผลตรวจที่มีอยู่แล้ว ตัวกรอง Round/type/group/search และ pagination คงไว้ เมนู tab เดิมมี filter ให้ viewer เห็น received เท่านั้นอยู่แล้ว คงพฤติกรรมนี้
 
-- [ ] **Step 5: ปิด status/deadline/request ใน table และแก้ชื่อ link**
+- [x] **Step 5: ปิด status/deadline/request ใน table และแก้ชื่อ link**
 
 ใน status cell ให้ badge อ่านสถานะจริงเฉพาะ Admin และใช้ข้อความกลางสำหรับ viewer:
 
@@ -411,7 +411,7 @@ title={showAdminDetails ? 'ดูรายละเอียดและปร�
 
 คง current file link/version/receivedAt และ guard `fileStatus`/`fileUrl` เดิม ไม่แสดงคำว่าแก้ไขแล้วจาก `revisionRequestId` สำหรับ viewer
 
-- [ ] **Step 6: เพิ่ม session-change regression และรัน unit ให้ผ่าน**
+- [x] **Step 6: เพิ่ม session-change regression และรัน unit ให้ผ่าน**
 
 ต่อท้าย test received-only ของ Step 1 หลัง load viewer A เปลี่ยน token/id โดยใช้ auth object เดิม และตรวจ render แรกก่อนรัน effects:
 
@@ -431,7 +431,7 @@ assert.equal(harness.render({}).some(node => node.type === 'presentation-table')
 
 รัน filtered tests ของ Task 3 และ test `group tabs request scoped server pagination and clear selected email recipients when switching groups` คาดว่า PASS เพื่อคง Admin selection/group behavior
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/app/presentations/page.tsx src/components/presentations/PresentationTable.tsx src/lib/presentationUi.test.ts
@@ -444,7 +444,7 @@ git commit -m "feat(presentations): show received files without viewer workflow 
 
 **Interfaces:** Consumes `PresentationDetailDto` จาก Task 1, `useAuth()`, route IDs; Produces current-file-only view โดยคง URL, API client และ admin dialogs เดิม
 
-- [ ] **Step 1: ปรับ role matrix ของ detail และเพิ่มกรณี payload มีประวัติ**
+- [x] **Step 1: ปรับ role matrix ของ detail และเพิ่มกรณี payload มีประวัติ**
 
 ใน test `real detail page restricts viewer controls, invalid IDs and unassigned event reads` เปลี่ยน `reads` เป็น 1 สำหรับทั้ง Admin/Organizer/Reviewer และตรวจ iframe ของ currentUpload สำหรับทั้งสาม role แทนเงื่อนไขเดิมที่ viewer ไม่มีสิทธิ์ คง invalid route/unassigned Event cases และ assertions ที่จัดการได้เฉพาะ Admin
 
@@ -481,13 +481,13 @@ test('viewer detail renders only current file even if a payload contains history
 });
 ```
 
-- [ ] **Step 2: รัน detail tests ให้เห็น failure**
+- [x] **Step 2: รัน detail tests ให้เห็น failure**
 
 Backoffice: `../conference-api/node_modules/.bin/tsx --test --test-name-pattern='real detail page restricts|viewer detail renders' src/lib/presentationUi.test.ts`
 
 คาดว่า FAIL เพราะ readable ยังเป็น Admin เท่านั้น หรือส่วน requests/history ยังแสดง
 
-- [ ] **Step 3: เปิด readable และผูกข้อมูลกับ session/grants**
+- [x] **Step 3: เปิด readable และผูกข้อมูลกับ session/grants**
 
 ใช้ readable แบบเดียวกับ Task 3 คงเงื่อนไข `allowed` ที่ตรวจ assigned PRIS-2026 Event ไว้ เปลี่ยน scope ให้ครอบคลุม user/grants ด้วย:
 
@@ -504,7 +504,7 @@ const scope = `${accessScope}:${eventId}:${abstractId}`;
 useEffect(() => { setNotice(null); }, [scope]);
 ```
 
-- [ ] **Step 4: ทำทุก history section เป็น Admin-only**
+- [x] **Step 4: ทำทุก history section เป็น Admin-only**
 
 แทนการคำนวณ `audit` และ `active` เดิมด้วย:
 
@@ -521,7 +521,7 @@ badge สถานะผลงานที่หัวหน้าใช้ค�
 
 คง section ไฟล์ปัจจุบันและข้อมูลผลงาน/ผู้ส่งร่วมกัน `active` ของ viewer เป็น null ทำให้ไม่แสดงคำขอที่เปิดอยู่ และ `manage` ต้องยังเป็น `isAdmin && detail?.capabilities.manage === true` เพื่อป้องกัน dialog/button แม้ payload มี manage=true
 
-- [ ] **Step 5: ครอบคลุม Drive, PNG และ unavailable file ใน viewer**
+- [x] **Step 5: ครอบคลุม Drive, PNG และ unavailable file ใน viewer**
 
 ต่อยอด test ใหม่ด้วยรอบค่าไฟล์เหล่านี้โดยใช้ currentUpload เดียวกันทั้ง `row.currentUpload`/`uploads[0]` และ role ทั้งสอง:
 
@@ -563,7 +563,7 @@ test('detail clears current file immediately when session or grants change', asy
 });
 ```
 
-- [ ] **Step 6: รัน Backoffice presentation suite ทั้งไฟล์และ commit**
+- [x] **Step 6: รัน Backoffice presentation suite ทั้งไฟล์และ commit**
 
 Backoffice: `../conference-api/node_modules/.bin/tsx --test src/lib/presentationUi.test.ts`
 
@@ -580,7 +580,7 @@ git commit -m "feat(presentations): limit viewer detail to current file"
 
 **Interfaces:** Consumes reader contracts จาก Task 1 และ service upload/revision เดิม; Produces regression ที่ยืนยัน current pointer, sanitized DTO และ retained Admin history บน DB จริงที่ได้รับอนุญาต ไม่มี provider จริง
 
-- [ ] **Step 1: เพิ่ม integration test ของการเปลี่ยนไฟล์จริง**
+- [x] **Step 1: เพิ่ม integration test ของการเปลี่ยนไฟล์จริง**
 
 ใน `readers.integration.test.ts` เพิ่ม imports `previewPresentationMail` จาก `./operations.js`, `createPresentationRevision` จาก `./revisions.js` และ test ต่อไปนี้ ใช้ imports `PDFDocument`, `randomUUID`, `PresentationStorage`, `submitPresentationUpload`, readers และ scenario เดิม:
 
@@ -648,7 +648,7 @@ test('viewer keeps only accepted current file after replacement while admin reta
 
 คง existing integration test `current event and type assignments scope Organizer/Reviewer before counts, pagination and detail; poster covers Highlighted` เพื่อพิสูจน์ SQL scoping จริงที่ unit mock ไม่ได้ตรวจ และคง route tests ที่ลอง write APIs ทั้งชุดด้วยสอง role รวม inactive/stale role
 
-- [ ] **Step 2: รัน integration เฉพาะที่เกี่ยวข้องแบบ serial**
+- [x] **Step 2: รัน integration เฉพาะที่เกี่ยวข้องแบบ serial**
 
 เมื่อ `TEST_DATABASE_URL` ผ่าน guard และ target พร้อม รันจาก API:
 
@@ -658,7 +658,7 @@ npx --no-install tsx --test --test-concurrency=1 src/modules/presentations/reade
 
 คาดว่า PASS ทั้งการ replacement/current pointer, event/type scope, empty types, Highlighted, inactive user, unsubmitted 404, settings/batch/write 403 และ Admin paths ไม่รัน worker หรือส่งเมล/provider จริงระหว่างทดสอบ
 
-- [ ] **Step 3: รัน checks ของทั้งสอง repository หนึ่งรอบ**
+- [x] **Step 3: รัน checks ของทั้งสอง repository หนึ่งรอบ**
 
 API:
 
@@ -679,13 +679,13 @@ git diff --check
 
 แก้ failure จากงานนี้และรันซ้ำเฉพาะชุดที่เกี่ยวข้อง หากมี baseline failure ที่ไม่เกี่ยวข้องให้บันทึก error/file และแยกให้ชัด ไม่แก้ dependency หรือส่วนอื่นเพื่อกลบปัญหา
 
-- [ ] **Step 4: ตรวจ UI กับ local API ที่รองรับ contract ใหม่**
+- [x] **Step 4: ตรวจ UI กับ local API ที่รองรับ contract ใหม่**
 
 ใช้บัญชีทดสอบในสภาพแวดล้อมที่พร้อม ตรวจ Organizer/Reviewer ทั้งคู่: เมนูและ received list, ค้นหา/ตัวกรอง/แบ่งหน้า, latest file ของ Oral/Poster/Highlighted, งานไม่มีไฟล์และงานนอกประเภท, current file ระหว่างเปิดคำขอแก้ไข, เปลี่ยน session/Event และ null URL ตรวจ Network response ว่าไม่มี old IDs/URLs/request details/audit/email payload และไม่มี status filter จาก UI
 
 ตรวจ Admin มีแท็บเดิม/ตัวนับเดิม/ไฟล์เก่า/ประวัติ/ปุ่มเดิม การเปิดหน้าแบบอ่านอย่างเดียวไม่ควรสร้างเมลหรือคำขอใหม่ หากไม่มีบัญชีทดสอบหรือ local runtime พร้อม ให้รายงานส่วน manual verification ที่ยังไม่ได้ทำอย่างตรงไปตรงมา
 
-- [ ] **Step 5: ตรวจ spec coverage แล้ว commit integration test**
+- [x] **Step 5: ตรวจ spec coverage แล้ว commit integration test**
 
 | Spec requirement | หลักฐานจาก Task |
 | --- | --- |
@@ -720,4 +720,8 @@ git commit -m "test(presentations): verify current-file viewer isolation"
 - ไม่มี requirement เพิ่ม migration, package, endpoint, category grant หรือการแก้ owner workflow
 - Signatures ของ reader, upload/revision service, DTO field names และ test harness ตรงกับโค้ดที่อ่านขณะเขียนแผน
 - Fixture unit ใช้ mock เดิมและ helper เฉพาะงาน ส่วนการพิสูจน์ SQL scope ใช้ guarded integration เดิม
-- การวางแผนนี้แก้เฉพาะเอกสาร ยังไม่ได้รันการทดสอบ runtime หรือเริ่ม implementation
+- ตอนเขียนแผนแก้เฉพาะเอกสาร; implementation และผลตรวจภายหลังบันทึกใน `../verification/2026-10-27-presentation-latest-file-viewer.md`
+
+## Execution status
+
+Implementation completed with parallel file ownership and serialized shared-test edits. API68 unit +11 integration and Backoffice31 UI tests pass; both builds pass. Full ESLint matches its pre-existing baseline. See `../verification/2026-10-27-presentation-latest-file-viewer.md` for evidence and browser limits.
