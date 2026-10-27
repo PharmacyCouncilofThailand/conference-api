@@ -16,6 +16,7 @@ import {
   lockBoothMembers,
   recordBoothTicketConfirmation,
 } from "../booths/registration.service.js";
+import { applyAutoHolderType } from "../registration-holder-types/auto-assign.js";
 
 export interface SuccessfulPaymentInput {
   orderId: number;
@@ -394,6 +395,8 @@ export async function processSuccessfulPaymentInTransaction(
 
   if (boothMember)
     await recordBoothTicketConfirmation(tx, boothMember, registration.id);
+  if (!isAddonOnlyOrder)
+    await applyAutoHolderType(tx, registration.id);
   return {
     order: { ...order, status: "paid" },
     user,

@@ -13,6 +13,7 @@ import {
 } from "../../database/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import { quickRegistrationSchema } from "../../schemas/quickRegistration.schema.js";
+import { applyAutoHolderType } from "../../modules/registration-holder-types/auto-assign.js";
 
 // ─────────────────────────────────────────────────────
 // Helpers
@@ -245,6 +246,7 @@ export default async function quickRegistrationRoutes(fastify: FastifyInstance) 
               attendeeType,
             })
             .returning();
+          await applyAutoHolderType(tx, newReg.id);
 
           // Determine sessions to link (from ticket_sessions, fallback to main sessions)
           let sessionIdsToLink: number[] = [];

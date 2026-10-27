@@ -2,7 +2,7 @@
 
 เอกสารนี้อธิบายขั้นตอนจาก source code ไม่ใช่หลักฐานว่าได้ import production แล้ว ผลการรันจริงและยอดหลังตรวจสอบต้องบันทึกแยกต่างหาก
 
-ขอบเขตคือ metadata ของ registration เดิมใน Event `PRIS-2026` (ID `2`) ไม่สร้างผู้สมัคร ไม่แก้ ticket ราคา โปรโมชั่น payment สถานะ registration หรือสิทธิ์ session และยังไม่มี UI สำหรับเพิ่มประเภทหรือแก้ประเภทผู้ถือบัตรรายคน ผู้สมัครใหม่ที่ยังไม่ได้จัดประเภทมีค่า `null` และแสดงเป็นยังไม่ระบุ ห้ามเดาจากราคา ชื่อบัตร หรือการไม่มี promo code
+ขอบเขตคือ metadata ของ registration เดิมใน Event `PRIS-2026` (ID `2`) ไม่สร้างผู้สมัคร ไม่แก้ ticket ราคา โปรโมชั่น payment สถานะ registration หรือสิทธิ์ session ผู้สมัครใหม่ถูกจัดประเภทอัตโนมัติตามกฎ v1 (ดูหัวข้อ "จัดประเภทอัตโนมัติ") ถ้ากฎตัดสินไม่ได้ ค่าจะเป็น `null` พร้อมเหตุผล `review:` และแสดงเป็นยังไม่ระบุ ห้ามเดาจากราคา
 
 ## Catalog
 
@@ -10,17 +10,17 @@
 
 | Key | ประเภท | ของมอบ |
 |---|---|---|
-| `council_committee` | กรรมการสภาเภสัชกรรม | แก้ว Mug set1 |
-| `college_committee` | กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย | แก้ว Mug set1 |
-| `vip` | VIP | แก้ว Mug set1 |
-| `speaker` | วิทยากร | ชุดใหญ่ไฟกระพริบ set3 |
-| `presenter` | ผู้นำเสนอผลงาน | กิจกรรม set2 |
-| `participant` | ผู้เข้าร่วมงาน | กิจกรรม set2 |
-| `exhibitor` | เจ้าหน้าที่บูธ (Exhibitor) | กิจกรรม set2 |
+| `council_committee` | กรรมการสภาเภสัชกรรม | Mug SET1 |
+| `college_committee` | กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย | Mug SET1 |
+| `vip` | VIP | Mug SET1 |
+| `speaker` | วิทยากร | MAXIMUM SET3 |
+| `presenter` | ผู้นำเสนอผลงาน | Activity SET2 |
+| `participant` | ผู้เข้าร่วมงาน | Activity SET2 |
+| `exhibitor` | เจ้าหน้าที่บูธ (Exhibitor) | Activity SET2 |
 | `health_hack` | Health Hack | — |
-| `media` | สื่อมวลชน | ชุดใหญ่ไฟกระพริบ set3 |
-| `staff_mc` | เจ้าหน้าที่/MC | กิจกรรม set2 |
-| `reviewer` | กรรมการประเมินผลงาน | แก้ว Mug set1 |
+| `media` | สื่อมวลชน | MAXIMUM SET3 |
+| `staff_mc` | เจ้าหน้าที่/MC | Activity SET2 |
+| `reviewer` | กรรมการประเมินผลงาน | Mug SET1 |
 
 ข้อกำหนดที่แก้ไขล่าสุด: `PRISBOOTH2026` หมายถึง `exhibitor`; `PRISSTAFF2026` หมายถึง `staff_mc` แต่ importer ไม่ใช้ promo code infer ประเภท ผู้ใช้ยืนยันว่า `BOOTH` ใน workbook ชุดนี้ให้แปลงเป็น `exhibitor` ผ่าน option ชัดเจน ส่วน `PRISVIP2026` ใช้ร่วมหลายกลุ่ม จึงแยกกรรมการ/VIP จาก code อย่างเดียวไม่ได้
 
@@ -178,3 +178,30 @@ Both repositories remain on `feature/pris-holder-type-and-gift`; no merge or dep
 The real Brave UI export was also checked by reopening the downloaded XLSX: 571 data rows, columns ordered `Ticket`, `TICKET TYPE`, `GIFT`, `Promo Code`; 559 assigned and 12 unassigned. Gift totals matched the database/catalog: activity set2 397, Mug set1 40, large set3 6, no gift 116, unassigned 12. Browser inspection verified VIP gold with green Mug, speaker/large gift gold with sparkles, exhibitor/activity gift orange, and unassigned neutral.
 
 Local preview runs in temporary user services `conference-holder-preview-api` and `conference-holder-preview-web` (not enabled at boot). Stop after review with `systemctl --user stop conference-holder-preview-api conference-holder-preview-web`. Private runtime connection configuration and preview scripts remain outside tracked source; the preview login uses normal backoffice authentication, not a bypass.
+
+
+## จัดประเภทอัตโนมัติ (กฎ v1, ยืนยันโดยผู้จัด 27 ต.ค. 2569)
+
+`src/modules/registration-holder-types/auto-assign.ts` ทำงานใน transaction เดียวกับการสร้างทะเบียนทั้ง 5 ช่องทาง (ชำระเงิน/webhook/free checkout, สมัครฟรีโดยตรง, quick, แอดมินเพิ่มรายคน, แอดมินเพิ่มหลายคน) เฉพาะ `PRIS-2026`
+
+| เงื่อนไข | ผล |
+|---|---|
+| `MODPRIS2026` | `speaker` |
+| `PRISBOOTH2026` + ticket Booth | `exhibitor` |
+| `PRISSTAFF2026` | `staff_mc` |
+| `HEALTHHACK2026` + ticket Health Hack | `health_hack` |
+| `MINGJOY67` | `reviewer` |
+| `PRIS26UNIVERSITY` | `participant` |
+| `PRISVIP2026` | รอตรวจ `review:v1:vip-code` |
+| code อื่น/ไม่ใช่ของ event/ticket ไม่ตรง | รอตรวจ |
+| ไม่มี code + มีบทคัดย่อ (ไม่ archived) | รอตรวจ `review:v1:has-abstract` |
+| ไม่มี code + ไม่มีบทคัดย่อ + ซื้อ ticket ปกติที่มี order | `participant` |
+| อื่น ๆ (manual/free/quick ไม่มี code) | รอตรวจ `review:v1:no-matching-rule` |
+
+- `holder_type_source`: `auto:v1:<rule>`, `review:v1:<reason>`, `manual:admin:<id>` หรือ `excel:<sha256>`
+- กฎอัตโนมัติเขียนเฉพาะแถวที่ยังไม่มีประเภทและ source เป็น `null` หรือ `review:` เท่านั้น ไม่ทับ Excel หรือแอดมิน และไม่เขียนซ้ำเมื่อ webhook ซ้ำหรือซื้อ add-on
+- แอดมินเลือกประเภทตอนเพิ่มรายชื่อได้ (`holderType`) หรือแก้ภายหลังผ่าน `PATCH /backoffice/registrations/:id/holder-type` ซึ่งต้องส่ง `expectedHolderType` เพื่อกันทับการแก้ของคนอื่น ดูประวัติที่ `GET /backoffice/registrations/:id/holder-type/history`
+- เปลี่ยน `userId` ของทะเบียน PRIS แล้วประเภทเดิมจะถูกล้างเป็น `review:v1:owner-changed` และกฎอัตโนมัติจะไม่ตัดสินแถวนี้อีก
+- ทุกการเปลี่ยนบันทึกใน `registration_holder_type_events` (migration `drizzle/0051_registration_holder_type_events.sql` ต้อง apply ก่อน deploy)
+- เติมย้อนหลัง: `node dist/modules/registration-holder-types/auto-assign-runner.js` (dry-run, rollback) แล้วค่อยเพิ่ม `--apply`
+- รายการค้างตรวจดูได้ที่ list API ด้วย `holderType=review` หรือ `holderType=unassigned`

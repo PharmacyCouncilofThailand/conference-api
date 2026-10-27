@@ -748,6 +748,21 @@ export const registrations = pgTable("registrations", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Audit trail for every automatic or admin holder type decision (PRIS-2026).
+export const registrationHolderTypeEvents = pgTable("registration_holder_type_events", {
+  id: serial("id").primaryKey(),
+  registrationId: integer("registration_id")
+    .notNull()
+    .references(() => registrations.id, { onDelete: "cascade" }),
+  previousType: varchar("previous_type", { length: 32 }),
+  newType: varchar("new_type", { length: 32 }),
+  previousSource: text("previous_source"),
+  newSource: text("new_source").notNull(),
+  actorId: integer("actor_id").references(() => backofficeUsers.id),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Junction table: 1 registration → N sessions (tracks which sessions a registrant has access to)
 export const registrationSessions = pgTable(
   "registration_sessions",

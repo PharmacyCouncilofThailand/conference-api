@@ -3,17 +3,17 @@ import test from "node:test";
 import { HOLDER_TYPES, HOLDER_TYPE_KEYS, getHolderType, holderTypeDisplay } from "./catalog.js";
 
 const expected = [
-  ["council_committee", "กรรมการสภาเภสัชกรรม", "mug_set1", "แก้ว Mug set1"],
-  ["college_committee", "กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย", "mug_set1", "แก้ว Mug set1"],
-  ["vip", "VIP", "mug_set1", "แก้ว Mug set1"],
-  ["speaker", "วิทยากร", "large_set3", "ชุดใหญ่ไฟกระพริบ set3"],
-  ["presenter", "ผู้นำเสนอผลงาน", "activity_set2", "กิจกรรม set2"],
-  ["participant", "ผู้เข้าร่วมงาน", "activity_set2", "กิจกรรม set2"],
-  ["exhibitor", "เจ้าหน้าที่บูธ (Exhibitor)", "activity_set2", "กิจกรรม set2"],
+  ["council_committee", "กรรมการสภาเภสัชกรรม", "mug_set1", "Mug SET1"],
+  ["college_committee", "กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย", "mug_set1", "Mug SET1"],
+  ["vip", "VIP", "mug_set1", "Mug SET1"],
+  ["speaker", "วิทยากร", "large_set3", "MAXIMUM SET3"],
+  ["presenter", "ผู้นำเสนอผลงาน", "activity_set2", "Activity SET2"],
+  ["participant", "ผู้เข้าร่วมงาน", "activity_set2", "Activity SET2"],
+  ["exhibitor", "เจ้าหน้าที่บูธ (Exhibitor)", "activity_set2", "Activity SET2"],
   ["health_hack", "Health Hack", "none", "—"],
-  ["media", "สื่อมวลชน", "large_set3", "ชุดใหญ่ไฟกระพริบ set3"],
-  ["staff_mc", "เจ้าหน้าที่/MC", "activity_set2", "กิจกรรม set2"],
-  ["reviewer", "กรรมการประเมินผลงาน", "mug_set1", "แก้ว Mug set1"],
+  ["media", "สื่อมวลชน", "large_set3", "MAXIMUM SET3"],
+  ["staff_mc", "เจ้าหน้าที่/MC", "activity_set2", "Activity SET2"],
+  ["reviewer", "กรรมการประเมินผลงาน", "mug_set1", "Mug SET1"],
 ] as const;
 
 test("catalog contains exactly the eleven agreed unique holder types", () => {

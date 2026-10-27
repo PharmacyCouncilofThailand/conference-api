@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { HOLDER_TYPE_KEYS } from '../modules/registration-holder-types/catalog.js';
+
+const holderTypeKey = z.enum(HOLDER_TYPE_KEYS);
 
 export const registrationListSchema = z.object({
     page: z.coerce.number().min(1).default(1),
@@ -10,6 +13,8 @@ export const registrationListSchema = z.object({
     status: z.enum(['confirmed', 'cancelled']).optional(),
     ticketTypeId: z.coerce.number().optional(),
     source: z.enum(['purchase', 'manual', 'free', 'quick']).optional(),
+    // 'unassigned' = no holder type yet; 'review' = flagged by the auto rules.
+    holderType: z.union([holderTypeKey, z.enum(['unassigned', 'review'])]).optional(),
 }).superRefine((value, context) => {
     if (value.sessionId && !value.eventId) {
         context.addIssue({
@@ -35,6 +40,8 @@ export const manualRegistrationSchema = z.object({
     ticketTypeId: z.number().min(1, "Ticket type is required"),
     sessionIds: z.array(z.number()).optional().default([]),
     note: z.string().max(500).optional(),
+    // Omit to let the PRIS auto rules decide.
+    holderType: holderTypeKey.optional(),
 });
 
 export const addSessionsSchema = z.object({
@@ -49,6 +56,14 @@ export const batchManualRegistrationSchema = z.object({
     ticketTypeId: z.number().min(1, "Ticket type is required"),
     sessionIds: z.array(z.number()).optional().default([]),
     note: z.string().max(500).optional(),
+    holderType: holderTypeKey.optional(),
+});
+
+export const updateHolderTypeSchema = z.object({
+    holderType: holderTypeKey.nullable(),
+    // Value the admin saw before editing; protects against overwriting a concurrent change.
+    expectedHolderType: holderTypeKey.nullable(),
+    reason: z.string().max(500).optional(),
 });
 
 export const checkRegisteredUsersSchema = z.object({

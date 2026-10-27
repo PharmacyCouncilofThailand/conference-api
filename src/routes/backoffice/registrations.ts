@@ -3,12 +3,12 @@ import { db } from "../../database/index.js";
 import {
     registrations, registrationSessions, ticketTypes, ticketSessions,
     events, sessions, users, orders, staffEventAssignments, backofficeUsers,
-    sessionInvitations, registrationSessionGrantItems,
+    sessionInvitations, registrationSessionGrantItems, registrationHolderTypeEvents,
 } from "../../database/schema.js";
 import {
     registrationListSchema, updateRegistrationSchema,
     manualRegistrationSchema, addSessionsSchema,
-    batchManualRegistrationSchema, checkRegisteredUsersSchema,
+    batchManualRegistrationSchema, checkRegisteredUsersSchema, updateHolderTypeSchema,
 } from "../../schemas/registrations.schema.js";
 import { eq, desc, ilike, and, count, sql, or, inArray, exists } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -22,6 +22,8 @@ import { registrationBlock, sessionBlock } from "../../modules/session-grants/po
 import { effectiveDeadline, effectiveInvitationStatus } from "../../modules/session-grants/invitation-policy.js";
 import type { InvitationStatus } from "../../modules/session-grants/types.js";
 import { holderTypeDisplay } from "../../modules/registration-holder-types/catalog.js";
+import { applyAutoHolderType, markHolderTypeOwnerChanged } from "../../modules/registration-holder-types/auto-assign.js";
+import { HolderTypeUpdateError, setAdminHolderType } from "../../modules/registration-holder-types/admin-assign.js";
 import {
     AttendanceReaderError,
     readRegistrationAttendanceHistory,
@@ -43,7 +45,7 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { page, limit, search, eventId, sessionId, promoCodeId, status, ticketTypeId, source } = queryResult.data;
+        const { page, limit, search, eventId, sessionId, promoCodeId, status, ticketTypeId, source, holderType } = queryResult.data;
         const offset = (page - 1) * limit;
 
         // Get user from request (set by auth middleware)
@@ -114,6 +116,16 @@ export default async function (fastify: FastifyInstance) {
             if (status) conditions.push(eq(registrations.status, status));
             if (ticketTypeId) conditions.push(eq(registrations.ticketTypeId, ticketTypeId));
             if (source) conditions.push(eq(registrations.source, source));
+            if (holderType === "unassigned") {
+                conditions.push(sql`${registrations.holderType} IS NULL`);
+            } else if (holderType === "review") {
+                conditions.push(and(
+                    sql`${registrations.holderType} IS NULL`,
+                    sql`${registrations.holderTypeSource} LIKE 'review:%'`,
+                ));
+            } else if (holderType) {
+                conditions.push(eq(registrations.holderType, holderType));
+            }
             if (promoCodeId) {
                 conditions.push(
                     exists(
@@ -162,6 +174,7 @@ export default async function (fastify: FastifyInstance) {
                     createdAt: registrations.createdAt,
                     ticketName: ticketTypes.name,
                     holderType: registrations.holderType,
+                    holderTypeSource: registrations.holderTypeSource,
                     eventName: events.eventName,
                     eventCode: events.eventCode,
                     source: registrations.source,
@@ -368,6 +381,8 @@ export default async function (fastify: FastifyInstance) {
                     ticketTypeId: registrations.ticketTypeId,
                     ticketName: ticketTypes.name,
                     holderType: registrations.holderType,
+                    holderTypeSource: registrations.holderTypeSource,
+                    holderTypeUpdatedAt: registrations.holderTypeUpdatedAt,
                     ticketCategory: ticketTypes.category,
                     ticketPrice: ticketTypes.price,
                     ticketCurrency: ticketTypes.currency,
@@ -587,6 +602,12 @@ export default async function (fastify: FastifyInstance) {
           .set(result.data)
           .where(eq(registrations.id, current.id))
           .returning();
+        // A holder type belongs to the person, not the registration row.
+        if (
+          result.data.userId !== undefined &&
+          result.data.userId !== current.userId
+        )
+          await markHolderTypeOwnerChanged(tx, current.id, staffUser.id);
         const member = locks.find((x) => x.userId === updated.userId);
         if (member && updated.status === "confirmed")
           await recordBoothTicketConfirmation(tx, member, updated.id);
@@ -605,6 +626,70 @@ export default async function (fastify: FastifyInstance) {
     }
   });
 
+  // Set or clear the PRIS holder type (gift follows the catalog).
+  fastify.patch("/:id/holder-type", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const staffUser = (request as any).user;
+        if (staffUser.role !== "admin") {
+            return reply.status(403).send({ error: "Admin access required" });
+        }
+        const registrationId = Number(id);
+        if (!Number.isInteger(registrationId) || registrationId <= 0) {
+            return reply.status(400).send({ error: "Invalid registration id" });
+        }
+        const result = updateHolderTypeSchema.safeParse(request.body);
+        if (!result.success) {
+            return reply.status(400).send({ error: "Invalid input", details: result.error.flatten() });
+        }
+        try {
+            const updated = await db.transaction((tx) => setAdminHolderType(tx, {
+                registrationId,
+                holderType: result.data.holderType,
+                expectedHolderType: result.data.expectedHolderType,
+                actorId: staffUser.id,
+                reason: result.data.reason,
+            }));
+            return reply.send({
+                registration: { ...updated, ...holderTypeDisplay(updated.holderType, "PRIS-2026") },
+            });
+        } catch (error) {
+            if (error instanceof HolderTypeUpdateError) {
+                return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+            }
+            fastify.log.error(error);
+            return reply.status(500).send({ error: "Failed to update holder type" });
+        }
+  });
+
+  fastify.get("/:id/holder-type/history", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const staffUser = (request as any).user;
+        if (staffUser.role !== "admin") {
+            return reply.status(403).send({ error: "Admin access required" });
+        }
+        const registrationId = Number(id);
+        if (!Number.isInteger(registrationId) || registrationId <= 0) {
+            return reply.status(400).send({ error: "Invalid registration id" });
+        }
+        const history = await db
+            .select({
+                id: registrationHolderTypeEvents.id,
+                previousType: registrationHolderTypeEvents.previousType,
+                newType: registrationHolderTypeEvents.newType,
+                previousSource: registrationHolderTypeEvents.previousSource,
+                newSource: registrationHolderTypeEvents.newSource,
+                reason: registrationHolderTypeEvents.reason,
+                createdAt: registrationHolderTypeEvents.createdAt,
+                actorFirstName: backofficeUsers.firstName,
+                actorLastName: backofficeUsers.lastName,
+            })
+            .from(registrationHolderTypeEvents)
+            .leftJoin(backofficeUsers, eq(registrationHolderTypeEvents.actorId, backofficeUsers.id))
+            .where(eq(registrationHolderTypeEvents.registrationId, registrationId))
+            .orderBy(desc(registrationHolderTypeEvents.createdAt), desc(registrationHolderTypeEvents.id));
+        return reply.send({ history });
+  });
+
   // ── Manual Add Registration ──────────────────────────
   fastify.post("/manual", async (request, reply) => {
         const staffUser = (request as any).user;
@@ -616,7 +701,7 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid input", details: result.error.flatten() });
         }
 
-        const { userId, eventId, ticketTypeId, sessionIds, note } = result.data;
+        const { userId, eventId, ticketTypeId, sessionIds, note, holderType } = result.data;
 
     try {
       const registration = await db.transaction(async (tx) => {
@@ -743,6 +828,10 @@ export default async function (fastify: FastifyInstance) {
                 }).returning();
         if (boothMember)
           await recordBoothTicketConfirmation(tx, boothMember, newReg.id);
+                if (holderType)
+                    await setAdminHolderType(tx, { registrationId: newReg.id, holderType, actorId: staffUser.id, reason: "manual-add" });
+                else
+                    await applyAutoHolderType(tx, newReg.id);
 
                 // 7. Insert registration_sessions
                 const sessionsLinked: number[] = [];
@@ -822,6 +911,9 @@ export default async function (fastify: FastifyInstance) {
 
             return;
     } catch (error: any) {
+            if (error instanceof HolderTypeUpdateError) {
+                return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+            }
             const knownErrors: Record<string, { status: number; message: string }> = {
                 USER_NOT_FOUND: { status: 404, message: "User not found" },
                 EVENT_NOT_FOUND: { status: 404, message: "Event not found" },
@@ -1076,7 +1168,7 @@ export default async function (fastify: FastifyInstance) {
             return reply.status(400).send({ error: "Invalid input", details: result.error.flatten() });
         }
 
-        const { userIds, eventId, ticketTypeId, sessionIds, note } = result.data;
+        const { userIds, eventId, ticketTypeId, sessionIds, note, holderType } = result.data;
 
     try {
       const results = await db.transaction(async (tx) => {
@@ -1270,6 +1362,10 @@ export default async function (fastify: FastifyInstance) {
           const boothMember = boothLocks.find((x) => x.userId === userId);
           if (boothMember)
             await recordBoothTicketConfirmation(tx, boothMember, newReg.id);
+                    if (holderType)
+                        await setAdminHolderType(tx, { registrationId: newReg.id, holderType, actorId: staffUser.id, reason: "manual-batch-add" });
+                    else
+                        await applyAutoHolderType(tx, newReg.id);
 
                     // Insert registration_sessions
                     for (const sid of [...new Set(sessionsToLink)].sort((a, b) => a - b)) {
@@ -1372,6 +1468,9 @@ export default async function (fastify: FastifyInstance) {
 
             return;
     } catch (error: any) {
+            if (error instanceof HolderTypeUpdateError) {
+                return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+            }
             const knownErrors: Record<string, { status: number; message: string }> = {
                 EVENT_NOT_FOUND: { status: 404, message: "Event not found" },
                 TICKET_NOT_FOUND: { status: 404, message: "Ticket type not found or does not belong to event" },

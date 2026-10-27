@@ -11,6 +11,7 @@ import {
 } from "../../database/schema.js";
 import { eq, and, sql, desc, count } from "drizzle-orm";
 import { freeRegistrationSchema } from "../../schemas/freeRegistration.schema.js";
+import { applyAutoHolderType } from "../../modules/registration-holder-types/auto-assign.js";
 import { allowedListIncludes, ticketAllowsStudentLevel } from "../../utils/ticketEligibility.js";
 import { resolveStudentPackageEligibility } from "../../utils/studentEligibility.js";
 import {
@@ -369,6 +370,7 @@ export default async function freeRegistrationRoutes(fastify: FastifyInstance) {
           }).returning();
           if (boothMember)
             await recordBoothTicketConfirmation(tx, boothMember, newReg.id);
+          await applyAutoHolderType(tx, newReg.id);
 
           // Determine sessions to link (from ticket_sessions junction)
           let sessionIdsToLink: number[] = [];
