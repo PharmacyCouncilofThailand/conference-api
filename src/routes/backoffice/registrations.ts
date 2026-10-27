@@ -21,7 +21,7 @@ import { BoothError } from "../../modules/booths/policy.js";
 import { registrationBlock, sessionBlock } from "../../modules/session-grants/policy.js";
 import { effectiveDeadline, effectiveInvitationStatus } from "../../modules/session-grants/invitation-policy.js";
 import type { InvitationStatus } from "../../modules/session-grants/types.js";
-import { holderTypeDisplay } from "../../modules/registration-holder-types/catalog.js";
+import { HOLDER_TYPES, holderTypeDisplay } from "../../modules/registration-holder-types/catalog.js";
 import { applyAutoHolderType, markHolderTypeOwnerChanged } from "../../modules/registration-holder-types/auto-assign.js";
 import { HolderTypeUpdateError, setAdminHolderType } from "../../modules/registration-holder-types/admin-assign.js";
 import {
@@ -624,6 +624,11 @@ export default async function (fastify: FastifyInstance) {
           .send({ error: error.message, code: error.code });
             return reply.status(500).send({ error: "Failed to update registration" });
     }
+  });
+
+  // PRIS holder types with their gift, for backoffice pickers.
+  fastify.get("/holder-types", async (_request, reply) => {
+        return reply.send({ holderTypes: HOLDER_TYPES });
   });
 
   // Set or clear the PRIS holder type (gift follows the catalog).
