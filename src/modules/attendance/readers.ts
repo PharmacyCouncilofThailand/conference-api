@@ -46,6 +46,9 @@ export type AttendanceRow =
       sessionName: string;
       eventId: number;
       eventName: string;
+      eventCode: string;
+      ticketName: string | null;
+      holderType: string | null;
     }
   | {
       kind: "single";
@@ -70,6 +73,9 @@ export type AttendanceRow =
       sessionName: string;
       eventId: number;
       eventName: string;
+      eventCode: string;
+      ticketName: string | null;
+      holderType: string | null;
     };
 
 export class AttendanceReaderError extends Error {
@@ -264,6 +270,8 @@ export async function readAttendanceRows(
     date?: string;
     history?: AttendanceHistoryFilter;
     university?: string;
+    /** PRIS holder type key, or "unassigned" for rows without one. */
+    holderType?: string;
     search?: string;
     page?: number;
     limit?: number;
@@ -285,6 +293,7 @@ export async function readAttendanceRows(
   const history = input.history ?? "active";
   const search = input.search?.trim() || null;
   const university = input.university?.trim() || null;
+  const holderType = input.holderType?.trim() || null;
 
   if (!(await isDailyPolicy(database, input.eventId, input.sessionId))) {
     if (history === "cancelled") {
@@ -316,6 +325,9 @@ export async function readAttendanceRows(
         s.session_name,
         e.id AS event_id,
         e.event_name,
+        e.event_code,
+        t.name AS ticket_name,
+        r.holder_type,
         count(*) OVER()::int AS total_count
       FROM registration_sessions rs
       JOIN registrations r ON r.id=rs.registration_id
@@ -323,6 +335,7 @@ export async function readAttendanceRows(
       JOIN events e ON e.id=r.event_id
       LEFT JOIN users u ON u.id=r.user_id
       LEFT JOIN backoffice_users scanner ON scanner.id=rs.checked_in_by
+      LEFT JOIN ticket_types t ON t.id=r.ticket_type_id
       WHERE r.event_id=${input.eventId}
         AND rs.session_id=${input.sessionId}
         AND r.status='confirmed'
@@ -330,6 +343,9 @@ export async function readAttendanceRows(
         AND (${selectedDate}::text IS NULL OR
           (((rs.checked_in_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Bangkok')::date = ${selectedDate}::date))
         AND (${university}::text IS NULL OR u.university=${university})
+        AND (${holderType}::text IS NULL
+          OR (${holderType}='unassigned' AND r.holder_type IS NULL)
+          OR r.holder_type=${holderType})
         AND (${search}::text IS NULL OR
           r.first_name ILIKE '%' || ${search} || '%' OR
           r.last_name ILIKE '%' || ${search} || '%' OR
@@ -365,6 +381,9 @@ export async function readAttendanceRows(
       sessionName: row.session_name,
       eventId: row.event_id,
       eventName: row.event_name,
+      eventCode: row.event_code,
+      ticketName: row.ticket_name,
+      holderType: row.holder_type,
     }));
     const total = Number(raw[0]?.total_count ?? 0);
     return {
@@ -400,6 +419,9 @@ export async function readAttendanceRows(
       s.session_name,
       e.id AS event_id,
       e.event_name,
+      e.event_code,
+      t.name AS ticket_name,
+      r.holder_type,
       count(*) OVER()::int AS total_count
     FROM session_daily_checkins c
     JOIN registration_sessions rs ON rs.id=c.registration_session_id
@@ -408,6 +430,7 @@ export async function readAttendanceRows(
     JOIN events e ON e.id=r.event_id
     LEFT JOIN users u ON u.id=r.user_id
     LEFT JOIN backoffice_users scanner ON scanner.id=c.checked_in_by
+    LEFT JOIN ticket_types t ON t.id=r.ticket_type_id
     WHERE r.event_id=${input.eventId}
       AND rs.session_id=${input.sessionId}
       AND r.status='confirmed'
@@ -418,6 +441,9 @@ export async function readAttendanceRows(
         OR (${history}='cancelled' AND c.cancelled_at IS NOT NULL)
       )
       AND (${university}::text IS NULL OR u.university=${university})
+      AND (${holderType}::text IS NULL
+        OR (${holderType}='unassigned' AND r.holder_type IS NULL)
+        OR r.holder_type=${holderType})
       AND (${search}::text IS NULL OR
         r.first_name ILIKE '%' || ${search} || '%' OR
         r.last_name ILIKE '%' || ${search} || '%' OR
@@ -453,6 +479,9 @@ export async function readAttendanceRows(
     sessionName: row.session_name,
     eventId: row.event_id,
     eventName: row.event_name,
+    eventCode: row.event_code,
+    ticketName: row.ticket_name,
+    holderType: row.holder_type,
   }));
   const total = Number(raw[0]?.total_count ?? 0);
   return {
