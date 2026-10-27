@@ -72,12 +72,15 @@ function revisionDto(r:RevisionDto,now:Date):RevisionDto{
  return {...dto,status:effectiveRevisionStatus(dto,now)};
 }
 // ponytail: bounded conference roster; switch to SQL filtering/pagination if events grow to thousands of works.
-async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:number,now:Date,allowedTypes:Array<'oral'|'poster'>|null=null):Promise<PresentationListRow[]>{
- if(allowedTypes!==null&&allowedTypes.length===0)return [];
+async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:number,now:Date,allowedTypes:Array<'oral'|'poster'>|null=null,allowedCategories:string[]|null=null,categoryId?:number):Promise<PresentationListRow[]>{
+ if((allowedTypes!==null&&allowedTypes.length===0)||(allowedCategories!==null&&allowedCategories.length===0))return [];
  const typeScope=allowedTypes===null?sql`true`:sql`ab.presentation_type::text IN (SELECT jsonb_array_elements_text(${JSON.stringify(allowedTypes)}::jsonb))`;
+ const categoryScope=allowedCategories===null?sql`true`:sql`c.name IN (SELECT jsonb_array_elements_text(${JSON.stringify(allowedCategories)}::jsonb))`;
  const announcements=await rows<RosterRecord>(q,sql`SELECT a.*,t.id AS target_id,t.abstract_id,t.current_upload_id,u.email AS submitter_email
   FROM presentation_announcements a LEFT JOIN presentation_targets t ON t.id=a.target_id LEFT JOIN abstracts ab ON ab.id=t.abstract_id AND ab.event_id=a.event_id
-  LEFT JOIN users u ON u.id=ab.user_id WHERE a.event_id=${eventId} AND (a.source_row->>'presentationType' IN ('oral','poster','highlighted-poster')) AND ${typeScope}
+  LEFT JOIN abstract_categories c ON c.id=ab.category_id AND c.event_id=ab.event_id
+  LEFT JOIN users u ON u.id=ab.user_id WHERE a.event_id=${eventId} AND (a.source_row->>'presentationType' IN ('oral','poster','highlighted-poster')) AND ${typeScope} AND ${categoryScope}
+  ${categoryId===undefined?sql``:sql`AND c.id=${categoryId}`}
   ORDER BY (a.source_row->>'round')::int,(a.source_row->>'categoryId')::int,(a.source_row->>'sequence')::int NULLS LAST,a.source_key`);
  const files=await rows<UploadDto&{targetId:string}>(q,sql`SELECT u.id,u.target_id AS "targetId",u.version,u.original_filename AS "fileName",u.stored_filename AS "storedFileName",u.mime_type AS "mimeType",
   u.size_bytes AS "sizeBytes",u.file_url AS "fileUrl",u.storage_provider AS "storageProvider",u.drive_file_id AS "driveFileId",u.received_at AS "receivedAt",u.request_id AS "revisionRequestId",
@@ -108,7 +111,8 @@ async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:num
 }
 function presentationViewerRow(row:PresentationListRow):PresentationListRow{
  return {...row,matchState:null,matchFingerprint:'',problems:[],snapshot:null,verifiedBy:null,verifiedAt:null,
-  verificationReason:null,lastEmail:null,canNotify:false};
+  verificationReason:null,lastEmail:null,canNotify:false,activeRequest:null,progress:'submitted',
+  currentUpload:row.currentUpload?{...row.currentUpload,revisionRequestId:null}:null};
 }
 export async function readPresentationList(database:PresentationDatabase,actor:PresentationActor,eventId:number,query:z.infer<typeof listQuerySchema>):Promise<PresentationListDto>{
  const grants=await requirePresentationStaff(database,actor,eventId,false);const now=await dbNow(database);
@@ -116,24 +120,32 @@ export async function readPresentationList(database:PresentationDatabase,actor:P
   sql`SELECT event_id AS "eventId",closes_at AS "closesAt",version,reconcile_ready AS "reconcileReady",last_reconciled_at AS "reconciledAt"
    FROM presentation_settings WHERE event_id=${eventId}`);
  if(!setting)fail('PRESENTATION_RECONCILE_REQUIRED',503);
- const all=await readRosterRows(database,eventId,now,grants.manage?null:grants.types);const term=normalizeSubmitterName(query.search??'').toLowerCase();
- const filtered=all.filter(r=>((actor.role==='admin'&&!query.received)||!!r.currentUpload)
+ const categories=await rows<{id:number;name:string}>(database,sql`SELECT id,name FROM abstract_categories WHERE event_id=${eventId}
+  ${grants.manage?sql``:sql`AND name IN (SELECT jsonb_array_elements_text(${JSON.stringify(grants.categories)}::jsonb))`} ORDER BY name,id`);
+ const all=await readRosterRows(database,eventId,now,grants.manage?null:grants.types,grants.manage?null:grants.categories,query.categoryId);const term=normalizeSubmitterName(query.search??'').toLowerCase();
+ const scoped=grants.manage?all:all.filter(row=>!!row.currentUpload).map(presentationViewerRow);
+ const filtered=scoped.filter(r=>((grants.manage&&!query.received)||!!r.currentUpload)
   &&(!query.participantGroup||(r.announcement.participantGroup??'general')===query.participantGroup)
   &&(!query.round||String(r.announcement.round)===query.round)&&(!query.presentationType||r.announcement.presentationType===query.presentationType)
-  &&(actor.role!=='admin'||!query.matchState||r.matchState===query.matchState)&&(!query.status||r.progress===query.status)
+  &&(!grants.manage||!query.matchState||r.matchState===query.matchState)&&(!grants.manage||!query.status||r.progress===query.status)
   &&(!term||normalizeSubmitterName([r.announcement.title,r.announcement.submitterName,r.announcement.trackingId,r.submitterEmail].filter(Boolean).join(' ')).toLowerCase().includes(term)));
  const counts:Record<PresentationProgress,number>={not_submitted:0,submitted:0,revision_pending:0,revised:0,revision_expired:0};
  for(const row of filtered)counts[row.progress]++;
  const items=filtered.slice((query.page-1)*query.pageSize,query.page*query.pageSize);
- return {items:actor.role==='admin'?items:items.map(presentationViewerRow),total:filtered.length,page:query.page,pageSize:query.pageSize,
+ return {items,categories,total:filtered.length,page:query.page,pageSize:query.pageSize,
   settings:{...setting,closesAt:iso(setting.closesAt),reconciledAt:maybeIso(setting.reconciledAt)},capabilities:{read:true,manage:actor.role==='admin'},counts};
 }
 export async function readPresentationDetail(database:PresentationDatabase,actor:PresentationActor,eventId:number,abstractId:number):Promise<PresentationDetailDto>{
  const grants=await requirePresentationStaff(database,actor,eventId,false);const now=await dbNow(database);
  const [target]=await rows<{id:string}>(database,sql`SELECT id FROM presentation_targets WHERE event_id=${eventId} AND abstract_id=${abstractId}`);
  if(!target)fail('PRESENTATION_NOT_FOUND',404);
- const row=(await readRosterRows(database,eventId,now,grants.manage?null:grants.types)).find(r=>r.abstractId===abstractId);
- if(!row||(actor.role!=='admin'&&!row.currentUpload))fail('PRESENTATION_NOT_FOUND',404);
+ const row=(await readRosterRows(database,eventId,now,grants.manage?null:grants.types,grants.manage?null:grants.categories)).find(r=>r.abstractId===abstractId);
+ if(!row||(!grants.manage&&!row.currentUpload))fail('PRESENTATION_NOT_FOUND',404);
+ if(!grants.manage){
+  const visible=presentationViewerRow(row!);
+  return {row:visible,uploads:visible.currentUpload?[visible.currentUpload]:[],requests:[],emailJobs:[],audit:[],
+   capabilities:{read:true,manage:false}};
+ }
  const ids=await rows<{id:string}>(database,sql`SELECT id FROM presentation_uploads WHERE target_id=${target.id}::uuid ORDER BY version DESC`);
  const uploads:UploadDto[]=[];for(const file of ids)uploads.push((await readUploadDto(database,file.id))!);
  const requests=await rows<RevisionDto>(database,sql`SELECT id,details,closes_at AS "closesAt",status,created_at AS "createdAt",requested_by AS "requestedBy",

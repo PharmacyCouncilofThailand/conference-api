@@ -63,7 +63,7 @@ export async function resetPresentationTestDatabase(sql: TestSql): Promise<void>
   await sql.unsafe(`
     CREATE TABLE events(id serial PRIMARY KEY,event_code text UNIQUE NOT NULL,website_url text,short_name text,event_name text);
     CREATE TABLE users(id serial PRIMARY KEY,email text,role text NOT NULL DEFAULT 'pharmacist',first_name text,last_name text,status text NOT NULL DEFAULT 'active');
-    CREATE TABLE backoffice_users(id serial PRIMARY KEY,email text,role text NOT NULL,is_active boolean NOT NULL DEFAULT true,assigned_presentation_types jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE backoffice_users(id serial PRIMARY KEY,email text,role text NOT NULL,is_active boolean NOT NULL DEFAULT true,assigned_presentation_types jsonb NOT NULL DEFAULT '[]',assigned_categories jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE staff_event_assignments(staff_id integer REFERENCES backoffice_users(id),event_id integer REFERENCES events(id));
     CREATE TABLE abstract_categories(id serial PRIMARY KEY,event_id integer NOT NULL REFERENCES events(id),name text NOT NULL);
     CREATE TYPE presentation_type AS ENUM ('oral','poster');

@@ -45,7 +45,7 @@ export type PresentationListRow={sourceKey:string;announcement:Announcement;abst
 export type PresentationSettingsDto={eventId:number;closesAt:string;version:number;reconcileReady:boolean;reconciledAt:string|null};
 export type PresentationSettingsHistoryDto={settings:PresentationSettingsDto;history:Array<{id:string;actorId:number|null;reason:string|null;before:unknown;after:unknown;createdAt:string}>;capabilities:{read:true;manage:boolean}};
 export type PresentationReconciliationDto={eventId:number;digest:string;counts:Record<string,number>};
-export type PresentationListDto={items:PresentationListRow[];total:number;page:number;pageSize:number;settings:PresentationSettingsDto;
+export type PresentationListDto={items:PresentationListRow[];categories:Array<{id:number;name:string}>;total:number;page:number;pageSize:number;settings:PresentationSettingsDto;
  capabilities:{read:true;manage:boolean};counts:Record<PresentationProgress,number>};
 export type PresentationDetailDto={row:PresentationListRow;uploads:UploadDto[];requests:RevisionDto[];
  emailJobs:Array<{id:string;kind:MailKind;state:MailState;recipient:string;subject:string;html:string;templateVersion?:string;createdAt:string;finishedAt:string|null;
