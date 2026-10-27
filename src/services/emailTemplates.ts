@@ -113,7 +113,8 @@ async function sendNipaMailHtml(
   recipient: string,
   subject: string,
   html: string,
-  retryOnAuth: boolean = true
+  retryOnAuth: boolean = true,
+  options: { timeoutMs?: number } = {},
 ): Promise<void> {
   const token = await getAccessToken();
 
@@ -134,6 +135,7 @@ async function sendNipaMailHtml(
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
+        ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
       }
     );
   } catch (error: unknown) {
@@ -143,7 +145,7 @@ async function sendNipaMailHtml(
       error.response?.status === 401
     ) {
       cachedToken = null;
-      return sendNipaMailHtml(recipient, subject, html, false);
+      return sendNipaMailHtml(recipient, subject, html, false, options);
     }
     if (axios.isAxiosError(error) && error.response) {
       console.error("NipaMail send failed:", JSON.stringify(error.response.data));
@@ -1337,7 +1339,8 @@ export async function sendPris2026PreEventEmail(
   ticketName: string,
 ): Promise<void> {
   const content = buildPris2026PreEventEmailContent(firstName, lastName, regCode, ticketName);
-  await sendNipaMailHtml(email, content.subject, content.html);
+  // Bounded so one stalled provider call cannot block a manual batch indefinitely.
+  await sendNipaMailHtml(email, content.subject, content.html, true, { timeoutMs: 30_000 });
 }
 
 // 9. VERIFICATION APPROVED EMAIL

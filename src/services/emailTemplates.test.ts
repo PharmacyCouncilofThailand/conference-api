@@ -6,6 +6,7 @@ import {
   buildEventPaymentReceiptEmailContent,
   buildPris2026EarlyBirdReminderEmailContent,
   buildPris2026PreEventEmailContent,
+  sendPris2026PreEventEmail,
 } from "./emailTemplates.js";
 
 const ctx = {
@@ -249,4 +250,38 @@ test("PRIS pre-event email escapes recipient-provided values", () => {
   assert.match(result.html, /เรียน คุณ&lt;b&gt;Ada&lt;\/b&gt; O&#39;Neil/);
   assert.match(result.html, /ประเภทบัตร: A &amp; B/);
   assert.doesNotMatch(result.html, /<b>Ada<\/b>/);
+});
+
+test("PRIS pre-event send uses a 30s provider timeout", async () => {
+  const axios = (await import("axios")).default;
+  const originalPost = axios.post;
+  const saved = {
+    id: process.env.NIPAMAIL_CLIENT_ID,
+    secret: process.env.NIPAMAIL_CLIENT_SECRET,
+    sender: process.env.NIPAMAIL_SENDER_EMAIL,
+  };
+  const calls: Array<{ url: string; timeout?: number }> = [];
+  process.env.NIPAMAIL_CLIENT_ID = "test-client";
+  process.env.NIPAMAIL_CLIENT_SECRET = "test-secret";
+  process.env.NIPAMAIL_SENDER_EMAIL = "sender@example.com";
+  (axios as unknown as { post: typeof axios.post }).post = (async (url: string, _body: unknown, options?: { timeout?: number }) => {
+    calls.push({ url, timeout: options?.timeout });
+    if (url.endsWith("/v1/auth/tokens")) return { data: { access_token: "test-token" } } as never;
+    return { data: { id: "message-id" } } as never;
+  }) as typeof axios.post;
+  const restore = (key: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  };
+
+  try {
+    await sendPris2026PreEventEmail("ada@example.test", "Ada", "Lovelace", "PRIS26-0001", "Pharmacist");
+    const send = calls.find((call) => call.url.endsWith("/v1/messages"));
+    assert.equal(send?.timeout, 30_000);
+  } finally {
+    (axios as unknown as { post: typeof axios.post }).post = originalPost;
+    restore("NIPAMAIL_CLIENT_ID", saved.id);
+    restore("NIPAMAIL_CLIENT_SECRET", saved.secret);
+    restore("NIPAMAIL_SENDER_EMAIL", saved.sender);
+  }
 });
