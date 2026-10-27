@@ -3,6 +3,7 @@ import test from 'node:test';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import type { PresentationDatabase } from './access.js';
+import type { UploadDto, RevisionDto } from './types.js';
 import { readPresentationList, readPresentationDetail, readPresentationSettings, readPresentationBatch, currentRosterRecords } from './readers.js';
 import { listQuerySchema } from './schemas.js';
 
@@ -78,7 +79,7 @@ test('organizer/reviewer receive only uploaded works before pagination and no ve
   assert.equal(list.counts.not_submitted,0);assert.equal(list.counts.submitted,2);
   const detail=await readPresentationDetail(database,actor,42,1);
   assert.deepEqual(detail.emailJobs,[]);assert.equal(detail.capabilities.manage,false);
-  assert.deepEqual(detail.audit.map(a=>(a as {action:string}).action),['revision_created','revision_cancelled']);
+  assert.deepEqual(detail.audit,[]);assert.deepEqual(detail.requests,[]);
   for(const row of [list.items[0],detail.row]){
    assert.equal(row.matchState,null);assert.equal(row.matchFingerprint,'');assert.equal(row.snapshot,null);
    assert.deepEqual(row.problems,[]);assert.equal(row.verifiedBy,null);assert.equal(row.verifiedAt,null);
@@ -117,4 +118,115 @@ test('a target shows only its present announcement; withdrawn rows stay only whe
  ]).map(r=>r.source_key);
  // Round 1 history must not shadow the current Round 2 row that owns the same uploads.
  assert.deepEqual(kept,['2:75','2:9','1:7','1:8','2:1','2:2']);
+});
+
+function historyFixture(role: string, status: RevisionDto['status'] = 'open') {
+  const base = fixture(role);
+  const now = '2026-10-07T00:00:00.000Z';
+  const current: UploadDto = {
+    id: 'file-current', version: 2, fileName: 'latest.pdf',
+    storedFileName: 'latest.pdf', mimeType: 'application/pdf', sizeBytes: 100,
+    fileUrl: 'https://example.invalid/latest.pdf', fileStatus: 'available',
+    deletedAt: null, storageProvider: 'r2', driveFileId: null,
+    receivedAt: now, revisionRequestId: 'private-request',
+  };
+  const old: UploadDto = {
+    ...current, id: 'file-old', version: 1, fileName: 'private-old.pdf',
+    fileUrl: 'https://example.invalid/private-old.pdf', revisionRequestId: null,
+  };
+  const request: RevisionDto = {
+    id: 'private-request', details: 'private-revision-details',
+    closesAt: '2026-10-08T00:00:00.000Z', status, createdAt: now,
+    requestedBy: 99, submittedAt: null, cancelledAt: null,
+    cancelledBy: null, cancellationReason: null,
+  };
+  for (const row of base.roster) {
+    if (row.current_upload_id) row.current_upload_id = current.id;
+  }
+  const dialect = new PgDialect();
+  const database = {
+    execute: async (statement: SQL) => {
+      const { sql, params } = dialect.sqlToQuery(statement);
+      if (sql.includes('FROM presentation_upload_files u JOIN')) {
+        base.queries.push(sql);
+        return [current, old].map(file => ({ ...file, targetId: 'target-1' }));
+      }
+      if (sql.includes('SELECT id FROM presentation_uploads')) {
+        base.queries.push(sql);
+        return [{ id: current.id }, { id: old.id }];
+      }
+      if (sql.includes('FROM presentation_upload_files WHERE')) {
+        base.queries.push(sql);
+        return [current, old].filter(file => file.id === params[0]);
+      }
+      if (sql.includes('FROM presentation_revision_requests')) {
+        base.queries.push(sql);
+        return [{ ...request, targetId: 'target-1' }];
+      }
+      return base.database.execute(statement);
+    },
+  } as unknown as PresentationDatabase;
+  return { ...base, database, current, old, request };
+}
+
+test('viewers receive only current file and cannot infer revision state through filters', async () => {
+  for (const role of ['organizer', 'reviewer']) {
+    for (const state of ['open', 'submitted', 'expired', 'cancelled'] as const) {
+      const f = historyFixture(role, state);
+      for (const received of [undefined, 'true']) {
+        for (const status of [undefined, 'not_submitted', 'submitted', 'revision_pending', 'revised', 'revision_expired']) {
+          const list = await readPresentationList(f.database, f.actor, 42,
+            listQuerySchema.parse({ status, received, pageSize: 1, page: 2, matchState: 'ready' }));
+          assert.equal(list.total, 2);
+          assert.equal(list.items[0].abstractId, 3);
+          assert.deepEqual(list.counts, {
+            not_submitted: 0, submitted: 2, revision_pending: 0,
+            revised: 0, revision_expired: 0,
+          });
+          assert.equal(list.items[0].progress, 'submitted');
+          assert.equal(list.items[0].activeRequest, null);
+          assert.equal(list.items[0].currentUpload?.revisionRequestId, null);
+        }
+      }
+      const detail = await readPresentationDetail(f.database, f.actor, 42, 1);
+      assert.deepEqual(detail.uploads.map(file => file.id), [f.current.id]);
+      assert.equal(detail.row.currentUpload?.id, f.current.id);
+      assert.equal(detail.uploads[0].revisionRequestId, null);
+      assert.deepEqual(detail.requests, []);
+      assert.deepEqual(detail.emailJobs, []);
+      assert.deepEqual(detail.audit, []);
+      assert.equal(detail.row.activeRequest, null);
+      assert.equal(detail.row.progress, 'submitted');
+      assert.equal(JSON.stringify(detail).includes('private-'), false);
+      assert.equal(f.queries.some(q => q.includes('SELECT id FROM presentation_uploads')), false);
+      assert.equal(f.queries.some(q => q.includes('FROM presentation_audit_events')), false);
+    }
+  }
+});
+
+test('admin keeps old files and real revision filters', async () => {
+  const f = historyFixture('admin');
+  const detail = await readPresentationDetail(f.database, f.actor, 42, 1);
+  assert.equal(detail.uploads.length, 2);
+  assert.equal(detail.requests[0].details, 'private-revision-details');
+  assert.equal(detail.row.currentUpload?.revisionRequestId, 'private-request');
+  assert.equal(detail.row.progress, 'revision_pending');
+  assert.ok(detail.emailJobs.length > 0);
+  assert.ok(detail.audit.length > 0);
+  const list = await readPresentationList(f.database, f.actor, 42,
+    listQuerySchema.parse({ status: 'revision_pending' }));
+  assert.deepEqual(list.items.map(row => row.abstractId), [1]);
+});
+
+test('viewer retains unavailable current file without falling back to an older file', async () => {
+  for (const role of ['organizer', 'reviewer']) {
+    const f = historyFixture(role);
+    f.current.fileUrl = null;
+    f.current.fileStatus = 'deleted';
+    const detail = await readPresentationDetail(f.database, f.actor, 42, 1);
+    assert.deepEqual(detail.uploads.map(file => file.id), [f.current.id]);
+    assert.equal(detail.row.currentUpload?.fileUrl, null);
+    assert.equal(detail.row.currentUpload?.fileStatus, 'deleted');
+    assert.equal(JSON.stringify(detail).includes(f.old.fileUrl!), false);
+  }
 });

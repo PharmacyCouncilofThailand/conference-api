@@ -108,7 +108,8 @@ async function readRosterRows(q:Pick<PresentationDatabase,'execute'>,eventId:num
 }
 function presentationViewerRow(row:PresentationListRow):PresentationListRow{
  return {...row,matchState:null,matchFingerprint:'',problems:[],snapshot:null,verifiedBy:null,verifiedAt:null,
-  verificationReason:null,lastEmail:null,canNotify:false};
+  verificationReason:null,lastEmail:null,canNotify:false,activeRequest:null,progress:'submitted',
+  currentUpload:row.currentUpload?{...row.currentUpload,revisionRequestId:null}:null};
 }
 export async function readPresentationList(database:PresentationDatabase,actor:PresentationActor,eventId:number,query:z.infer<typeof listQuerySchema>):Promise<PresentationListDto>{
  const grants=await requirePresentationStaff(database,actor,eventId,false);const now=await dbNow(database);
@@ -117,15 +118,16 @@ export async function readPresentationList(database:PresentationDatabase,actor:P
    FROM presentation_settings WHERE event_id=${eventId}`);
  if(!setting)fail('PRESENTATION_RECONCILE_REQUIRED',503);
  const all=await readRosterRows(database,eventId,now,grants.manage?null:grants.types);const term=normalizeSubmitterName(query.search??'').toLowerCase();
- const filtered=all.filter(r=>((actor.role==='admin'&&!query.received)||!!r.currentUpload)
+ const scoped=grants.manage?all:all.filter(row=>!!row.currentUpload).map(presentationViewerRow);
+ const filtered=scoped.filter(r=>((grants.manage&&!query.received)||!!r.currentUpload)
   &&(!query.participantGroup||(r.announcement.participantGroup??'general')===query.participantGroup)
   &&(!query.round||String(r.announcement.round)===query.round)&&(!query.presentationType||r.announcement.presentationType===query.presentationType)
-  &&(actor.role!=='admin'||!query.matchState||r.matchState===query.matchState)&&(!query.status||r.progress===query.status)
+  &&(!grants.manage||!query.matchState||r.matchState===query.matchState)&&(!grants.manage||!query.status||r.progress===query.status)
   &&(!term||normalizeSubmitterName([r.announcement.title,r.announcement.submitterName,r.announcement.trackingId,r.submitterEmail].filter(Boolean).join(' ')).toLowerCase().includes(term)));
  const counts:Record<PresentationProgress,number>={not_submitted:0,submitted:0,revision_pending:0,revised:0,revision_expired:0};
  for(const row of filtered)counts[row.progress]++;
  const items=filtered.slice((query.page-1)*query.pageSize,query.page*query.pageSize);
- return {items:actor.role==='admin'?items:items.map(presentationViewerRow),total:filtered.length,page:query.page,pageSize:query.pageSize,
+ return {items,total:filtered.length,page:query.page,pageSize:query.pageSize,
   settings:{...setting,closesAt:iso(setting.closesAt),reconciledAt:maybeIso(setting.reconciledAt)},capabilities:{read:true,manage:actor.role==='admin'},counts};
 }
 export async function readPresentationDetail(database:PresentationDatabase,actor:PresentationActor,eventId:number,abstractId:number):Promise<PresentationDetailDto>{
@@ -133,7 +135,12 @@ export async function readPresentationDetail(database:PresentationDatabase,actor
  const [target]=await rows<{id:string}>(database,sql`SELECT id FROM presentation_targets WHERE event_id=${eventId} AND abstract_id=${abstractId}`);
  if(!target)fail('PRESENTATION_NOT_FOUND',404);
  const row=(await readRosterRows(database,eventId,now,grants.manage?null:grants.types)).find(r=>r.abstractId===abstractId);
- if(!row||(actor.role!=='admin'&&!row.currentUpload))fail('PRESENTATION_NOT_FOUND',404);
+ if(!row||(!grants.manage&&!row.currentUpload))fail('PRESENTATION_NOT_FOUND',404);
+ if(!grants.manage){
+  const visible=presentationViewerRow(row!);
+  return {row:visible,uploads:visible.currentUpload?[visible.currentUpload]:[],requests:[],emailJobs:[],audit:[],
+   capabilities:{read:true,manage:false}};
+ }
  const ids=await rows<{id:string}>(database,sql`SELECT id FROM presentation_uploads WHERE target_id=${target.id}::uuid ORDER BY version DESC`);
  const uploads:UploadDto[]=[];for(const file of ids)uploads.push((await readUploadDto(database,file.id))!);
  const requests=await rows<RevisionDto>(database,sql`SELECT id,details,closes_at AS "closesAt",status,created_at AS "createdAt",requested_by AS "requestedBy",
