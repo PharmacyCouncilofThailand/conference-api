@@ -303,6 +303,12 @@ test("PRIS ticket reminder email uses the approved subject, prices and purchase 
   assert.match(result.html, /หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ/);
 });
 
+test("PRIS ticket reminder email shows the council phone number prominently", () => {
+  const result = buildPris2026TicketReminderEmailContent("Ada", "Lovelace");
+
+  assert.match(result.html, /<strong>โทร\. <a href="tel:025919992"[^>]*>02-591-9992<\/a><\/strong>/);
+});
+
 test("PRIS ticket reminder email escapes the recipient name", () => {
   const result = buildPris2026TicketReminderEmailContent("<b>Ada</b>", "O'Neil");
   assert.match(result.html, /เรียน คุณ&lt;b&gt;Ada&lt;\/b&gt; O&#39;Neil/);

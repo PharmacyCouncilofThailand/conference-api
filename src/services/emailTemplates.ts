@@ -1382,6 +1382,10 @@ export function buildPris2026TicketReminderEmailContent(
       <li>หลังชำระเงินสำเร็จ ท่านจะได้รับอีเมลยืนยันการลงทะเบียน พร้อมรหัสลงทะเบียนและ QR Code สำหรับเช็กอินเข้างาน</li>
     </ol>
     <p>หากท่านได้ลงทะเบียนและชำระเงินเรียบร้อยแล้ว ขออภัยในความไม่สะดวก และขอความกรุณาละเว้นอีเมลฉบับนี้</p>
+    <div style="margin:16px 0;padding:14px 18px;border:2px solid #1d4ed8;border-radius:6px;background:#eff6ff;">
+      <p style="margin:0 0 4px 0;font-size:16px;"><strong>หากมีปัญหาในการลงทะเบียนหรือซื้อบัตร โปรดติดต่อสภาเภสัชกรรม</strong></p>
+      <p style="margin:0;font-size:20px;"><strong>โทร. <a href="tel:025919992" style="color:#1d4ed8;text-decoration:none;">02-591-9992</a></strong></p>
+    </div>
     <p>ท่านสามารถตรวจสอบกำหนดการและข่าวสารล่าสุดได้ที่ <a href="https://pris.pharmacycouncil.org">https://pris.pharmacycouncil.org</a><br>
     หากมีข้อสงสัยเพิ่มเติม สามารถติดต่อได้ที่ <a href="mailto:pr@pharmacycouncil.org">pr@pharmacycouncil.org</a></p>
     <p>สภาเภสัชกรรมหวังเป็นอย่างยิ่งว่าจะได้พบท่านในงาน</p>
