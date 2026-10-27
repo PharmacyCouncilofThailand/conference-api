@@ -676,7 +676,7 @@ export default async function (
                         registration: registrationResponse,
                     });
                 }
-                return checkOne(regSession);
+                return await checkOne(regSession);
             }
 
       if (checkInAll) {
@@ -758,7 +758,7 @@ export default async function (
                 if (!regSession) {
                     return reply.status(400).send({ error: "No access to this session", code: "NO_ACCESS" });
                 }
-                return checkOne(regSession);
+                return await checkOne(regSession);
             }
 
             const now = new Date();
