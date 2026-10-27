@@ -2,7 +2,7 @@
 
 Date: 2026-10-27 (Asia/Bangkok)
 
-Status: Authorized amendment requested directly by the user after latest-file viewer implementation. Continue the existing implementation authorization and parallel-agent workflow. This replaces the earlier decision to leave category grants out of Presentations.
+Status: User-requested amendment implemented and verified; see `../verification/2026-10-27-presentation-category-scope.md`. This replaces the earlier decision to leave category grants out of Presentations and continues the authorized parallel-agent implementation workflow.
 
 ## Requested behavior
 
