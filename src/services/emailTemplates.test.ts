@@ -5,6 +5,7 @@ import {
   buildEventAbstractRejectedEmailContent,
   buildEventPaymentReceiptEmailContent,
   buildPris2026EarlyBirdReminderEmailContent,
+  buildPris2026PreEventEmailContent,
 } from "./emailTemplates.js";
 
 const ctx = {
@@ -219,4 +220,33 @@ test("manual PRIS reminder keeps its subject and uses the Thai reminder body", (
   assert.match(result.html, /ขอแสดงความนับถือ<br>สภาเภสัชกรรม<br>ติดต่อ 02 591 9992/);
   assert.doesNotMatch(result.html, /Dear Ada Lovelace/);
   assert.doesNotMatch(result.html, /IMPORTANT REGISTRATION RATE/);
+});
+
+test("PRIS pre-event email lists registration details, preparation steps and LINE OA binding", () => {
+  const result = buildPris2026PreEventEmailContent("Ada", "Lovelace", "PRIS26-0001", "Pharmacist");
+
+  assert.equal(result.subject, "แจ้งข้อมูลการเตรียมตัวก่อนเข้าร่วมงาน PRIS 2026 รหัสลงทะเบียน PRIS26-0001");
+  assert.match(result.html, /<p>เรียน คุณAda Lovelace<\/p>/);
+  assert.match(result.html, /<li>วันที่: 29–30 ตุลาคม 2569 เวลา 08\.00–18\.00 น\.<\/li>/);
+  assert.match(result.html, /<li>สถานที่: ห้อง Jupiter 4–13 อิมแพ็ค อารีน่า เมืองทองธานี จังหวัดนนทบุรี<\/li>/);
+  assert.match(result.html, /<li>รหัสลงทะเบียน: PRIS26-0001<\/li>/);
+  assert.match(result.html, /<li>ประเภทบัตร: Pharmacist<\/li>/);
+  assert.match(result.html, /ไม่จำเป็นต้องพิมพ์บัตร/);
+  assert.match(result.html, /@pharmacycouncil/);
+  assert.match(result.html, /กดเมนู "บัตรเข้าร่วมงาน"/);
+  assert.match(result.html, /อาคารจอดรถ P1/);
+  assert.match(result.html, /IMPACT JUPITER เมืองทองธานี/);
+  assert.match(result.html, /ก่อนเวลา 08\.00 น\./);
+  assert.match(result.html, /href="mailto:pr@pharmacycouncil\.org"/);
+  assert.match(result.html, /<p>\(The Pharmacy Council of Thailand\)<\/p>/);
+  assert.doesNotMatch(result.html, /2,500/);
+  assert.doesNotMatch(result.html, /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
+});
+
+test("PRIS pre-event email escapes recipient-provided values", () => {
+  const result = buildPris2026PreEventEmailContent("<b>Ada</b>", "O'Neil", "PRIS26-0001", "A & B");
+
+  assert.match(result.html, /เรียน คุณ&lt;b&gt;Ada&lt;\/b&gt; O&#39;Neil/);
+  assert.match(result.html, /ประเภทบัตร: A &amp; B/);
+  assert.doesNotMatch(result.html, /<b>Ada<\/b>/);
 });
