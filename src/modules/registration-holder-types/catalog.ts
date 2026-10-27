@@ -36,6 +36,23 @@ export const HOLDER_TYPES: readonly HolderTypeConfig[] = [
   { key: "reviewer", label: "กรรมการประเมินผลงาน", giftCode: "gift", giftLabel: "ให้" },
 ];
 
+// Holder types that receive the meal coupon (2 per person) in addition to
+// Booth members within their Booth quota. Decided 27 Oct 2026.
+export const MEAL_COUPON_HOLDER_TYPES: readonly HolderTypeKey[] = ["vip"];
+
+export function hasMealCoupon(
+  holderType: unknown,
+  eventCode: string | null,
+  boothEligible: boolean | null | undefined,
+): boolean {
+  if (boothEligible === true) return true;
+  return (
+    eventCode === "PRIS-2026" &&
+    typeof holderType === "string" &&
+    (MEAL_COUPON_HOLDER_TYPES as readonly string[]).includes(holderType)
+  );
+}
+
 export function getHolderType(key: unknown): HolderTypeConfig | undefined {
   return typeof key === "string"
     ? HOLDER_TYPES.find((holderType) => holderType.key === key)
