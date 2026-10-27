@@ -55,7 +55,7 @@ export default async function (
             return reply.status(400).send({ error: "Invalid query", details: queryResult.error.flatten() });
         }
 
-        const { page, limit, search, eventId, sessionId, university, date, history } = queryResult.data;
+        const { page, limit, search, eventId, sessionId, university, date, history, holderType } = queryResult.data;
         const offset = (page - 1) * limit;
 
     try {
@@ -70,13 +70,18 @@ export default async function (
                     date,
                     history,
                     university,
+                    holderType,
                     search,
                     page,
                     limit,
                     actor,
                 });
+        const withHolder = result.rows.map((row) => ({
+          ...row,
+          ...holderTypeDisplay(row.holderType, row.eventCode),
+        }));
         return reply.send({
-          checkins: await enrichCheckins(db, result.rows),
+          checkins: await enrichCheckins(db, withHolder),
           pagination: result.pagination,
           serverNow: result.serverNow,
           serverDate: result.serverDate,

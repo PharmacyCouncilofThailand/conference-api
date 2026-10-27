@@ -9,6 +9,8 @@ export const checkinListSchema = z.object({
     search: z.string().optional(), // Search by user name or reg code
     date: z.string().optional(),
     history: z.enum(["active", "cancelled", "all"]).default("active"),
+    // PRIS holder type key or "unassigned" (daily/single session view only).
+    holderType: z.string().regex(/^[a-z_]{1,32}$/).optional(),
 });
 
 export const createCheckinSchema = z.object({
