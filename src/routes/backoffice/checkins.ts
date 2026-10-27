@@ -23,6 +23,7 @@ import {
     readAttendanceSummary,
 } from "../../modules/attendance/readers.js";
 import { lockAttendanceCutover } from "../../modules/attendance/cutover-lock.js";
+import { bangkokDay, checkDailyWindow, type DailyWindowCheck } from "../../modules/attendance/policy.js";
 import {
   readCheckinBooth,
   enrichCheckins,
@@ -339,6 +340,9 @@ export default async function (
         SELECT s.id, s.session_name AS "sessionName", e.event_name AS "eventName", e.event_code AS "eventCode",
                COALESCE(p.enabled AND p.mode = 'daily', false) AS daily,
                p.daily_open_time AS "openTime", p.daily_close_time AS "closeTime",
+               (s.start_time AT TIME ZONE 'UTC') AS "sessionStart",
+               (s.end_time AT TIME ZONE 'UTC') AS "sessionEnd",
+               clock_timestamp() AS "now",
                ((clock_timestamp() AT TIME ZONE 'Asia/Bangkok')::date)::text AS "serverDate"
         FROM sessions s
         JOIN events e ON e.id = s.event_id
@@ -347,6 +351,7 @@ export default async function (
         ORDER BY s.id LIMIT 1`)) as unknown as Array<{
         id: number; sessionName: string; eventName: string; eventCode: string; daily: boolean;
         openTime: string | null; closeTime: string | null; serverDate: string;
+        sessionStart: Date | string; sessionEnd: Date | string; now: Date | string;
       }>;
       if (!main) return reply.status(404).send({ error: "Event has no main session", code: "NO_MAIN_SESSION" });
 
@@ -387,6 +392,18 @@ export default async function (
         couponEligible: number; couponGiven: number;
       }>;
 
+      const sessionStart = new Date(main.sessionStart);
+      const sessionEnd = new Date(main.sessionEnd);
+      const now = new Date(main.now);
+      const scanStatus: DailyWindowCheck =
+        main.daily && main.openTime && main.closeTime
+          ? checkDailyWindow(now, sessionStart, sessionEnd, main.openTime, main.closeTime)
+          : now < sessionStart
+            ? "before_event"
+            : now >= sessionEnd
+              ? "after_event"
+              : "open";
+
       const percent = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
       const isPris = main.eventCode === "PRIS-2026";
       const order = new Map<string | null, number>(HOLDER_TYPES.map((type, index) => [type.key, index]));
@@ -420,6 +437,10 @@ export default async function (
         attendanceMode: main.daily ? "daily" : "single",
         window: main.openTime && main.closeTime ? { open: main.openTime, close: main.closeTime } : null,
         serverDate: main.serverDate,
+        // First/last Bangkok day of the main session and whether a scan now
+        // would be accepted (same rule as checkInSession, using the DB clock).
+        eventDays: { first: bangkokDay(sessionStart), last: bangkokDay(new Date(sessionEnd.getTime() - 1)) },
+        scanStatus,
         total,
         checkedIn,
         remaining: Math.max(0, total - checkedIn),
