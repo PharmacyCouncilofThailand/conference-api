@@ -8,6 +8,8 @@ import { PDFDocument } from 'pdf-lib';
 import { randomUUID } from 'node:crypto';
 import { submitPresentationUpload } from './uploads.js';
 import type { PresentationStorage } from './storage.js';
+import { previewPresentationMail } from './operations.js';
+import { createPresentationRevision } from './revisions.js';
 
 test('scoped readers retain orphan/withdrawn rows, filter and protect private projections', async t=>{
  const {client:sql,database,fixture:f,announcement}=await preparePresentationScenario(t);
@@ -102,4 +104,64 @@ test('an upload under the Round 2 roster is reported as Round 2, not the withdra
  assert.deepEqual(received.items.map(r=>[r.sourceKey,r.announcement.round]),[['2:75',2]]);
  assert.equal((await readPresentationList(database,f.admin,f.eventId,listQuerySchema.parse({round:'1'}))).total,0);
  assert.equal((await readPresentationDetail(database,f.admin,f.eventId,f.abstractId)).row.announcement.round,2);
+});
+
+test('viewer keeps only accepted current file after replacement while admin retains history', async t => {
+  const { client: sql, database, fixture: f } = await preparePresentationScenario(t);
+  process.env.PRESENTATION_SUBMISSIONS_ENABLED = 'true';
+  const storage: PresentationStorage = {
+    r2: () => ({ publicBaseUrl: 'https://test.r2.dev', putObject: async () => {}, deleteObject: async () => {} }),
+    drive: {
+      rootFolderId: () => 'root', generateId: async () => randomUUID(),
+      folder: async (_parent, name) => name,
+      write: async input => ({ fileId: input.fileId, fileUrl: `https://drive.google.com/file/d/${input.fileId}/view`, storedFileName: input.fileName }),
+      delete: async () => {},
+    },
+  };
+  const pdf = await PDFDocument.create(); pdf.addPage();
+  const bytes = Buffer.from(await pdf.save());
+  const first = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), null,
+    { buffer: bytes, filename: 'original.pdf', mimetype: 'application/pdf' }, storage);
+  const [staff] = await sql`INSERT INTO backoffice_users(email,role,assigned_presentation_types)
+    VALUES ('latest-viewer@example.invalid','organizer','["poster"]'::jsonb) RETURNING id`;
+  await sql`INSERT INTO staff_event_assignments VALUES (${staff.id},${f.eventId})`;
+  const preview = await previewPresentationMail(database, f.admin, f.eventId, {
+    kind: 'revision', abstractId: f.abstractId, details: 'private-revision-details',
+    closesAt: new Date(Date.now() + 3600000).toISOString(),
+  });
+  const created = await createPresentationRevision(database, f.admin, f.eventId, f.abstractId, randomUUID(), {
+    requestId: preview.requestId!, details: 'private-revision-details',
+    closesAt: preview.closesAt!, previewFingerprint: preview.fingerprint,
+  });
+  const before = await readPresentationDetail(database,
+    { id: staff.id, email: 'latest-viewer@example.invalid', role: 'organizer' }, f.eventId, f.abstractId);
+  assert.equal(before.row.currentUpload?.id, first.upload.id);
+  assert.deepEqual(before.requests, []);
+  const second = await submitPresentationUpload(database, f.owner, f.abstractId, randomUUID(), created.request.id,
+    { buffer: bytes, filename: 'latest.pdf', mimetype: 'application/pdf' }, storage);
+  for (const role of ['organizer', 'reviewer']) {
+    await sql`UPDATE backoffice_users SET role=${role} WHERE id=${staff.id}`;
+    const actor = { id: staff.id, email: 'latest-viewer@example.invalid', role };
+    const detail = await readPresentationDetail(database, actor, f.eventId, f.abstractId);
+    assert.deepEqual(detail.uploads.map(file => file.id), [second.upload.id]);
+    assert.equal(detail.row.currentUpload?.id, second.upload.id);
+    assert.equal(detail.uploads[0].revisionRequestId, null);
+    assert.equal(detail.row.progress, 'submitted');
+    assert.equal(detail.row.activeRequest, null);
+    assert.deepEqual(detail.requests, []); assert.deepEqual(detail.audit, []);
+    assert.deepEqual(detail.emailJobs, []);
+    const serialized = JSON.stringify(detail);
+    assert.equal(serialized.includes(first.upload.id), false);
+    assert.equal(serialized.includes(created.request.id), false);
+    assert.equal(serialized.includes('private-revision-details'), false);
+    for (const status of ['revision_pending', 'revision_expired', 'not_submitted', 'revised']) {
+      const list = await readPresentationList(database, actor, f.eventId,
+        listQuerySchema.parse({ status, pageSize: 1 }));
+      assert.equal(list.total, 1); assert.equal(list.counts.submitted, 1);
+    }
+  }
+  const admin = await readPresentationDetail(database, f.admin, f.eventId, f.abstractId);
+  assert.equal(admin.uploads.length, 2);
+  assert.ok(admin.requests.some(request => request.id === created.request.id));
+  assert.ok(admin.audit.length > 0); assert.ok(admin.emailJobs.length > 0);
 });
