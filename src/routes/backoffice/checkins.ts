@@ -9,7 +9,7 @@ import {
     ticketTypes,
     users,
 } from "../../database/schema.js";
-import { checkinListSchema, createCheckinSchema, checkinStatsSchema, undoCheckinSchema } from "../../schemas/checkins.schema.js";
+import { checkinListSchema, createCheckinSchema, checkinStatsSchema, checkinTestSampleSchema, undoCheckinSchema } from "../../schemas/checkins.schema.js";
 import { eq, desc, ilike, and, or, count, isNotNull, isNull, sql } from "drizzle-orm";
 import {
     AttendanceError,
@@ -296,6 +296,97 @@ export default async function (
   // Create Check-in (Scan)
   // Supports picker, specific session, all entitled sessions, and staff-assigned fast scan.
   // Every actual write routes through the shared attendance service.
+  // Scanner self-test ("test" code): a random real registration shaped like the
+  // check-in lookup response. Strictly read-only — never checks anyone in.
+  fastify.get("/test-sample", async (request, reply) => {
+    const query = checkinTestSampleSchema.safeParse(request.query);
+    if (!query.success) {
+      return reply.status(400).send({ error: "Invalid query", details: query.error.flatten() });
+    }
+    const { eventId, sessionId } = query.data;
+    const actor = {
+      id: Number((request as any).user?.id),
+      role: (request as any).user?.role as string | undefined,
+    };
+    if (!["admin", "staff", "organizer"].includes(actor.role || ""))
+      return reply.code(403).send({ error: "Staff check-in access required" });
+
+    try {
+      let allowedSessionIds: number[] | null = null;
+      if (actor.role !== "admin") {
+        const assigned = (await db.execute(
+          sql`SELECT session_id FROM staff_event_assignments WHERE staff_id=${actor.id} AND event_id=${eventId}`,
+        )) as unknown as Array<{ session_id: number | null }>;
+        if (!assigned.length)
+          return reply.code(403).send({ error: "Event not assigned", code: "SESSION_NOT_ASSIGNED" });
+        if (!assigned.some((x) => x.session_id === null))
+          allowedSessionIds = assigned.map((x) => x.session_id!).filter(Boolean);
+      }
+      if (sessionId && allowedSessionIds && !allowedSessionIds.includes(sessionId))
+        return reply.code(403).send({ error: "Session not assigned", code: "SESSION_NOT_ASSIGNED" });
+
+      const sessionFilter = sessionId
+        ? sql`AND EXISTS (SELECT 1 FROM registration_sessions rs WHERE rs.registration_id = r.id AND rs.session_id = ${sessionId})`
+        : allowedSessionIds
+          ? sql`AND EXISTS (SELECT 1 FROM registration_sessions rs WHERE rs.registration_id = r.id AND rs.session_id IN (${sql.join(allowedSessionIds.map((id) => sql`${id}`), sql`, `)}))`
+          : sql``;
+      const picked = (await db.execute(sql`
+        SELECT r.id FROM registrations r
+        WHERE r.event_id = ${eventId} AND r.status = 'confirmed' ${sessionFilter}
+        ORDER BY random() LIMIT 1`)) as unknown as Array<{ id: number }>;
+      if (!picked.length)
+        return reply.status(404).send({ error: "No registrations to sample", code: "NOT_FOUND" });
+
+      const [registration] = (await db.execute(sql`
+        SELECT r.id, r.reg_code AS "regCode", r.status, r.first_name AS "firstName",
+               r.last_name AS "lastName", r.email, t.name AS "ticketName", e.event_name AS "eventName"
+        FROM registrations r
+        JOIN events e ON e.id = r.event_id
+        LEFT JOIN ticket_types t ON t.id = r.ticket_type_id
+        WHERE r.id = ${picked[0].id}`)) as unknown as Array<{
+        id: number; regCode: string; status: string; firstName: string;
+        lastName: string; email: string; ticketName: string | null; eventName: string;
+      }>;
+      const regSessions = ((await db.execute(sql`
+        SELECT rs.id, rs.session_id AS "sessionId", rs.source, s.session_name AS "sessionName",
+               s.session_type AS "sessionType", t.name AS "ticketName"
+        FROM registration_sessions rs
+        JOIN sessions s ON s.id = rs.session_id
+        LEFT JOIN ticket_types t ON t.id = rs.ticket_type_id
+        WHERE rs.registration_id = ${registration.id}
+        ORDER BY rs.id`)) as unknown as Array<{
+        id: number; sessionId: number; source: string; sessionName: string;
+        sessionType: string | null; ticketName: string | null;
+      }>).filter((rs) => !allowedSessionIds || allowedSessionIds.includes(rs.sessionId));
+      const now = new Date();
+      const states = await Promise.all(regSessions.map((rs) => readAttendanceState(db, rs.id, now)));
+      return reply.send({
+        registration: {
+          ...registration,
+          booth: await readCheckinBooth(db, registration.id),
+        },
+        sessions: regSessions.map((rs, index) => ({
+          id: rs.id,
+          sessionId: rs.sessionId,
+          sessionName: rs.sessionName,
+          sessionType: rs.sessionType,
+          ticketName: rs.ticketName,
+          source: rs.source,
+          attendanceMode: states[index].mode,
+          attendanceId: states[index].attendanceId,
+          attendanceDate: states[index].attendanceDate,
+          checkedInAt: states[index].checkedInAt,
+        })),
+      });
+    } catch (error) {
+      if (error instanceof AttendanceError) {
+        return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+      }
+      fastify.log.error(error);
+      return reply.status(500).send({ error: "Failed to load test sample" });
+    }
+  });
+
   fastify.post("", async (request, reply) => {
         const bodyResult = createCheckinSchema.safeParse(request.body);
         if (!bodyResult.success) {

@@ -18,6 +18,12 @@ export const createCheckinSchema = z.object({
     assignedSessionId: z.number().optional(), // Mode 4: staff-assigned fast scan
 });
 
+// Scanner self-test: pick a random real registration to preview. Read-only.
+export const checkinTestSampleSchema = z.object({
+    eventId: z.coerce.number().int().positive(),
+    sessionId: z.coerce.number().int().positive().optional(),
+});
+
 export const checkinStatsSchema = z.object({
     eventId: z.coerce.number().optional(),
     sessionId: z.coerce.number().optional(),
