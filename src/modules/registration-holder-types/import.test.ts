@@ -26,11 +26,11 @@ test("imports 560 synthetic rows across all canonical holder types", () => {
   assert.equal(new Set(result.entries.map((entry) => entry.holderType)).size, 11);
 });
 
-test("explicit aliases and gift short labels match canonical gifts", () => {
+test("explicit aliases match canonical types and the gift/blank rule", () => {
   const result = parseHolderTypeWorkbook(workbook([
-    ["REG-1", "ONE@EXAMPLE.INVALID", "VIP (วิทยากร)", "ชุดใหญ่ไฟกระพริบ"],
-    ["REG-2", "two@example.invalid", "VIPVIP (วิทยากร)", "ชุดใหญ่ไฟกระพริบ"],
-    ["REG-3", "three@example.invalid", "VIP", "แก้ว Mug"],
+    ["REG-1", "ONE@EXAMPLE.INVALID", "VIP (วิทยากร)", ""],
+    ["REG-2", "two@example.invalid", "VIPVIP (วิทยากร)", "-"],
+    ["REG-3", "three@example.invalid", "VIP", "ให้"],
     ["REG-4", "four@example.invalid", HOLDER_TYPES.find((type) => type.key === "health_hack")!.label, "-"],
   ]));
   assert.equal(result.errors.length, 0);
@@ -39,7 +39,7 @@ test("explicit aliases and gift short labels match canonical gifts", () => {
 });
 
 test("BOOTH requires explicit resolution and gift agreement", () => {
-  const book = workbook([["REG-1", "one@example.invalid", "BOOTH", "กิจกรรม"]]);
+  const book = workbook([["REG-1", "one@example.invalid", "BOOTH", ""]]);
   assert.equal(parseHolderTypeWorkbook(book).errors.length, 1);
   for (const boothType of ["exhibitor", "staff_mc"] as const) {
     const result = parseHolderTypeWorkbook(book, { boothType });
@@ -50,8 +50,8 @@ test("BOOTH requires explicit resolution and gift agreement", () => {
 
 test("accepts legacy exhibitor labels after the canonical label changes", () => {
   const result = parseHolderTypeWorkbook(workbook([
-    ["REG-1", "one@example.invalid", "เจ้าหน้าที่บูธ/Exhibitor", "กิจกรรม"],
-    ["REG-2", "two@example.invalid", "เจ้าหน้าที่บูธ(Exhibitor)", "กิจกรรม set2"],
+    ["REG-1", "one@example.invalid", "เจ้าหน้าที่บูธ/Exhibitor", ""],
+    ["REG-2", "two@example.invalid", "เจ้าหน้าที่บูธ(Exhibitor)", "-"],
   ]));
   assert.equal(result.errors.length, 0);
   assert.deepEqual(result.entries.map((entry) => entry.holderType), ["exhibitor", "exhibitor"]);
@@ -60,9 +60,9 @@ test("accepts legacy exhibitor labels after the canonical label changes", () => 
 test("duplicates are reported, including codes seen in invalid or skipped rows", () => {
   const result = parseHolderTypeWorkbook(workbook([
     ["REG-1", "one@example.invalid", "VIP", "wrong gift"],
-    ["REG-1", "one@example.invalid", "VIP", "แก้ว Mug"],
+    ["REG-1", "one@example.invalid", "VIP", "ให้"],
     ["REG-2", "two@example.invalid", "Test", ""],
-    ["REG-2", "two@example.invalid", "VIP", "แก้ว Mug"],
+    ["REG-2", "two@example.invalid", "VIP", "ให้"],
   ]));
   assert.equal(result.entries.length, 0);
   assert.equal(result.errors.length, 3);
@@ -91,7 +91,7 @@ test("rejects missing headers, duplicate headers, and missing Sheet1", () => {
 
 test("rejects formulas even with cached valid results in each required field", () => {
   for (let column = 0; column < 4; column++) {
-    const row: unknown[] = ["REG-1", "one@example.invalid", "VIP", "แก้ว Mug"];
+    const row: unknown[] = ["REG-1", "one@example.invalid", "VIP", "ให้"];
     row[column] = { formula: '"cached"', result: row[column] };
     const result = parseHolderTypeWorkbook(workbook([row]));
     assert.equal(result.entries.length, 0);
@@ -103,12 +103,23 @@ test("rejects formulas even with cached valid results in each required field", (
 test("rejects missing registration, email, type and wrong/blank gift; ignores blank rows", () => {
   const result = parseHolderTypeWorkbook(workbook([
     [],
-    ["", "one@example.invalid", "VIP", "แก้ว Mug"],
-    ["REG-2", "", "VIP", "แก้ว Mug"],
-    ["REG-3", "three@example.invalid", "", "แก้ว Mug"],
-    ["REG-4", "four@example.invalid", "VIP", "กิจกรรม"],
+    ["", "one@example.invalid", "VIP", "ให้"],
+    ["REG-2", "", "VIP", "ให้"],
+    ["REG-3", "three@example.invalid", "", "ให้"],
+    ["REG-4", "four@example.invalid", "ผู้เข้าร่วมงาน", "ให้"],
     ["REG-5", "five@example.invalid", "VIP", ""],
   ]));
   assert.equal(result.entries.length, 0);
   assert.equal(result.errors.length, 5);
+});
+
+test("retired set gift labels are rejected", () => {
+  const result = parseHolderTypeWorkbook(workbook([
+    ["REG-1", "one@example.invalid", "VIP", "แก้ว Mug set1"],
+    ["REG-2", "two@example.invalid", "VIP", "Mug SET1"],
+    ["REG-3", "three@example.invalid", "ผู้เข้าร่วมงาน", "กิจกรรม set2"],
+    ["REG-4", "four@example.invalid", "วิทยากร", "ชุดใหญ่ไฟกระพริบ"],
+  ]));
+  assert.equal(result.entries.length, 0);
+  assert.equal(result.errors.length, 4);
 });

@@ -123,6 +123,11 @@ export default async function (fastify: FastifyInstance) {
                     sql`${registrations.holderType} IS NULL`,
                     sql`${registrations.holderTypeSource} LIKE 'review:%'`,
                 ));
+            } else if (holderType === "gift") {
+                conditions.push(inArray(
+                    registrations.holderType,
+                    HOLDER_TYPES.filter((type) => type.giftCode === "gift").map((type) => type.key),
+                ));
             } else if (holderType) {
                 conditions.push(eq(registrations.holderType, holderType));
             }

@@ -52,17 +52,14 @@ export function parseHolderTypeWorkbook(
   types.set("vip", "vip");
   types.set(normalize("เจ้าหน้าที่บูธ/Exhibitor"), "exhibitor");
   types.set(normalize("เจ้าหน้าที่บูธ(Exhibitor)"), "exhibitor");
+  // Gift is "ให้" for gift recipients and blank (or a dash) for everyone else.
+  // Retired set labels (Mug/กิจกรรม/ชุดใหญ่ไฟกระพริบ) are rejected.
   const gifts = new Map<string, string>([
-    [normalize("แก้ว Mug"), "mug_set1"],
-    [normalize("กิจกรรม"), "activity_set2"],
-    [normalize("ชุดใหญ่ไฟกระพริบ"), "large_set3"],
+    [normalize("ให้"), "gift"],
+    ["", "none"],
     ["-", "none"],
-    // Full labels used before the gifts were renamed on 27 Oct 2026.
-    [normalize("แก้ว Mug set1"), "mug_set1"],
-    [normalize("กิจกรรม set2"), "activity_set2"],
-    [normalize("ชุดใหญ่ไฟกระพริบ set3"), "large_set3"],
+    ["—", "none"],
   ]);
-  for (const type of HOLDER_TYPES) gifts.set(normalize(type.giftLabel), type.giftCode);
   const seen = new Set<string>();
 
   sheet.eachRow((row, rowNumber) => {
