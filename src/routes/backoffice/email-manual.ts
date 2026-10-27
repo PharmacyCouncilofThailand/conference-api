@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { and, desc, eq, ilike, or, exists } from "drizzle-orm";
+import { and, desc, eq, ilike, or, exists, ne, notExists } from "drizzle-orm";
 import { db } from "../../database/index.js";
 import {
   users,
@@ -35,6 +35,8 @@ import {
   sendEventSignupNotificationEmail,
   buildPris2026PreEventEmailContent,
   sendPris2026PreEventEmail,
+  buildPris2026TicketReminderEmailContent,
+  sendPris2026TicketReminderEmail,
   type RegistrationRateNotice,
 } from "../../services/emailTemplates.js";
 import {
@@ -51,7 +53,11 @@ import {
 } from "../../services/eventEmailContext.js";
 import { generateReceiptToken } from "../../utils/receiptToken.js";
 import { setTimeout as sleep } from "node:timers/promises";
-import { checkPris2026PreEventEligibility, parseBatchId } from "../../modules/manual-email/eligibility.js";
+import {
+  checkPris2026PreEventEligibility,
+  checkPris2026TicketReminderEligibility,
+  parseBatchId,
+} from "../../modules/manual-email/eligibility.js";
 import {
   runManualEmailLoop,
   type BuildOutcome,
@@ -133,6 +139,12 @@ export const TEMPLATE_CONFIG = {
     recipientType: "registration" as const,
     requiresComment: false,
     description: "แจ้งข้อมูลการเตรียมตัวก่อนเข้างาน PRIS 2026 สำหรับผู้ลงทะเบียน confirmed ทุกประเภท (ชำระเงินและฟรี)",
+  },
+  "pris-ticket-reminder": {
+    label: "PRIS Ticket Reminder (No Ticket)",
+    recipientType: "user" as const,
+    requiresComment: false,
+    description: "บัญชี active ที่สมัครจาก PRIS 2026 ทุก role ยกเว้น speaker ที่ยังไม่มี primary registration ที่ confirmed",
   },
 } as const;
 
@@ -858,6 +870,75 @@ async function buildPris2026PreEventMessage(
   };
 }
 
+/** Correlated subquery: the outer users row has a confirmed primary-ticket registration for the event. */
+function confirmedPrimaryRegistration(eventId: number) {
+  return db
+    .select({ id: registrations.id })
+    .from(registrations)
+    .innerJoin(ticketTypes, eq(registrations.ticketTypeId, ticketTypes.id))
+    .where(
+      and(
+        eq(registrations.userId, users.id),
+        eq(registrations.eventId, eventId),
+        eq(registrations.status, "confirmed"),
+        eq(ticketTypes.category, "primary"),
+      ),
+    );
+}
+
+/** Recipient list for pris-ticket-reminder; mirrors checkPris2026TicketReminderEligibility. */
+function buildPris2026TicketReminderUserConditions(eventId: number) {
+  return [
+    eq(users.registeredFromEvent, PRIS_2026_EVENT_CODE),
+    eq(users.status, "active" as any),
+    ne(users.role, "speaker" as any),
+    notExists(confirmedPrimaryRegistration(eventId)),
+  ];
+}
+
+async function buildPris2026TicketReminderMessage(
+  eventId: number,
+  eventCode: string,
+  userId: number,
+): Promise<ManualEmailMessage> {
+  const [user] = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      role: users.role,
+      status: users.status,
+      registeredFromEvent: users.registeredFromEvent,
+      hasConfirmedPrimary: exists(confirmedPrimaryRegistration(eventId)),
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const eligibility = checkPris2026TicketReminderEligibility({
+    eventCode,
+    userId,
+    user: user ?? null,
+    hasConfirmedPrimary: Boolean(user?.hasConfirmedPrimary),
+  });
+  if (!eligibility.ok) {
+    throw user
+      ? new ManualEmailSkip(eligibility.reason, user.email, fullName(user.firstName, user.lastName))
+      : new ManualEmailSkip(eligibility.reason);
+  }
+
+  const content = buildPris2026TicketReminderEmailContent(user.firstName, user.lastName);
+  return {
+    id: user.id,
+    email: user.email,
+    name: fullName(user.firstName, user.lastName),
+    type: "pris-ticket-reminder",
+    ...content,
+    send: () => sendPris2026TicketReminderEmail(user.email, user.firstName, user.lastName),
+  };
+}
+
 async function buildManualEmailMessage(
   eventId: number,
   eventCode: string,
@@ -867,6 +948,9 @@ async function buildManualEmailMessage(
 ): Promise<ManualEmailMessage> {
   if (template === "pris-pre-event") {
     return buildPris2026PreEventMessage(eventId, eventCode, id);
+  }
+  if (template === "pris-ticket-reminder") {
+    return buildPris2026TicketReminderMessage(eventId, eventCode, id);
   }
   if (template === "pris-early-bird-reminder") {
     return buildPris2026EarlyBirdReminderMessage(eventId, id);
@@ -948,6 +1032,42 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
             email: user.email,
             detail: user.role,
             tag: "Early Bird eligible / unpaid",
+          }));
+        }
+      } else if (template === "pris-ticket-reminder") {
+        if (event.eventCode !== PRIS_2026_EVENT_CODE) {
+          recipients = [];
+        } else {
+          const rows = await db
+            .select({
+              id: users.id,
+              email: users.email,
+              firstName: users.firstName,
+              lastName: users.lastName,
+              role: users.role,
+            })
+            .from(users)
+            .where(
+              and(
+                ...buildPris2026TicketReminderUserConditions(eventId),
+                search
+                  ? or(
+                      ilike(users.email, `%${search}%`),
+                      ilike(users.firstName, `%${search}%`),
+                      ilike(users.lastName, `%${search}%`),
+                    )
+                  : undefined,
+              ),
+            )
+            .orderBy(desc(users.createdAt))
+            .limit(MAX);
+
+          recipients = rows.map((user) => ({
+            id: user.id,
+            label: fullName(user.firstName, user.lastName),
+            email: user.email,
+            detail: user.role,
+            tag: "No confirmed ticket",
           }));
         }
       } else if (config.recipientType === "user") {

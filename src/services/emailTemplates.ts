@@ -1343,6 +1343,66 @@ export async function sendPris2026PreEventEmail(
   await sendNipaMailHtml(email, content.subject, content.html, true, { timeoutMs: 30_000 });
 }
 
+// ============================================
+// 8e. PRIS 2026 TICKET REMINDER EMAIL (PRIS accounts without a confirmed ticket)
+// ============================================
+
+export function buildPris2026TicketReminderEmailContent(
+  firstName: string,
+  lastName: string,
+): EventEmailContent {
+  const recipientName = escapeHtml(`${firstName} ${lastName}`.trim());
+
+  return {
+    subject: "การลงทะเบียนเข้าร่วมงาน PRIS 2026 ของท่านยังไม่เสร็จสมบูรณ์",
+    html: `<!doctype html>
+<html lang="th">
+  <body>
+    <p>เรียน คุณ${recipientName}</p>
+    <p>การลงทะเบียนเข้าร่วมงาน PRIS 2026 (Pharmacy Research and Innovation Summit) ของท่านยังไม่เสร็จสมบูรณ์ เนื่องจากระบบตรวจสอบพบว่าท่านยังไม่มีบัตรเข้าร่วมงาน สภาเภสัชกรรมจึงขอเรียนเชิญท่านดำเนินการซื้อบัตรเพื่อเข้าร่วมงานประชุมวิชาการวิจัยและนวัตกรรมทางเภสัชกรรมระดับชาติ โดยมีรายละเอียดและขั้นตอนดังนี้</p>
+    <p><strong>รายละเอียดงาน</strong></p>
+    <ul>
+      <li>วันที่: 29–30 ตุลาคม 2569 เวลา 08.00–18.00 น.</li>
+      <li>สถานที่: ห้อง Jupiter 4–13 อิมแพ็ค อารีน่า เมืองทองธานี จังหวัดนนทบุรี</li>
+      <li>พื้นที่ภายในงาน: Main Stage, Pharma, Policy, HealthHack, E-Poster, Pavilion และ Demo Day</li>
+    </ul>
+    <p><strong>ประเภทบัตรและราคา</strong></p>
+    <ul>
+      <li>เภสัชกร / บุคลากรทางการแพทย์: Regular 2,500 บาท</li>
+      <li>นักศึกษาระดับบัณฑิตศึกษา (Postgraduate): 1,250 บาท</li>
+      <li>นักศึกษาระดับปริญญาตรี (Undergraduate): 500 บาท</li>
+    </ul>
+    <p><strong>ขั้นตอนการซื้อบัตร</strong></p>
+    <ol>
+      <li>เข้าสู่เว็บไซต์ลงทะเบียน <a href="${PRIS_2026_REGISTRATION_URL}">${PRIS_2026_REGISTRATION_URL}</a></li>
+      <li>เข้าสู่ระบบด้วยบัญชีของท่าน (หากยังไม่มีบัญชี ให้สมัครสมาชิกก่อน)</li>
+      <li>เลือกประเภทบัตรที่ตรงกับสิทธิ์ของท่าน</li>
+      <li>กรอกโปรโมโค้ด (ถ้ามี) และข้อมูลใบกำกับภาษี (ถ้าต้องการ)</li>
+      <li>ชำระเงินผ่าน PromptPay (QR) หรือบัตรเครดิต/เดบิต</li>
+      <li>หลังชำระเงินสำเร็จ ท่านจะได้รับอีเมลยืนยันการลงทะเบียน พร้อมรหัสลงทะเบียนและ QR Code สำหรับเช็กอินเข้างาน</li>
+    </ol>
+    <p>หากท่านได้ลงทะเบียนและชำระเงินเรียบร้อยแล้ว ขออภัยในความไม่สะดวก และขอความกรุณาละเว้นอีเมลฉบับนี้</p>
+    <p>ท่านสามารถตรวจสอบกำหนดการและข่าวสารล่าสุดได้ที่ <a href="https://pris.pharmacycouncil.org">https://pris.pharmacycouncil.org</a><br>
+    หากมีข้อสงสัยเพิ่มเติม สามารถติดต่อได้ที่ <a href="mailto:pr@pharmacycouncil.org">pr@pharmacycouncil.org</a></p>
+    <p>สภาเภสัชกรรมหวังเป็นอย่างยิ่งว่าจะได้พบท่านในงาน</p>
+    <p>ขอแสดงความนับถือ</p>
+    <p>สภาเภสัชกรรม</p>
+    <p>(The Pharmacy Council of Thailand)</p>
+    <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
+  </body>
+</html>`,
+  };
+}
+
+export async function sendPris2026TicketReminderEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+): Promise<void> {
+  const content = buildPris2026TicketReminderEmailContent(firstName, lastName);
+  await sendNipaMailHtml(email, content.subject, content.html, true, { timeoutMs: 30_000 });
+}
+
 // 9. VERIFICATION APPROVED EMAIL
 // ============================================
 

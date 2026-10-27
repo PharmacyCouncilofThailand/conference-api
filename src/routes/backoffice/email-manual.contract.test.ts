@@ -89,3 +89,8 @@ test("pris-pre-event template is registered as a registration template", () => {
   assert.equal(TEMPLATE_CONFIG["pris-pre-event"].recipientType, "registration");
   assert.equal(TEMPLATE_CONFIG["pris-pre-event"].label, "PRIS Pre-Event Preparation");
 });
+
+test("pris-ticket-reminder template is registered as a user template", () => {
+  assert.equal(TEMPLATE_CONFIG["pris-ticket-reminder"].recipientType, "user");
+  assert.equal(TEMPLATE_CONFIG["pris-ticket-reminder"].label, "PRIS Ticket Reminder (No Ticket)");
+});

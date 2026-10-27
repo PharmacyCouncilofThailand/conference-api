@@ -23,6 +23,31 @@ export function checkPris2026PreEventEligibility(input: {
   return { ok: true };
 }
 
+export function checkPris2026TicketReminderEligibility(input: {
+  eventCode: string;
+  userId: number;
+  user: { status: string; role: string; registeredFromEvent: string | null } | null;
+  hasConfirmedPrimary: boolean;
+}): EligibilityResult {
+  if (!input.user) return { ok: false, reason: `User #${input.userId} not found` };
+  if (input.eventCode !== PRIS_2026_EVENT_CODE) {
+    return { ok: false, reason: "Template is only available for PRIS 2026" };
+  }
+  if (input.user.status !== "active") {
+    return { ok: false, reason: `User status is "${input.user.status}" (expected active)` };
+  }
+  if (input.user.registeredFromEvent !== PRIS_2026_EVENT_CODE) {
+    return { ok: false, reason: "User did not register from PRIS 2026" };
+  }
+  if (input.user.role === "speaker") {
+    return { ok: false, reason: "Speakers do not need to buy a ticket" };
+  }
+  if (input.hasConfirmedPrimary) {
+    return { ok: false, reason: "User already has a confirmed primary registration" };
+  }
+  return { ok: true };
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Missing batch ids (older clients) get a generated one; malformed ones are rejected. */

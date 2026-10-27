@@ -6,6 +6,7 @@ import {
   buildEventPaymentReceiptEmailContent,
   buildPris2026EarlyBirdReminderEmailContent,
   buildPris2026PreEventEmailContent,
+  buildPris2026TicketReminderEmailContent,
   sendPris2026PreEventEmail,
 } from "./emailTemplates.js";
 
@@ -284,4 +285,25 @@ test("PRIS pre-event send uses a 30s provider timeout", async () => {
     restore("NIPAMAIL_CLIENT_SECRET", saved.secret);
     restore("NIPAMAIL_SENDER_EMAIL", saved.sender);
   }
+});
+
+test("PRIS ticket reminder email uses the approved subject, prices and purchase steps", () => {
+  const result = buildPris2026TicketReminderEmailContent("Ada", "Lovelace");
+
+  assert.equal(result.subject, "การลงทะเบียนเข้าร่วมงาน PRIS 2026 ของท่านยังไม่เสร็จสมบูรณ์");
+  assert.match(result.html, /<p>เรียน คุณAda Lovelace<\/p>/);
+  assert.match(result.html, /ระบบตรวจสอบพบว่าท่านยังไม่มีบัตรเข้าร่วมงาน/);
+  assert.match(result.html, /<li>เภสัชกร \/ บุคลากรทางการแพทย์: Regular 2,500 บาท<\/li>/);
+  assert.match(result.html, /<li>นักศึกษาระดับบัณฑิตศึกษา \(Postgraduate\): 1,250 บาท<\/li>/);
+  assert.match(result.html, /<li>นักศึกษาระดับปริญญาตรี \(Undergraduate\): 500 บาท<\/li>/);
+  assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/th\/registration"/);
+  assert.match(result.html, /ชำระเงินผ่าน PromptPay \(QR\) หรือบัตรเครดิต\/เดบิต/);
+  assert.match(result.html, /หากท่านได้ลงทะเบียนและชำระเงินเรียบร้อยแล้ว ขออภัยในความไม่สะดวก/);
+  assert.match(result.html, /<p>\(The Pharmacy Council of Thailand\)<\/p>/);
+  assert.match(result.html, /หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ/);
+});
+
+test("PRIS ticket reminder email escapes the recipient name", () => {
+  const result = buildPris2026TicketReminderEmailContent("<b>Ada</b>", "O'Neil");
+  assert.match(result.html, /เรียน คุณ&lt;b&gt;Ada&lt;\/b&gt; O&#39;Neil/);
 });
