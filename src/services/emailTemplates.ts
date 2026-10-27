@@ -113,7 +113,8 @@ async function sendNipaMailHtml(
   recipient: string,
   subject: string,
   html: string,
-  retryOnAuth: boolean = true
+  retryOnAuth: boolean = true,
+  options: { timeoutMs?: number } = {},
 ): Promise<void> {
   const token = await getAccessToken();
 
@@ -134,6 +135,7 @@ async function sendNipaMailHtml(
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
+        ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
       }
     );
   } catch (error: unknown) {
@@ -143,7 +145,7 @@ async function sendNipaMailHtml(
       error.response?.status === 401
     ) {
       cachedToken = null;
-      return sendNipaMailHtml(recipient, subject, html, false);
+      return sendNipaMailHtml(recipient, subject, html, false, options);
     }
     if (axios.isAxiosError(error) && error.response) {
       console.error("NipaMail send failed:", JSON.stringify(error.response.data));
@@ -1260,6 +1262,149 @@ export async function sendPris2026EarlyBirdReminderEmail(
 ): Promise<void> {
   const content = buildPris2026EarlyBirdReminderEmailContent(firstName, lastName, ctx, notice);
   await sendNipaMailHtml(email, content.subject, content.html);
+}
+
+// ============================================
+// 8d. PRIS 2026 PRE-EVENT PREPARATION EMAIL (what to prepare before attending)
+// ============================================
+
+export function buildPris2026PreEventEmailContent(
+  firstName: string,
+  lastName: string,
+  regCode: string,
+  ticketName: string,
+): EventEmailContent {
+  const recipientName = escapeHtml(`${firstName} ${lastName}`.trim());
+
+  return {
+    subject: `แจ้งข้อมูลการเตรียมตัวก่อนเข้าร่วมงาน PRIS 2026 รหัสลงทะเบียน ${regCode}`,
+    html: `<!doctype html>
+<html lang="th">
+  <body>
+    <p>เรียน คุณ${recipientName}</p>
+    <p>สภาเภสัชกรรมขอขอบคุณที่ท่านลงทะเบียนเข้าร่วมงาน PRIS 2026 (Pharmacy Research and Innovation Summit) งานประชุมวิชาการวิจัยและนวัตกรรมทางเภสัชกรรมระดับชาติ และขอแจ้งข้อมูลสำหรับการเตรียมตัวก่อนเข้าร่วมงาน โดยมีรายละเอียดดังนี้</p>
+    <p><strong>รายละเอียดงาน</strong></p>
+    <ul>
+      <li>วันที่: 29–30 ตุลาคม 2569 เวลา 08.00–18.00 น.</li>
+      <li>สถานที่: ห้อง Jupiter 4–13 อิมแพ็ค อารีน่า เมืองทองธานี จังหวัดนนทบุรี</li>
+      <li>รหัสลงทะเบียน: ${escapeHtml(regCode)}</li>
+      <li>ประเภทบัตร: ${escapeHtml(ticketName)}</li>
+    </ul>
+    <p><strong>สิ่งที่ต้องเตรียมก่อนมางาน</strong></p>
+    <ol>
+      <li>ตรวจสอบอีเมลว่าได้รับ QR Code สำหรับเข้างานแล้ว</li>
+      <li>เตรียม QR Code สำหรับเช็กอินเข้างาน ท่านไม่จำเป็นต้องพิมพ์บัตร สามารถแสดง QR Code บนโทรศัพท์มือถือได้ และไม่ต้องใช้เอกสารอื่นเพิ่มเติม</li>
+      <li>ผูกบัญชีกับ LINE Official Account ของสภาเภสัชกรรม (@pharmacycouncil) ตามขั้นตอนด้านล่าง</li>
+      <li>วางแผนหัวข้อที่สนใจ โดยเลือก session และกิจกรรมที่ต้องการเข้าร่วมล่วงหน้า</li>
+      <li>เตรียมโทรศัพท์มือถือและแบตเตอรี่สำรอง (Power Bank) สำหรับใช้งานและสแกน QR Code ภายในงาน</li>
+      <li>วางแผนการเดินทางมายังอิมแพ็ค เมืองทองธานี</li>
+    </ol>
+    <p><strong>ขั้นตอนการผูกบัญชี LINE OA กับระบบ PRIS 2026</strong></p>
+    <ol>
+      <li>เพิ่มเพื่อน LINE OA สภาเภสัชกรรม @pharmacycouncil</li>
+      <li>กดเมนู "งานประชุม" ที่ Rich Menu ด้านล่าง</li>
+      <li>กดเมนู "บัตรเข้าร่วมงาน" และกรอก Username และ Password ของระบบ PRIS 2026</li>
+    </ol>
+    <p>ทั้งนี้ แนะนำให้เตรียม Username และ Password ไว้ล่วงหน้า</p>
+    <p><strong>การเดินทางและที่จอดรถ</strong></p>
+    <ul>
+      <li>รถยนต์ส่วนตัว: สามารถจอดรถได้ที่อาคารจอดรถ P1 ภายในอิมแพ็ค</li>
+      <li>แท็กซี่หรือรถรับจ้าง: ระบุปลายทาง "IMPACT JUPITER เมืองทองธานี"</li>
+      <li>ขนส่งสาธารณะ: กรุณาตรวจสอบเส้นทางล่วงหน้า</li>
+      <li>บัตรจอดรถ: สามารถประทับตรา (Stamp) บัตรจอดรถได้ที่จุดบริการภายในงาน</li>
+    </ul>
+    <p><strong>ข้อมูลเพิ่มเติม</strong></p>
+    <ul>
+      <li>เวลาที่แนะนำให้มาถึง: ก่อนเวลา 08.00 น. เพื่อเช็กอินเข้างาน</li>
+      <li>อาหารว่าง: จัดให้ตามประเภทบัตรที่ท่านลงทะเบียน</li>
+      <li>พื้นที่ภายในงาน: Main Stage, Pharma, Policy, HealthHack, E-Poster, Pavilion และ Demo Day</li>
+    </ul>
+    <p>ท่านสามารถตรวจสอบกำหนดการและข่าวสารล่าสุดได้ที่ <a href="https://pris.pharmacycouncil.org">https://pris.pharmacycouncil.org</a></p>
+    <p>หากมีข้อสงสัยเพิ่มเติม สามารถติดต่อได้ที่ <a href="mailto:pr@pharmacycouncil.org">pr@pharmacycouncil.org</a></p>
+    <p>จึงเรียนมาเพื่อโปรดทราบ และสภาเภสัชกรรมหวังเป็นอย่างยิ่งว่าจะได้พบท่านในงาน</p>
+    <p>ขอแสดงความนับถือ</p>
+    <p>สภาเภสัชกรรม</p>
+    <p>(The Pharmacy Council of Thailand)</p>
+    <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
+  </body>
+</html>`,
+  };
+}
+
+export async function sendPris2026PreEventEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+  regCode: string,
+  ticketName: string,
+): Promise<void> {
+  const content = buildPris2026PreEventEmailContent(firstName, lastName, regCode, ticketName);
+  // Bounded so one stalled provider call cannot block a manual batch indefinitely.
+  await sendNipaMailHtml(email, content.subject, content.html, true, { timeoutMs: 30_000 });
+}
+
+// ============================================
+// 8e. PRIS 2026 TICKET REMINDER EMAIL (PRIS accounts without a confirmed ticket)
+// ============================================
+
+export function buildPris2026TicketReminderEmailContent(
+  firstName: string,
+  lastName: string,
+): EventEmailContent {
+  const recipientName = escapeHtml(`${firstName} ${lastName}`.trim());
+
+  return {
+    subject: "การลงทะเบียนเข้าร่วมงาน PRIS 2026 ของท่านยังไม่เสร็จสมบูรณ์",
+    html: `<!doctype html>
+<html lang="th">
+  <body>
+    <p>เรียน คุณ${recipientName}</p>
+    <p>การลงทะเบียนเข้าร่วมงาน PRIS 2026 (Pharmacy Research and Innovation Summit) ของท่านยังไม่เสร็จสมบูรณ์ เนื่องจากระบบตรวจสอบพบว่าท่านยังไม่มีบัตรเข้าร่วมงาน สภาเภสัชกรรมจึงขอเรียนเชิญท่านดำเนินการซื้อบัตรเพื่อเข้าร่วมงานประชุมวิชาการวิจัยและนวัตกรรมทางเภสัชกรรมระดับชาติ โดยมีรายละเอียดและขั้นตอนดังนี้</p>
+    <p><strong>รายละเอียดงาน</strong></p>
+    <ul>
+      <li>วันที่: 29–30 ตุลาคม 2569 เวลา 08.00–18.00 น.</li>
+      <li>สถานที่: ห้อง Jupiter 4–13 อิมแพ็ค อารีน่า เมืองทองธานี จังหวัดนนทบุรี</li>
+      <li>พื้นที่ภายในงาน: Main Stage, Pharma, Policy, HealthHack, E-Poster, Pavilion และ Demo Day</li>
+    </ul>
+    <p><strong>ประเภทบัตรและราคา</strong></p>
+    <ul>
+      <li>เภสัชกร / บุคลากรทางการแพทย์: Regular 2,500 บาท</li>
+      <li>นักศึกษาระดับบัณฑิตศึกษา (Postgraduate): 1,250 บาท</li>
+      <li>นักศึกษาระดับปริญญาตรี (Undergraduate): 500 บาท</li>
+    </ul>
+    <p><strong>ขั้นตอนการซื้อบัตร</strong></p>
+    <ol>
+      <li>เข้าสู่เว็บไซต์ลงทะเบียน <a href="${PRIS_2026_REGISTRATION_URL}">${PRIS_2026_REGISTRATION_URL}</a></li>
+      <li>เข้าสู่ระบบด้วยบัญชีของท่าน (หากยังไม่มีบัญชี ให้สมัครสมาชิกก่อน)</li>
+      <li>เลือกประเภทบัตรที่ตรงกับสิทธิ์ของท่าน</li>
+      <li>กรอกโปรโมโค้ด (ถ้ามี) และข้อมูลใบกำกับภาษี (ถ้าต้องการ)</li>
+      <li>ชำระเงินผ่าน PromptPay (QR) หรือบัตรเครดิต/เดบิต</li>
+      <li>หลังชำระเงินสำเร็จ ท่านจะได้รับอีเมลยืนยันการลงทะเบียน พร้อมรหัสลงทะเบียนและ QR Code สำหรับเช็กอินเข้างาน</li>
+    </ol>
+    <p>หากท่านได้ลงทะเบียนและชำระเงินเรียบร้อยแล้ว ขออภัยในความไม่สะดวก และขอความกรุณาละเว้นอีเมลฉบับนี้</p>
+    <div style="margin:16px 0;padding:14px 18px;border:2px solid #1d4ed8;border-radius:6px;background:#eff6ff;">
+      <p style="margin:0 0 4px 0;font-size:16px;"><strong>หากมีปัญหาในการลงทะเบียนหรือซื้อบัตร โปรดติดต่อสภาเภสัชกรรม</strong></p>
+      <p style="margin:0;font-size:20px;"><strong>โทร. <a href="tel:025919992" style="color:#1d4ed8;text-decoration:none;">02-591-9992</a></strong></p>
+    </div>
+    <p>ท่านสามารถตรวจสอบกำหนดการและข่าวสารล่าสุดได้ที่ <a href="https://pris.pharmacycouncil.org">https://pris.pharmacycouncil.org</a><br>
+    หากมีข้อสงสัยเพิ่มเติม สามารถติดต่อได้ที่ <a href="mailto:pr@pharmacycouncil.org">pr@pharmacycouncil.org</a></p>
+    <p>สภาเภสัชกรรมหวังเป็นอย่างยิ่งว่าจะได้พบท่านในงาน</p>
+    <p>ขอแสดงความนับถือ</p>
+    <p>สภาเภสัชกรรม</p>
+    <p>(The Pharmacy Council of Thailand)</p>
+    <p><em>หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ กรุณาอย่าตอบกลับอีเมลนี้</em></p>
+  </body>
+</html>`,
+  };
+}
+
+export async function sendPris2026TicketReminderEmail(
+  email: string,
+  firstName: string,
+  lastName: string,
+): Promise<void> {
+  const content = buildPris2026TicketReminderEmailContent(firstName, lastName);
+  await sendNipaMailHtml(email, content.subject, content.html, true, { timeoutMs: 30_000 });
 }
 
 // 9. VERIFICATION APPROVED EMAIL

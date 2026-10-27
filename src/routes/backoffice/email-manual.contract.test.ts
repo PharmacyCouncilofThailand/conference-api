@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 process.env.DATABASE_URL ??= "postgres://test:test@127.0.0.1:5432/test";
-const { buildManualAbstractResultContent } = await import("./email-manual.js");
+const { buildManualAbstractResultContent, validateManualEmailPostBody, TEMPLATE_CONFIG } = await import("./email-manual.js");
 
 const ctx = {
   eventName: "PRIS 2026",
@@ -54,4 +54,43 @@ test("manual PRIS rejected content uses the final reject subject and rate notice
   assert.match(content.html, /Manual rejected reviewer note/);
   assert.match(content.html, /IMPORTANT REGISTRATION RATE/);
   assert.match(content.html, /1,250/);
+});
+
+test("post body rejects more than 50 unique ids after dedupe", () => {
+  const ids = Array.from({ length: 51 }, (_, i) => i + 1);
+  assert.deepEqual(
+    validateManualEmailPostBody({ eventId: 1, template: "pris-pre-event", recipientIds: ids }),
+    { ok: false, error: "recipientIds must contain at most 50 IDs per request" },
+  );
+  const deduped = validateManualEmailPostBody({
+    eventId: 1,
+    template: "pris-pre-event",
+    recipientIds: [...ids.slice(0, 50), 1, 2, "x"],
+  });
+  assert.equal(deduped.ok, true);
+  assert.ok(deduped.ok && deduped.ids.length === 50);
+});
+
+test("post body batchId: uppercase normalized, invalid rejected", () => {
+  const ok = validateManualEmailPostBody({
+    eventId: 1,
+    template: "event-reminder",
+    recipientIds: [1],
+    batchId: "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
+  });
+  assert.ok(ok.ok && ok.batchId === "3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+  assert.deepEqual(
+    validateManualEmailPostBody({ eventId: 1, template: "event-reminder", recipientIds: [1], batchId: "nope" }),
+    { ok: false, error: "batchId must be a UUID" },
+  );
+});
+
+test("pris-pre-event template is registered as a registration template", () => {
+  assert.equal(TEMPLATE_CONFIG["pris-pre-event"].recipientType, "registration");
+  assert.equal(TEMPLATE_CONFIG["pris-pre-event"].label, "PRIS Pre-Event Preparation");
+});
+
+test("pris-ticket-reminder template is registered as a user template", () => {
+  assert.equal(TEMPLATE_CONFIG["pris-ticket-reminder"].recipientType, "user");
+  assert.equal(TEMPLATE_CONFIG["pris-ticket-reminder"].label, "PRIS Ticket Reminder (No Ticket)");
 });

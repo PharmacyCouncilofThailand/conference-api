@@ -5,6 +5,9 @@ import {
   buildEventAbstractRejectedEmailContent,
   buildEventPaymentReceiptEmailContent,
   buildPris2026EarlyBirdReminderEmailContent,
+  buildPris2026PreEventEmailContent,
+  buildPris2026TicketReminderEmailContent,
+  sendPris2026PreEventEmail,
 } from "./emailTemplates.js";
 
 const ctx = {
@@ -219,4 +222,94 @@ test("manual PRIS reminder keeps its subject and uses the Thai reminder body", (
   assert.match(result.html, /ขอแสดงความนับถือ<br>สภาเภสัชกรรม<br>ติดต่อ 02 591 9992/);
   assert.doesNotMatch(result.html, /Dear Ada Lovelace/);
   assert.doesNotMatch(result.html, /IMPORTANT REGISTRATION RATE/);
+});
+
+test("PRIS pre-event email lists registration details, preparation steps and LINE OA binding", () => {
+  const result = buildPris2026PreEventEmailContent("Ada", "Lovelace", "PRIS26-0001", "Pharmacist");
+
+  assert.equal(result.subject, "แจ้งข้อมูลการเตรียมตัวก่อนเข้าร่วมงาน PRIS 2026 รหัสลงทะเบียน PRIS26-0001");
+  assert.match(result.html, /<p>เรียน คุณAda Lovelace<\/p>/);
+  assert.match(result.html, /<li>วันที่: 29–30 ตุลาคม 2569 เวลา 08\.00–18\.00 น\.<\/li>/);
+  assert.match(result.html, /<li>สถานที่: ห้อง Jupiter 4–13 อิมแพ็ค อารีน่า เมืองทองธานี จังหวัดนนทบุรี<\/li>/);
+  assert.match(result.html, /<li>รหัสลงทะเบียน: PRIS26-0001<\/li>/);
+  assert.match(result.html, /<li>ประเภทบัตร: Pharmacist<\/li>/);
+  assert.match(result.html, /ไม่จำเป็นต้องพิมพ์บัตร/);
+  assert.match(result.html, /@pharmacycouncil/);
+  assert.match(result.html, /กดเมนู "บัตรเข้าร่วมงาน"/);
+  assert.match(result.html, /อาคารจอดรถ P1/);
+  assert.match(result.html, /IMPACT JUPITER เมืองทองธานี/);
+  assert.match(result.html, /ก่อนเวลา 08\.00 น\./);
+  assert.match(result.html, /href="mailto:pr@pharmacycouncil\.org"/);
+  assert.match(result.html, /<p>\(The Pharmacy Council of Thailand\)<\/p>/);
+  assert.doesNotMatch(result.html, /2,500/);
+  assert.doesNotMatch(result.html, /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
+});
+
+test("PRIS pre-event email escapes recipient-provided values", () => {
+  const result = buildPris2026PreEventEmailContent("<b>Ada</b>", "O'Neil", "PRIS26-0001", "A & B");
+
+  assert.match(result.html, /เรียน คุณ&lt;b&gt;Ada&lt;\/b&gt; O&#39;Neil/);
+  assert.match(result.html, /ประเภทบัตร: A &amp; B/);
+  assert.doesNotMatch(result.html, /<b>Ada<\/b>/);
+});
+
+test("PRIS pre-event send uses a 30s provider timeout", async () => {
+  const axios = (await import("axios")).default;
+  const originalPost = axios.post;
+  const saved = {
+    id: process.env.NIPAMAIL_CLIENT_ID,
+    secret: process.env.NIPAMAIL_CLIENT_SECRET,
+    sender: process.env.NIPAMAIL_SENDER_EMAIL,
+  };
+  const calls: Array<{ url: string; timeout?: number }> = [];
+  process.env.NIPAMAIL_CLIENT_ID = "test-client";
+  process.env.NIPAMAIL_CLIENT_SECRET = "test-secret";
+  process.env.NIPAMAIL_SENDER_EMAIL = "sender@example.com";
+  (axios as unknown as { post: typeof axios.post }).post = (async (url: string, _body: unknown, options?: { timeout?: number }) => {
+    calls.push({ url, timeout: options?.timeout });
+    if (url.endsWith("/v1/auth/tokens")) return { data: { access_token: "test-token" } } as never;
+    return { data: { id: "message-id" } } as never;
+  }) as typeof axios.post;
+  const restore = (key: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  };
+
+  try {
+    await sendPris2026PreEventEmail("ada@example.test", "Ada", "Lovelace", "PRIS26-0001", "Pharmacist");
+    const send = calls.find((call) => call.url.endsWith("/v1/messages"));
+    assert.equal(send?.timeout, 30_000);
+  } finally {
+    (axios as unknown as { post: typeof axios.post }).post = originalPost;
+    restore("NIPAMAIL_CLIENT_ID", saved.id);
+    restore("NIPAMAIL_CLIENT_SECRET", saved.secret);
+    restore("NIPAMAIL_SENDER_EMAIL", saved.sender);
+  }
+});
+
+test("PRIS ticket reminder email uses the approved subject, prices and purchase steps", () => {
+  const result = buildPris2026TicketReminderEmailContent("Ada", "Lovelace");
+
+  assert.equal(result.subject, "การลงทะเบียนเข้าร่วมงาน PRIS 2026 ของท่านยังไม่เสร็จสมบูรณ์");
+  assert.match(result.html, /<p>เรียน คุณAda Lovelace<\/p>/);
+  assert.match(result.html, /ระบบตรวจสอบพบว่าท่านยังไม่มีบัตรเข้าร่วมงาน/);
+  assert.match(result.html, /<li>เภสัชกร \/ บุคลากรทางการแพทย์: Regular 2,500 บาท<\/li>/);
+  assert.match(result.html, /<li>นักศึกษาระดับบัณฑิตศึกษา \(Postgraduate\): 1,250 บาท<\/li>/);
+  assert.match(result.html, /<li>นักศึกษาระดับปริญญาตรี \(Undergraduate\): 500 บาท<\/li>/);
+  assert.match(result.html, /href="https:\/\/pris\.pharmacycouncil\.org\/th\/registration"/);
+  assert.match(result.html, /ชำระเงินผ่าน PromptPay \(QR\) หรือบัตรเครดิต\/เดบิต/);
+  assert.match(result.html, /หากท่านได้ลงทะเบียนและชำระเงินเรียบร้อยแล้ว ขออภัยในความไม่สะดวก/);
+  assert.match(result.html, /<p>\(The Pharmacy Council of Thailand\)<\/p>/);
+  assert.match(result.html, /หมายเหตุ: อีเมลฉบับนี้จัดส่งโดยระบบอัตโนมัติ/);
+});
+
+test("PRIS ticket reminder email shows the council phone number prominently", () => {
+  const result = buildPris2026TicketReminderEmailContent("Ada", "Lovelace");
+
+  assert.match(result.html, /<strong>โทร\. <a href="tel:025919992"[^>]*>02-591-9992<\/a><\/strong>/);
+});
+
+test("PRIS ticket reminder email escapes the recipient name", () => {
+  const result = buildPris2026TicketReminderEmailContent("<b>Ada</b>", "O'Neil");
+  assert.match(result.html, /เรียน คุณ&lt;b&gt;Ada&lt;\/b&gt; O&#39;Neil/);
 });

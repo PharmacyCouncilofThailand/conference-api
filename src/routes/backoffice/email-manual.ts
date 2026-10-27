@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { and, desc, eq, ilike, or, exists } from "drizzle-orm";
+import { and, desc, eq, ilike, or, exists, ne, notExists } from "drizzle-orm";
 import { db } from "../../database/index.js";
 import {
   users,
@@ -33,6 +33,10 @@ import {
   sendEventRegistrationEmail,
   sendEventReminderEmail,
   sendEventSignupNotificationEmail,
+  buildPris2026PreEventEmailContent,
+  sendPris2026PreEventEmail,
+  buildPris2026TicketReminderEmailContent,
+  sendPris2026TicketReminderEmail,
   type RegistrationRateNotice,
 } from "../../services/emailTemplates.js";
 import {
@@ -48,8 +52,28 @@ import {
   resolveEventEmailContext,
 } from "../../services/eventEmailContext.js";
 import { generateReceiptToken } from "../../utils/receiptToken.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import {
+  checkPris2026PreEventEligibility,
+  checkPris2026TicketReminderEligibility,
+  parseBatchId,
+} from "../../modules/manual-email/eligibility.js";
+import {
+  runManualEmailLoop,
+  type BuildOutcome,
+  type ManualEmailResult,
+} from "../../modules/manual-email/send-loop.js";
+import {
+  MANUAL_EMAIL_LOG_PAGE_SIZE,
+  createManualEmailLogWriter,
+  findLastSentAt,
+  listManualEmailLogs,
+} from "../../modules/manual-email/log-store.js";
 
-const TEMPLATE_CONFIG = {
+/** Upper bound per POST; the backoffice sends in smaller chunks so each request stays short. */
+const MAX_RECIPIENTS_PER_REQUEST = 50;
+
+export const TEMPLATE_CONFIG = {
   "signup-notification": {
     label: "Signup Notification",
     recipientType: "user" as const,
@@ -110,10 +134,21 @@ const TEMPLATE_CONFIG = {
     requiresComment: false,
     description: "Friendly reminder for confirmed registrants that the event is coming up",
   },
+  "pris-pre-event": {
+    label: "PRIS Pre-Event Preparation",
+    recipientType: "registration" as const,
+    requiresComment: false,
+    description: "แจ้งข้อมูลการเตรียมตัวก่อนเข้างาน PRIS 2026 สำหรับผู้ลงทะเบียน confirmed ทุกประเภท (ชำระเงินและฟรี)",
+  },
+  "pris-ticket-reminder": {
+    label: "PRIS Ticket Reminder (No Ticket)",
+    recipientType: "user" as const,
+    requiresComment: false,
+    description: "บัญชี active ที่สมัครจาก PRIS 2026 ทุก role ยกเว้น speaker ที่ยังไม่มี primary registration ที่ confirmed",
+  },
 } as const;
 
 type TemplateId = keyof typeof TEMPLATE_CONFIG;
-type ManualEmailStatus = "pending" | "sent" | "failed" | "skipped";
 
 interface RecipientRow {
   id: number;
@@ -121,15 +156,7 @@ interface RecipientRow {
   email: string;
   detail: string;
   tag: string;
-}
-
-interface ManualEmailResult {
-  id: number;
-  email: string;
-  name: string;
-  type: string;
-  status: ManualEmailStatus;
-  reason?: string;
+  lastSentAt?: string | null;
 }
 
 interface ManualEmailMessage {
@@ -181,6 +208,52 @@ function parseEventId(raw: unknown): number | null {
 function parseTemplate(raw: unknown): TemplateId | null {
   if (typeof raw !== "string") return null;
   return raw in TEMPLATE_CONFIG ? (raw as TemplateId) : null;
+}
+
+export function validateManualEmailPostBody(
+  body: unknown,
+):
+  | {
+      ok: true;
+      eventId: number;
+      template: TemplateId;
+      ids: number[];
+      dryRun: boolean;
+      batchId: string;
+      comment?: string;
+    }
+  | { ok: false; error: string } {
+  const input = (body ?? {}) as {
+    eventId?: unknown;
+    template?: unknown;
+    recipientIds?: unknown;
+    dryRun?: unknown;
+    comment?: unknown;
+    batchId?: unknown;
+  };
+  const eventId = parseEventId(input.eventId);
+  const template = parseTemplate(input.template);
+  if (!eventId) return { ok: false, error: "eventId is required" };
+  if (!template) return { ok: false, error: "Valid template is required" };
+  if (!Array.isArray(input.recipientIds) || input.recipientIds.length === 0) {
+    return { ok: false, error: "recipientIds must be a non-empty array" };
+  }
+  const ids = [...new Set(input.recipientIds.map(Number))].filter((id) => Number.isInteger(id) && id > 0);
+  if (ids.length === 0) return { ok: false, error: "recipientIds must contain valid IDs" };
+  if (ids.length > MAX_RECIPIENTS_PER_REQUEST) {
+    return { ok: false, error: `recipientIds must contain at most ${MAX_RECIPIENTS_PER_REQUEST} IDs per request` };
+  }
+  const batch = parseBatchId(input.batchId);
+  if (!batch.ok) return { ok: false, error: "batchId must be a UUID" };
+  return {
+    ok: true,
+    eventId,
+    template,
+    ids,
+    dryRun: input.dryRun === true,
+    batchId: batch.batchId,
+    comment: typeof input.comment === "string" && input.comment ? input.comment : undefined,
+  };
 }
 
 async function loadEventScope(eventId: number): Promise<{ id: number; eventCode: string }> {
@@ -749,6 +822,123 @@ async function buildRegistrationMessage(
   };
 }
 
+async function buildPris2026PreEventMessage(
+  eventId: number,
+  eventCode: string,
+  registrationId: number,
+): Promise<ManualEmailMessage> {
+  const [reg] = await db
+    .select({
+      id: registrations.id,
+      regCode: registrations.regCode,
+      ticketTypeId: registrations.ticketTypeId,
+      email: registrations.email,
+      firstName: registrations.firstName,
+      lastName: registrations.lastName,
+      status: registrations.status,
+    })
+    .from(registrations)
+    .where(and(eq(registrations.id, registrationId), eq(registrations.eventId, eventId)))
+    .limit(1);
+
+  const eligibility = checkPris2026PreEventEligibility({
+    eventCode,
+    registrationId,
+    registration: reg ?? null,
+  });
+  if (!eligibility.ok) {
+    throw reg
+      ? new ManualEmailSkip(eligibility.reason, reg.email, fullName(reg.firstName, reg.lastName))
+      : new ManualEmailSkip(eligibility.reason);
+  }
+
+  const [ticket] = await db
+    .select({ name: ticketTypes.name })
+    .from(ticketTypes)
+    .where(eq(ticketTypes.id, reg.ticketTypeId))
+    .limit(1);
+  const ticketName = ticket?.name ?? "Ticket";
+  const content = buildPris2026PreEventEmailContent(reg.firstName, reg.lastName, reg.regCode, ticketName);
+
+  return {
+    id: reg.id,
+    email: reg.email,
+    name: fullName(reg.firstName, reg.lastName),
+    type: "pris-pre-event",
+    ...content,
+    send: () => sendPris2026PreEventEmail(reg.email, reg.firstName, reg.lastName, reg.regCode, ticketName),
+  };
+}
+
+/** Correlated subquery: the outer users row has a confirmed primary-ticket registration for the event. */
+function confirmedPrimaryRegistration(eventId: number) {
+  return db
+    .select({ id: registrations.id })
+    .from(registrations)
+    .innerJoin(ticketTypes, eq(registrations.ticketTypeId, ticketTypes.id))
+    .where(
+      and(
+        eq(registrations.userId, users.id),
+        eq(registrations.eventId, eventId),
+        eq(registrations.status, "confirmed"),
+        eq(ticketTypes.category, "primary"),
+      ),
+    );
+}
+
+/** Recipient list for pris-ticket-reminder; mirrors checkPris2026TicketReminderEligibility. */
+function buildPris2026TicketReminderUserConditions(eventId: number) {
+  return [
+    eq(users.registeredFromEvent, PRIS_2026_EVENT_CODE),
+    eq(users.status, "active" as any),
+    ne(users.role, "speaker" as any),
+    notExists(confirmedPrimaryRegistration(eventId)),
+  ];
+}
+
+async function buildPris2026TicketReminderMessage(
+  eventId: number,
+  eventCode: string,
+  userId: number,
+): Promise<ManualEmailMessage> {
+  const [user] = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      role: users.role,
+      status: users.status,
+      registeredFromEvent: users.registeredFromEvent,
+      hasConfirmedPrimary: exists(confirmedPrimaryRegistration(eventId)),
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const eligibility = checkPris2026TicketReminderEligibility({
+    eventCode,
+    userId,
+    user: user ?? null,
+    hasConfirmedPrimary: Boolean(user?.hasConfirmedPrimary),
+  });
+  if (!eligibility.ok) {
+    throw user
+      ? new ManualEmailSkip(eligibility.reason, user.email, fullName(user.firstName, user.lastName))
+      : new ManualEmailSkip(eligibility.reason);
+  }
+
+  const content = buildPris2026TicketReminderEmailContent(user.firstName, user.lastName);
+  return {
+    id: user.id,
+    email: user.email,
+    name: fullName(user.firstName, user.lastName),
+    type: "pris-ticket-reminder",
+    ...content,
+    send: () => sendPris2026TicketReminderEmail(user.email, user.firstName, user.lastName),
+  };
+}
+
 async function buildManualEmailMessage(
   eventId: number,
   eventCode: string,
@@ -756,6 +946,12 @@ async function buildManualEmailMessage(
   id: number,
   comment?: string,
 ): Promise<ManualEmailMessage> {
+  if (template === "pris-pre-event") {
+    return buildPris2026PreEventMessage(eventId, eventCode, id);
+  }
+  if (template === "pris-ticket-reminder") {
+    return buildPris2026TicketReminderMessage(eventId, eventCode, id);
+  }
   if (template === "pris-early-bird-reminder") {
     return buildPris2026EarlyBirdReminderMessage(eventId, id);
   }
@@ -792,7 +988,7 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
     const eventId = parseEventId(query.eventId);
     const template = parseTemplate(query.template);
     const search = (query.q ?? "").trim();
-    const MAX = 500;
+    const MAX = 1000;
 
     if (!eventId) return reply.status(400).send({ success: false, error: "eventId is required" });
     if (!template) return reply.status(400).send({ success: false, error: "Valid template is required" });
@@ -836,6 +1032,42 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
             email: user.email,
             detail: user.role,
             tag: "Early Bird eligible / unpaid",
+          }));
+        }
+      } else if (template === "pris-ticket-reminder") {
+        if (event.eventCode !== PRIS_2026_EVENT_CODE) {
+          recipients = [];
+        } else {
+          const rows = await db
+            .select({
+              id: users.id,
+              email: users.email,
+              firstName: users.firstName,
+              lastName: users.lastName,
+              role: users.role,
+            })
+            .from(users)
+            .where(
+              and(
+                ...buildPris2026TicketReminderUserConditions(eventId),
+                search
+                  ? or(
+                      ilike(users.email, `%${search}%`),
+                      ilike(users.firstName, `%${search}%`),
+                      ilike(users.lastName, `%${search}%`),
+                    )
+                  : undefined,
+              ),
+            )
+            .orderBy(desc(users.createdAt))
+            .limit(MAX);
+
+          recipients = rows.map((user) => ({
+            id: user.id,
+            label: fullName(user.firstName, user.lastName),
+            email: user.email,
+            detail: user.role,
+            tag: "No confirmed ticket",
           }));
         }
       } else if (config.recipientType === "user") {
@@ -971,6 +1203,8 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
           detail: abstract.title.length > 72 ? `${abstract.title.slice(0, 72)}...` : abstract.title,
           tag: `${abstract.status} / ${abstract.presentationType}`,
         }));
+      } else if (template === "pris-pre-event" && event.eventCode !== PRIS_2026_EVENT_CODE) {
+        recipients = [];
       } else {
         const rows = await db
           .select({
@@ -1008,6 +1242,9 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
           tag: `${registration.status} / ${registration.source}`,
         }));
       }
+
+      const lastSent = await findLastSentAt(eventId, template, recipients.map((r) => r.id));
+      recipients = recipients.map((r) => ({ ...r, lastSentAt: lastSent.get(r.id)?.toISOString() ?? null }));
 
       return reply.send({ success: true, eventId, template, recipients });
     } catch (error) {
@@ -1058,85 +1295,67 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post("/", async (request, reply) => {
-    const body = request.body as {
-      eventId?: number;
-      template?: string;
-      recipientIds?: number[];
-      dryRun?: boolean;
-      comment?: string;
+    const parsed = validateManualEmailPostBody(request.body);
+    if (!parsed.ok) return reply.status(400).send({ success: false, error: parsed.error });
+    const { eventId, template, ids, dryRun, batchId, comment } = parsed;
+
+    let event: { id: number; eventCode: string };
+    try {
+      event = await loadEventScope(eventId);
+    } catch (error) {
+      if (error instanceof EventEmailContextError) {
+        return reply.status(404).send({ success: false, error: error.message });
+      }
+      fastify.log.error(error, "email-manual send error");
+      return reply.status(500).send({ success: false, error: "Internal error during email-manual" });
+    }
+
+    const build = async (id: number): Promise<BuildOutcome> => {
+      try {
+        return { kind: "message", message: await buildManualEmailMessage(eventId, event.eventCode, template, id, comment) };
+      } catch (error) {
+        if (!(error instanceof ManualEmailSkip)) throw error;
+        return {
+          kind: "skip",
+          id,
+          email: error.email === "-" ? null : error.email,
+          name: error.name === "-" ? null : error.name,
+          reason: error.message,
+        };
+      }
     };
-    const eventId = parseEventId(body.eventId);
-    const template = parseTemplate(body.template);
-    const recipientIds = body.recipientIds;
-    const dryRun = body.dryRun ?? false;
 
-    if (!eventId) return reply.status(400).send({ success: false, error: "eventId is required" });
-    if (!template) return reply.status(400).send({ success: false, error: "Valid template is required" });
-    if (!Array.isArray(recipientIds) || recipientIds.length === 0) {
-      return reply.status(400).send({ success: false, error: "recipientIds must be a non-empty array" });
-    }
-
-    const uniqueIds = [...new Set(recipientIds.map(Number))]
-      .filter((id) => Number.isInteger(id) && id > 0);
-    if (uniqueIds.length === 0) {
-      return reply.status(400).send({ success: false, error: "recipientIds must contain valid IDs" });
-    }
+    const log = createManualEmailLogWriter({
+      batchId,
+      eventId,
+      template,
+      recipientType: TEMPLATE_CONFIG[template].recipientType,
+      triggeredBy: request.user?.id ?? null,
+    });
+    // Separate the log-write failure (nothing more is sent) from other errors.
+    let logWriteFailed = false;
+    const guardedLog = {
+      insertSkipped: (row: Parameters<typeof log.insertSkipped>[0]) =>
+        log.insertSkipped(row).catch((error) => { logWriteFailed = true; throw error; }),
+      insertSending: (row: Parameters<typeof log.insertSending>[0]) =>
+        log.insertSending(row).catch((error) => { logWriteFailed = true; throw error; }),
+      finish: log.finish,
+    };
 
     try {
-      const event = await loadEventScope(eventId);
-      const results: ManualEmailResult[] = [];
+      const results: ManualEmailResult[] = await runManualEmailLoop({
+        ids,
+        template,
+        dryRun,
+        build,
+        log: guardedLog,
+        sleep: (ms) => sleep(ms),
+        onLogFinishError: (error, logId) =>
+          fastify.log.error(error, `email-manual could not finish log #${logId} (${template}, batch ${batchId})`),
+      });
 
-      for (const id of uniqueIds) {
-        let message: ManualEmailMessage;
-        try {
-          message = await buildManualEmailMessage(eventId, event.eventCode, template, id, body.comment);
-        } catch (error) {
-          if (error instanceof ManualEmailSkip) {
-            results.push({
-              id,
-              email: error.email,
-              name: error.name,
-              type: template,
-              status: "skipped",
-              reason: error.message,
-            });
-            continue;
-          }
-          throw error;
-        }
-
-        if (dryRun) {
-          results.push({
-            id: message.id,
-            email: message.email,
-            name: message.name,
-            type: message.type,
-            status: "pending",
-            reason: message.subject,
-          });
-          continue;
-        }
-
-        try {
-          await message.send();
-          results.push({
-            id: message.id,
-            email: message.email,
-            name: message.name,
-            type: message.type,
-            status: "sent",
-          });
-        } catch (error) {
-          fastify.log.error(error, `email-manual failed to send ${template} to ${message.email}`);
-          results.push({
-            id: message.id,
-            email: message.email,
-            name: message.name,
-            type: message.type,
-            status: "failed",
-            reason: String(error),
-          });
-        }
+      for (const failed of results.filter((r) => r.status === "failed")) {
+        fastify.log.error(`email-manual failed to send ${template} to ${failed.email}: ${failed.reason}`);
       }
 
       return reply.send({
@@ -1144,6 +1363,7 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
         dryRun,
         eventId,
         template,
+        batchId,
         results,
         summary: buildSummary(results),
       });
@@ -1152,7 +1372,51 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
         return reply.status(404).send({ success: false, error: error.message });
       }
       fastify.log.error(error, "email-manual send error");
-      return reply.status(500).send({ success: false, error: "Internal error during email-manual" });
+      return reply.status(500).send({
+        success: false,
+        error: logWriteFailed
+          ? "Failed to write email log; nothing further was sent"
+          : "Internal error during email-manual",
+      });
+    }
+  });
+
+  fastify.get("/logs", async (request, reply) => {
+    const query = request.query as {
+      eventId?: string;
+      template?: string;
+      status?: string;
+      batchId?: string;
+      q?: string;
+      page?: string;
+    };
+    const eventId = parseEventId(query.eventId);
+    if (!eventId) return reply.status(400).send({ success: false, error: "eventId is required" });
+
+    const page = Number(query.page ?? 1);
+    if (!Number.isInteger(page) || page < 1) {
+      return reply.status(400).send({ success: false, error: "page must be a positive integer" });
+    }
+    let batchId: string | undefined;
+    if (query.batchId) {
+      const parsedBatch = parseBatchId(query.batchId);
+      if (!parsedBatch.ok) return reply.status(400).send({ success: false, error: "batchId must be a UUID" });
+      batchId = parsedBatch.batchId;
+    }
+
+    try {
+      const result = await listManualEmailLogs({
+        eventId,
+        template: query.template || undefined,
+        status: query.status || undefined,
+        batchId,
+        q: (query.q ?? "").trim() || undefined,
+        page,
+      });
+      return reply.send({ success: true, ...result, page, pageSize: MANUAL_EMAIL_LOG_PAGE_SIZE });
+    } catch (error) {
+      fastify.log.error(error, "email-manual logs error");
+      return reply.status(500).send({ success: false, error: "Failed to load email logs" });
     }
   });
 }
