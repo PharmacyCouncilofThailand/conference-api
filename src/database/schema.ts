@@ -2938,6 +2938,37 @@ export const merchPaymentEvents = pgTable(
   }),
 );
 
+// Per-recipient log of backoffice Email Manual sends (migration 0054).
+export const manualEmailLogs = pgTable(
+  "manual_email_logs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    batchId: uuid("batch_id").notNull(),
+    eventId: integer("event_id")
+      .notNull()
+      .references(() => events.id),
+    template: varchar("template", { length: 64 }).notNull(),
+    recipientType: varchar("recipient_type", { length: 16 }).notNull(),
+    recipientId: integer("recipient_id").notNull(),
+    recipientEmail: varchar("recipient_email", { length: 255 }),
+    recipientName: varchar("recipient_name", { length: 255 }),
+    subject: text("subject"),
+    status: varchar("status", { length: 16 }).notNull(),
+    reason: text("reason"),
+    triggeredBy: integer("triggered_by").references(() => backofficeUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("manual_email_logs_event_template_created_idx").on(table.eventId, table.template, table.createdAt.desc()),
+    index("manual_email_logs_batch_idx").on(table.batchId),
+    index("manual_email_logs_sent_lookup_idx")
+      .on(table.eventId, table.template, table.recipientId)
+      .where(sql`${table.status} = 'sent'`),
+    check("manual_email_logs_status_check", sql`${table.status} in ('sending', 'sent', 'failed', 'skipped')`),
+  ],
+);
+
 export const merchEmailOutbox = pgTable(
   "merch_email_outbox",
   {
