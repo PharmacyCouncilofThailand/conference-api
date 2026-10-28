@@ -20,7 +20,7 @@ test('holder import PostgreSQL transaction, compatibility and failure cases', { 
   let owned = false;
   let sequence = 0;
   const hash = 'a'.repeat(64);
-  const entries = Array.from({ length: 559 }, (_, i) => ({ row: i + 2, regCode: `TEST-${i + 1}`, email: `person${i + 1}@example.test`, holderType: HOLDER_TYPE_KEYS[i % 11] }));
+  const entries = Array.from({ length: 559 }, (_, i) => ({ row: i + 2, regCode: `TEST-${i + 1}`, email: `person${i + 1}@example.test`, holderType: HOLDER_TYPE_KEYS[i % HOLDER_TYPE_KEYS.length] }));
   const parsed = { entries, skipped: [{ row: 561, reason: 'Test' }], errors: [] };
   const options = { expectedCount: 559, expectedEventId: 2 };
   const applyOptions = () => ({ ...options, apply: true, backup: join(directory, `${++sequence}.json`) });
@@ -55,7 +55,7 @@ test('holder import PostgreSQL transaction, compatibility and failure cases', { 
       const after = await sql`SELECT id,md5((to_jsonb(r)-ARRAY['holder_type','holder_type_source','holder_type_updated_at'])::text) AS fingerprint FROM public.registrations r ORDER BY id`;
       assert.deepEqual([...after], [...before]);
       const counts = await sql`SELECT count(DISTINCT holder_type)::int AS types,count(holder_type)::int AS assigned FROM public.registrations`;
-      assert.deepEqual(counts[0], { types: 11, assigned: 559 });
+      assert.deepEqual(counts[0], { types: HOLDER_TYPE_KEYS.length, assigned: 559 });
       const backup = JSON.parse(await readFile(opts.backup, 'utf8'));
       assert.equal(backup.changes.length, 559);
       assert.equal(JSON.stringify(backup).includes('@example.test'), false);
