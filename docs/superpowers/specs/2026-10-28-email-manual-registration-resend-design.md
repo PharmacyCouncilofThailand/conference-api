@@ -1,7 +1,7 @@
 # Email Manual: Manual Registration Confirmation Resend
 
 Date: 2026-10-28 (Asia/Bangkok)
-Status: Design and written spec approved by the user on 2026-10-28
+Status: Implemented and verified locally on 2026-10-28; retained on feature branches
 
 ## Goal and approved scope
 
@@ -14,7 +14,7 @@ The email address used by this workflow is `registrations.email`. The administra
 updates that field directly. Updating only `users.email` does not update the copied
 address in a registration. This feature adds no email editor or email synchronization.
 
-## Current behavior
+## Original behavior (before implementation)
 
 - `conference-backoffice/src/app/email-manual/page.tsx` already exposes the
   `manual-registration` template under the label Registration Confirmation.

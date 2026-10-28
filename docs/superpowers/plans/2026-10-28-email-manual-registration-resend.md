@@ -37,7 +37,7 @@
 - Consumes: `GET /email-manual/recipients?eventId=<positive integer>&template=manual-registration&q=<optional search>&source=manual`.
 - Produces: unchanged `{ success, eventId, template, recipients }`; HTTP 400 for unsupported source values or source with another template; omitted source means all.
 
-- [ ] **Step 1: Add focused route regression tests.** Use the existing `events.tickets.test.ts` mock pattern, without connecting to a database. The full initial test file is:
+- [x] **Step 1: Add focused route regression tests.** Use the existing `events.tickets.test.ts` mock pattern, without connecting to a database. The full initial test file is:
 
 ```ts
 import assert from "node:assert/strict";
@@ -126,9 +126,9 @@ for (const query of [
 }
 ```
 
-- [ ] **Step 2: Confirm the regression fails.** In `/Users/ptic/Desktop/Conference/conference-api`, run `./node_modules/.bin/tsx --test src/routes/backoffice/email-manual.recipients.test.ts`. Expect missing manual predicate and unsupported queries returning 200 instead of 400.
+- [x] **Step 2: Confirm the regression fails.** In `/Users/ptic/Desktop/Conference/conference-api`, run `./node_modules/.bin/tsx --test src/routes/backoffice/email-manual.recipients.test.ts`. Expect missing manual predicate and unsupported queries returning 200 instead of 400.
 
-- [ ] **Step 3: Extend the existing recipients query type and validate before database access.** Add `source?: string` to the inline query type. After existing event/template validation and before `try`, insert:
+- [x] **Step 3: Extend the existing recipients query type and validate before database access.** Add `source?: string` to the inline query type. After existing event/template validation and before `try`, insert:
 
 ```ts
 if (query.source !== undefined && query.source !== "manual") {
@@ -147,9 +147,9 @@ query.source === "manual" ? eq(registrations.source, "manual") : undefined,
 
 Do not add source checks to the render/send endpoint contracts. The existing builder already re-reads the current registration email and preserves its code.
 
-- [ ] **Step 4: Verify the API deliverable.** Run `./node_modules/.bin/tsx --test src/routes/backoffice/email-manual.recipients.test.ts src/routes/backoffice/email-manual.contract.test.ts src/modules/manual-email/eligibility.test.ts src/modules/manual-email/send-loop.test.ts` and `npm run build`. Expect passing tests and TypeScript compilation. Confirm the existing builder passes `reg.email` into both its message result and sender, and the existing log writer stores that result's email.
+- [x] **Step 4: Verify the API deliverable.** Run `./node_modules/.bin/tsx --test src/routes/backoffice/email-manual.recipients.test.ts src/routes/backoffice/email-manual.contract.test.ts src/modules/manual-email/eligibility.test.ts src/modules/manual-email/send-loop.test.ts` and `npm run build`. Expect passing tests and TypeScript compilation. Confirm the existing builder passes `reg.email` into both its message result and sender, and the existing log writer stores that result's email.
 
-- [ ] **Step 5: Commit the API change.** Run `git add src/routes/backoffice/email-manual.ts src/routes/backoffice/email-manual.recipients.test.ts` then `git commit -m 'feat(email-manual): filter manual registration recipients'` in the API repository.
+- [x] **Step 5: Commit the API change.** Run `git add src/routes/backoffice/email-manual.ts src/routes/backoffice/email-manual.recipients.test.ts` then `git commit -m 'feat(email-manual): filter manual registration recipients'` in the API repository.
 
 ### Task 2: Add source selection and recipient reload in Backoffice
 
@@ -159,14 +159,14 @@ Do not add source checks to the render/send endpoint contracts. The existing bui
 - Consumes: Task 1's optional `source=manual`; existing render response `{ to, subject, html }`.
 - Produces: All / Manual selector for Registration Confirmation, reload of unchanged filters, cleared selections/results on reload, and no stale recipient responses.
 
-- [ ] **Step 1: Add source and reload state next to search state.**
+- [x] **Step 1: Add source and reload state next to search state.**
 
 ```tsx
 const [registrationSource, setRegistrationSource] = useState<'all' | 'manual'>('all');
 const [recipientsRefreshKey, setRecipientsRefreshKey] = useState(0);
 ```
 
-- [ ] **Step 2: Update recipient-loading behavior.** At the beginning of the existing recipients effect, clear `recipients`, `selected`, `results`, and `previewTarget`. If event/template is missing, clear `loadingRecipients` and return. Otherwise set loading before the 250ms debounce so old selections cannot be submitted during that interval. Keep the existing `AbortController` and debounce. Add the source parameter only for the selected template:
+- [x] **Step 2: Update recipient-loading behavior.** At the beginning of the existing recipients effect, clear `recipients`, `selected`, `results`, and `previewTarget`. If event/template is missing, clear `loadingRecipients` and return. Otherwise set loading before the 250ms debounce so old selections cannot be submitted during that interval. Keep the existing `AbortController` and debounce. Add the source parameter only for the selected template:
 
 ```tsx
 if (selectedTemplateId === 'manual-registration' && registrationSource === 'manual') {
@@ -185,9 +185,9 @@ return () => {
 };
 ```
 
-- [ ] **Step 3: Reset source with the relevant existing controls.** Add `setRegistrationSource('all')` to the event-change handler, template-change handler, and Reset handler. Disable Reset and the search input during sending, since either can replace the list while a batch send is in progress. Keep all existing send controls and resend warnings.
+- [x] **Step 3: Reset source with the relevant existing controls.** Add `setRegistrationSource('all')` to the event-change handler, template-change handler, and Reset handler. Disable Reset and the search input during sending, since either can replace the list while a batch send is in progress. Keep all existing send controls and resend warnings.
 
-- [ ] **Step 4: Insert the controls next to recipient search.**
+- [x] **Step 4: Insert the controls next to recipient search.**
 
 ```tsx
 {selectedTemplateId === 'manual-registration' && (
@@ -220,16 +220,57 @@ return () => {
 
 Disable Select unsent, Validate, and Send while loading recipients as well as under their existing conditions. Add an early return on `loadingRecipients || sending` in `submitManualEmail` so a pending refresh cannot submit a stale selection.
 
-- [ ] **Step 5: Show the current address returned by the preview API.** Replace `{recipient.label} / {recipient.email}` with `{recipient.label} / {data?.to ?? recipient.email}`. The API already reads the current registration for each preview, validation, and send; no email editing controls are needed.
+- [x] **Step 5: Show the current address returned by the preview API.** Replace `{recipient.label} / {recipient.email}` with `{recipient.label} / {data?.to ?? recipient.email}`. The API already reads the current registration for each preview, validation, and send; no email editing controls are needed.
 
-- [ ] **Step 6: Verify the UI deliverable.** In `/Users/ptic/Desktop/Conference/conference-backoffice`, run `node --test tests/*.test.mjs`, `../conference-api/node_modules/.bin/tsx --test src/lib/emailManualBatch.test.ts`, `./node_modules/.bin/tsc --noEmit`, and `npm run build`. Expect passing existing tests, TypeScript, and Next.js build; do not add dependencies to run these checks.
+- [x] **Step 6: Verify the UI deliverable.** In `/Users/ptic/Desktop/Conference/conference-backoffice`, run `node --test tests/*.test.mjs`, `../conference-api/node_modules/.bin/tsx --test src/lib/emailManualBatch.test.ts`, `./node_modules/.bin/tsc --noEmit`, and `npm run build`. Expect passing existing tests, TypeScript, and Next.js build; do not add dependencies to run these checks.
 
 For browser verification, use local fixture recipients or a nonproduction session and never send real email. Exercise All / Manual, event/template resets, search, reload after an address change, load errors, and deliberately slow superseded responses. Verify refresh preserves event/template/search/source but clears selected IDs/results; preview shows the API's current `to`; previously sent rows remain selectable. Check narrow and wide layouts and keyboard labels. If no browser/session is available, report that limit explicitly and rely on build plus focused request-lifecycle verification rather than claim a live check.
 
-- [ ] **Step 7: Commit the Backoffice change.** Run `git add src/app/email-manual/page.tsx` then `git commit -m 'feat(email-manual): reload and filter manual registration recipients'` in the Backoffice repository.
+- [x] **Step 7: Commit the Backoffice change.** Run `git add src/app/email-manual/page.tsx` then `git commit -m 'feat(email-manual): reload and filter manual registration recipients'` in the Backoffice repository.
 
 ## Completion
 
-- [ ] Review both diffs against the approved spec and record actual verification results and any limitations.
-- [ ] Update this plan's task checkboxes and the design's status after implementation; commit documentation in the API repository.
-- [ ] Report the new controls, the fact that `registrations.email` supplies the recipient address, and the checks that actually passed. Do not claim deployment or real delivery.
+- [x] Review both diffs against the approved spec and record actual verification results and any limitations.
+- [x] Update this plan's task checkboxes and the design's status after implementation; commit documentation in the API repository.
+- [x] Report the new controls, the fact that `registrations.email` supplies the recipient address, and the checks that actually passed. Do not claim deployment or real delivery.
+
+
+## Execution results — 2026-10-28
+
+The user chose direct implementation and review in this chat. Both repositories
+use the branch `codex/email-manual-registration-resend`; no worktrees were created.
+
+- API implementation commit: `7eb041a`.
+- Backoffice implementation commit: `3ec3e9d`.
+- API regression before implementation: 5 expected failures, 1 existing behavior
+  passing. After implementation: all 23 focused API tests passed, including the
+  6 source-filter route tests. `npm run build` passed.
+- Backoffice: TypeScript (`tsc --noEmit`), the 3 existing email batch tests, and
+  `npm run build` passed. The built production route includes `/email-manual`.
+- Full Backoffice test baseline before edits: 21 passed, 9 failed. Existing
+  failures are in holderTypeGift (5), sessionEmailPreview (3), and rewardCollection
+  (1; missing Playwright). These files were unchanged; this feature does not
+  resolve or claim a green full suite.
+- Browser checks used an isolated local fixture API with real sending disabled:
+  All includes manual and purchase rows; Manual narrows to the manual row;
+  previously sent rows remain selectable; Validate uses dryRun; preview displays
+  the corrected API address even while the list still has the previous address;
+  reload clears selection and previous results and retains the source control.
+  After a fixture HTTP failure, the list is empty and Send remains disabled.
+- The actual recipient effect was also executed in a temporary Node/VM self-check
+  (`/tmp/conference-email-manual-lifecycle-check.cjs`). It passed assertions for
+  clearing old list/selection/results/preview, retaining event/source/search,
+  ignoring a late JSON body, preventing the old finalizer from clearing a newer
+  loading state, and reporting the current request's error. This covered the
+  request-lifecycle cases independently of browser timing.
+- Visual inspection covered the existing page at a narrow browser width. A full
+  desktop visual pass was not completed. The source control inherits the existing
+  responsive flex layout and has an associated label.
+- Impeccable detector ran once: one warning on the unchanged preview icon's
+  `text-slate-500` with `hover:bg-sky-50` (which already has `hover:text-sky-700`).
+  No unrelated visual changes were made.
+- Inline review confirmed the existing registration builder re-reads
+  `registrations.email` for every preview/validation/send, keeps `regCode` and
+  the QR template, and passes the current address to the existing send log.
+- No migration, production database edit, real email send, deployment, push, or
+  merge was performed. Implementation branches are retained for integration.
