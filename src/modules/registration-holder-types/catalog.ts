@@ -54,6 +54,18 @@ export function hasMealCoupon(
   );
 }
 
+export type MealCouponStatus = "eligible" | "over_quota" | null;
+
+/** Coupon for display: eligible, Booth member past the Booth quota, or none. */
+export function mealCouponStatus(
+  holderType: unknown,
+  eventCode: string | null,
+  boothEligible: boolean | null | undefined,
+): MealCouponStatus {
+  if (hasMealCoupon(holderType, eventCode, boothEligible)) return "eligible";
+  return boothEligible === false ? "over_quota" : null;
+}
+
 export function getHolderType(key: unknown): HolderTypeConfig | undefined {
   return typeof key === "string"
     ? HOLDER_TYPES.find((holderType) => holderType.key === key)

@@ -28,7 +28,7 @@ import {
   readCheckinBooth,
   enrichCheckins,
 } from "../../modules/booths/readers.js";
-import { HOLDER_TYPES, MEAL_COUPON_HOLDER_TYPES, hasMealCoupon, holderTypeDisplay } from "../../modules/registration-holder-types/catalog.js";
+import { HOLDER_TYPES, MEAL_COUPON_HOLDER_TYPES, hasMealCoupon, holderTypeDisplay, mealCouponStatus } from "../../modules/registration-holder-types/catalog.js";
 
 // PRIS holder type and gift shown on the check-in result (null outside PRIS).
 async function readHolderBadge(database: typeof defaultDatabase, registrationId: number) {
@@ -47,6 +47,7 @@ async function readHolderBadge(database: typeof defaultDatabase, registrationId:
     ...holderTypeDisplay(row?.holderType, row?.eventCode ?? null),
     // Meal coupon: Booth quota or a coupon holder type (VIP).
     mealCouponEligible: hasMealCoupon(row?.holderType, row?.eventCode ?? null, row?.boothCoupon),
+    mealCouponStatus: mealCouponStatus(row?.holderType, row?.eventCode ?? null, row?.boothCoupon),
   };
 }
 
@@ -91,6 +92,7 @@ export default async function (
           checkins: (await enrichCheckins(db, withHolder)).map((row) => ({
             ...row,
             mealCouponEligible: hasMealCoupon(row.holderType, row.eventCode, row.booth?.mealCouponEligible),
+            mealCouponStatus: mealCouponStatus(row.holderType, row.eventCode, row.booth?.mealCouponEligible),
           })),
           pagination: result.pagination,
           serverNow: result.serverNow,
@@ -328,8 +330,9 @@ export default async function (
   // Every actual write routes through the shared attendance service.
   // Check-in desk dashboard (PRIS): people-based attendance for the event's
   // main session today, per holder type, plus gift and meal-coupon handout.
-  // Gift/coupon count as handed out once an eligible person has checked in
-  // on any day (decided by the organisers on 27 Oct 2026). Read-only.
+  // Gift counts as handed out once an eligible person has checked in on any
+  // day; the meal coupon is 1 per day, so it counts eligible people checked
+  // in today (organisers, 27–28 Oct 2026). Read-only.
   fastify.get("/desk-summary", async (request, reply) => {
     const query = checkinDeskSummarySchema.safeParse(request.query);
     if (!query.success) {
@@ -401,7 +404,7 @@ export default async function (
                count(today.registration_id)::int AS "checkedIn",
                count(ever.registration_id)::int AS "everCheckedIn",
                count(coupon.id)::int AS "couponEligible",
-               count(coupon.id) FILTER (WHERE ever.registration_id IS NOT NULL)::int AS "couponGiven"
+               count(coupon.id) FILTER (WHERE today.registration_id IS NOT NULL)::int AS "couponGiven"
         FROM reg
         LEFT JOIN today ON today.registration_id = reg.id
         LEFT JOIN ever ON ever.registration_id = reg.id

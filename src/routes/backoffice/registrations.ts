@@ -21,7 +21,14 @@ import { BoothError } from "../../modules/booths/policy.js";
 import { registrationBlock, sessionBlock } from "../../modules/session-grants/policy.js";
 import { effectiveDeadline, effectiveInvitationStatus } from "../../modules/session-grants/invitation-policy.js";
 import type { InvitationStatus } from "../../modules/session-grants/types.js";
-import { HOLDER_TYPES, holderTypeDisplay } from "../../modules/registration-holder-types/catalog.js";
+import { HOLDER_TYPES, MEAL_COUPON_HOLDER_TYPES, hasMealCoupon, holderTypeDisplay, mealCouponStatus } from "../../modules/registration-holder-types/catalog.js";
+
+// Booth meal-coupon flag of the registrant (one Booth membership per user/event).
+const boothCouponSql = sql<boolean | null>`(SELECT m.meal_coupon_eligible FROM booth_members m WHERE m.user_id = ${registrations.userId} AND m.event_id = ${registrations.eventId} LIMIT 1)`;
+const couponFields = (row: { holderType: string | null; eventCode: string | null; boothCoupon: boolean | null }) => ({
+    mealCouponEligible: hasMealCoupon(row.holderType, row.eventCode, row.boothCoupon),
+    mealCouponStatus: mealCouponStatus(row.holderType, row.eventCode, row.boothCoupon),
+});
 import { applyAutoHolderType, markHolderTypeOwnerChanged } from "../../modules/registration-holder-types/auto-assign.js";
 import { HolderTypeUpdateError, setAdminHolderType } from "../../modules/registration-holder-types/admin-assign.js";
 import {
@@ -128,6 +135,10 @@ export default async function (fastify: FastifyInstance) {
                     registrations.holderType,
                     HOLDER_TYPES.filter((type) => type.giftCode === "gift").map((type) => type.key),
                 ));
+            } else if (holderType === "meal_coupon") {
+                conditions.push(MEAL_COUPON_HOLDER_TYPES.length > 0
+                    ? or(sql`${boothCouponSql} = true`, inArray(registrations.holderType, [...MEAL_COUPON_HOLDER_TYPES]))!
+                    : sql`${boothCouponSql} = true`);
             } else if (holderType) {
                 conditions.push(eq(registrations.holderType, holderType));
             }
@@ -180,6 +191,7 @@ export default async function (fastify: FastifyInstance) {
                     ticketName: ticketTypes.name,
                     holderType: registrations.holderType,
                     holderTypeSource: registrations.holderTypeSource,
+                    boothCoupon: boothCouponSql,
                     eventName: events.eventName,
                     eventCode: events.eventCode,
                     source: registrations.source,
@@ -331,6 +343,7 @@ export default async function (fastify: FastifyInstance) {
                 registrations: registrationResponse.map((registration) => ({
                     ...registration,
                     ...holderTypeDisplay(registration.holderType, registration.eventCode),
+                    ...couponFields(registration),
                 })),
                 pagination: {
                     page,
@@ -388,6 +401,7 @@ export default async function (fastify: FastifyInstance) {
                     holderType: registrations.holderType,
                     holderTypeSource: registrations.holderTypeSource,
                     holderTypeUpdatedAt: registrations.holderTypeUpdatedAt,
+                    boothCoupon: boothCouponSql,
                     ticketCategory: ticketTypes.category,
                     ticketPrice: ticketTypes.price,
                     ticketCurrency: ticketTypes.currency,
@@ -540,6 +554,7 @@ export default async function (fastify: FastifyInstance) {
                 registration: {
                     ...reg,
                     ...holderTypeDisplay(reg.holderType, reg.eventCode),
+                    ...couponFields(reg),
                     sessions: sessionsWithAttendance,
                     invitations,
                 },

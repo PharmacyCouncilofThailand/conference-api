@@ -67,3 +67,11 @@ test("meal coupon: Booth members within quota only", async () => {
     assert.equal(hasMealCoupon(key, "PRIS-2026", null), false);
   assert.equal(hasMealCoupon("vip", "OTHER", null), false);
 });
+
+test("meal coupon status: eligible, over quota or none", async () => {
+  const { mealCouponStatus } = await import("./catalog.js");
+  assert.equal(mealCouponStatus("exhibitor", "PRIS-2026", true), "eligible");
+  assert.equal(mealCouponStatus("exhibitor", "PRIS-2026", false), "over_quota");
+  assert.equal(mealCouponStatus("exhibitor", "PRIS-2026", null), null);
+  assert.equal(mealCouponStatus("vip", "PRIS-2026", undefined), null);
+});
