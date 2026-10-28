@@ -23,7 +23,7 @@ test("imports 560 synthetic rows across all canonical holder types", () => {
   assert.equal(result.errors.length, 0);
   assert.equal(result.skipped.length, 0);
   assert.equal(result.entries[559].row, 561);
-  assert.equal(new Set(result.entries.map((entry) => entry.holderType)).size, 11);
+  assert.equal(new Set(result.entries.map((entry) => entry.holderType)).size, HOLDER_TYPES.length);
 });
 
 test("explicit aliases match canonical types and the gift/blank rule", () => {

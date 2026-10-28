@@ -3,6 +3,7 @@ import test from "node:test";
 import { HOLDER_TYPES, HOLDER_TYPE_KEYS, getHolderType, holderTypeDisplay } from "./catalog.js";
 
 const expected = [
+  ["vvip", "VVIP", "gift", "ให้"],
   ["council_committee", "กรรมการสภาเภสัชกรรม", "gift", "ให้"],
   ["college_committee", "กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย", "gift", "ให้"],
   ["vip", "VIP", "gift", "ให้"],
@@ -16,9 +17,9 @@ const expected = [
   ["reviewer", "กรรมการประเมินผลงาน", "gift", "ให้"],
 ] as const;
 
-test("catalog contains exactly the eleven agreed unique holder types", () => {
-  assert.equal(HOLDER_TYPES.length, 11);
-  assert.equal(new Set(HOLDER_TYPE_KEYS).size, 11);
+test("catalog contains exactly the twelve agreed unique holder types", () => {
+  assert.equal(HOLDER_TYPES.length, 12);
+  assert.equal(new Set(HOLDER_TYPE_KEYS).size, 12);
   assert.deepEqual(HOLDER_TYPE_KEYS, expected.map(([key]) => key));
   assert.deepEqual(HOLDER_TYPES.map(({ key }) => key), HOLDER_TYPE_KEYS);
 });
@@ -60,7 +61,7 @@ test("all holder types are hidden outside the exact PRIS-2026 event scope", () =
 test("meal coupon: Booth members within quota only", async () => {
   const { hasMealCoupon } = await import("./catalog.js");
   assert.equal(hasMealCoupon("vip", "PRIS-2026", null), false);
-  assert.equal(hasMealCoupon("vip", "PRIS-2026", true), true);
+  assert.equal(hasMealCoupon("vip", "PRIS-2026", true), false);
   assert.equal(hasMealCoupon("exhibitor", "PRIS-2026", true), true);
   assert.equal(hasMealCoupon("exhibitor", "PRIS-2026", false), false);
   for (const key of ["council_committee", "college_committee", "reviewer", "speaker", "participant", null])
@@ -74,4 +75,14 @@ test("meal coupon status: eligible, over quota or none", async () => {
   assert.equal(mealCouponStatus("exhibitor", "PRIS-2026", false), "over_quota");
   assert.equal(mealCouponStatus("exhibitor", "PRIS-2026", null), null);
   assert.equal(mealCouponStatus("vip", "PRIS-2026", undefined), null);
+});
+
+test("VIP and VVIP never get the meal coupon, even within Booth quota", async () => {
+  const { hasMealCoupon, mealCouponStatus } = await import("./catalog.js");
+  for (const key of ["vip", "vvip"]) {
+    assert.equal(hasMealCoupon(key, "PRIS-2026", true), false);
+    assert.equal(mealCouponStatus(key, "PRIS-2026", true), null);
+    assert.equal(mealCouponStatus(key, "PRIS-2026", false), null);
+  }
+  assert.equal(hasMealCoupon("exhibitor", "PRIS-2026", true), true);
 });

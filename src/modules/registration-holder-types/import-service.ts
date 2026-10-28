@@ -95,7 +95,7 @@ async function verifySchema(tx: QueryTransaction) {
       constraint.definition !== probe.definition ||
       JSON.stringify(keys) !== JSON.stringify([...HOLDER_TYPE_KEYS].sort()) ||
       !/holder_type IS NULL/.test(constraint.definition)) {
-    throw new HolderImportError("Holder metadata CHECK constraint does not match the validated 11-type catalog");
+    throw new HolderImportError("Holder metadata CHECK constraint does not match the holder type catalog");
   }
 }
 

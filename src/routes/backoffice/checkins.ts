@@ -28,7 +28,7 @@ import {
   readCheckinBooth,
   enrichCheckins,
 } from "../../modules/booths/readers.js";
-import { HOLDER_TYPES, MEAL_COUPON_HOLDER_TYPES, hasMealCoupon, holderTypeDisplay, mealCouponStatus } from "../../modules/registration-holder-types/catalog.js";
+import { HOLDER_TYPES, MEAL_COUPON_HOLDER_TYPES, NO_MEAL_COUPON_HOLDER_TYPES, hasMealCoupon, holderTypeDisplay, mealCouponStatus } from "../../modules/registration-holder-types/catalog.js";
 
 // PRIS holder type and gift shown on the check-in result (null outside PRIS).
 async function readHolderBadge(database: typeof defaultDatabase, registrationId: number) {
@@ -394,6 +394,9 @@ export default async function (
           SELECT reg.id FROM reg
           JOIN booth_members m ON m.user_id = reg.user_id AND m.event_id = ${eventId}
           WHERE m.meal_coupon_eligible = true
+            AND NOT (${main.eventCode === "PRIS-2026"}
+              AND reg.holder_type IS NOT NULL
+              AND reg.holder_type IN (${sql.join(NO_MEAL_COUPON_HOLDER_TYPES.map((key) => sql`${key}`), sql`, `)}))
           ${main.eventCode === "PRIS-2026" && MEAL_COUPON_HOLDER_TYPES.length > 0
             ? sql`UNION SELECT reg.id FROM reg
                 WHERE reg.holder_type IN (${sql.join(MEAL_COUPON_HOLDER_TYPES.map((key) => sql`${key}`), sql`, `)})`

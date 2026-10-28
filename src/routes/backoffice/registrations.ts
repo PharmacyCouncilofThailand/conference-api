@@ -21,7 +21,7 @@ import { BoothError } from "../../modules/booths/policy.js";
 import { registrationBlock, sessionBlock } from "../../modules/session-grants/policy.js";
 import { effectiveDeadline, effectiveInvitationStatus } from "../../modules/session-grants/invitation-policy.js";
 import type { InvitationStatus } from "../../modules/session-grants/types.js";
-import { HOLDER_TYPES, MEAL_COUPON_HOLDER_TYPES, hasMealCoupon, holderTypeDisplay, mealCouponStatus } from "../../modules/registration-holder-types/catalog.js";
+import { HOLDER_TYPES, MEAL_COUPON_HOLDER_TYPES, NO_MEAL_COUPON_HOLDER_TYPES, hasMealCoupon, holderTypeDisplay, mealCouponStatus } from "../../modules/registration-holder-types/catalog.js";
 
 // Booth meal-coupon flag of the registrant (one Booth membership per user/event).
 const boothCouponSql = sql<boolean | null>`(SELECT m.meal_coupon_eligible FROM booth_members m WHERE m.user_id = ${registrations.userId} AND m.event_id = ${registrations.eventId} LIMIT 1)`;
@@ -136,9 +136,18 @@ export default async function (fastify: FastifyInstance) {
                     HOLDER_TYPES.filter((type) => type.giftCode === "gift").map((type) => type.key),
                 ));
             } else if (holderType === "meal_coupon") {
+                // Booth within quota, minus VIP/VVIP (PRIS); plus coupon holder types.
+                const booth = and(
+                    sql`${boothCouponSql} = true`,
+                    or(
+                        sql`(SELECT e.event_code FROM events e WHERE e.id = ${registrations.eventId}) <> 'PRIS-2026'`,
+                        sql`${registrations.holderType} IS NULL`,
+                        sql`${registrations.holderType} NOT IN (${sql.join(NO_MEAL_COUPON_HOLDER_TYPES.map((key) => sql`${key}`), sql`, `)})`,
+                    ),
+                )!;
                 conditions.push(MEAL_COUPON_HOLDER_TYPES.length > 0
-                    ? or(sql`${boothCouponSql} = true`, inArray(registrations.holderType, [...MEAL_COUPON_HOLDER_TYPES]))!
-                    : sql`${boothCouponSql} = true`);
+                    ? or(booth, inArray(registrations.holderType, [...MEAL_COUPON_HOLDER_TYPES]))!
+                    : booth);
             } else if (holderType) {
                 conditions.push(eq(registrations.holderType, holderType));
             }

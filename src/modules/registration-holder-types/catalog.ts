@@ -1,4 +1,5 @@
 export const HOLDER_TYPE_KEYS = [
+  "vvip",
   "council_committee",
   "college_committee",
   "vip",
@@ -23,6 +24,8 @@ export interface HolderTypeConfig {
 }
 
 export const HOLDER_TYPES: readonly HolderTypeConfig[] = [
+  // VVIP added 28 Oct 2026: gift, no meal coupon, diamond badge in the backoffice.
+  { key: "vvip", label: "VVIP", giftCode: "gift", giftLabel: "ให้" },
   { key: "council_committee", label: "กรรมการสภาเภสัชกรรม", giftCode: "gift", giftLabel: "ให้" },
   { key: "college_committee", label: "กรรมการราชวิทยาลัยเภสัชกรรมแห่งประเทศไทย", giftCode: "gift", giftLabel: "ให้" },
   { key: "vip", label: "VIP", giftCode: "gift", giftLabel: "ให้" },
@@ -41,11 +44,21 @@ export const HOLDER_TYPES: readonly HolderTypeConfig[] = [
 // 27 Oct 2026, so only Booth members qualify for now.
 export const MEAL_COUPON_HOLDER_TYPES: readonly HolderTypeKey[] = [];
 
+// Holder types that never get the meal coupon, even as Booth members within
+// quota (Booth executives reclassified as VIP on 28 Oct 2026).
+export const NO_MEAL_COUPON_HOLDER_TYPES: readonly HolderTypeKey[] = ["vip", "vvip"];
+
 export function hasMealCoupon(
   holderType: unknown,
   eventCode: string | null,
   boothEligible: boolean | null | undefined,
 ): boolean {
+  if (
+    eventCode === "PRIS-2026" &&
+    typeof holderType === "string" &&
+    (NO_MEAL_COUPON_HOLDER_TYPES as readonly string[]).includes(holderType)
+  )
+    return false;
   if (boothEligible === true) return true;
   return (
     eventCode === "PRIS-2026" &&
@@ -63,6 +76,12 @@ export function mealCouponStatus(
   boothEligible: boolean | null | undefined,
 ): MealCouponStatus {
   if (hasMealCoupon(holderType, eventCode, boothEligible)) return "eligible";
+  if (
+    eventCode === "PRIS-2026" &&
+    typeof holderType === "string" &&
+    (NO_MEAL_COUPON_HOLDER_TYPES as readonly string[]).includes(holderType)
+  )
+    return null;
   return boothEligible === false ? "over_quota" : null;
 }
 
