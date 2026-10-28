@@ -37,6 +37,7 @@ export const userRoleEnum = pgEnum("user_role", [
   "healthhack",
   "booth",
   "speaker",
+  "media",
 ]);
 export const healthHackLevelEnum = pgEnum("health_hack_level", [
   "m1",

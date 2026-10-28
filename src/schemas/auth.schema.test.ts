@@ -50,8 +50,10 @@ test("legacy registration validation stays intact", () => {
 });
 
 
-test("speaker account needs no pharmacy license, education level or booth", () => {
-  const result = registerBodySchema.safeParse({ ...common, accountType: "speaker", country: "Japan" });
-  assert.equal(result.success, true);
-  if (result.success) assert.equal(result.data.accountType, "speaker");
+test("speaker and media accounts need no pharmacy license, education level or booth", () => {
+  for (const accountType of ["speaker", "media"]) {
+    const result = registerBodySchema.safeParse({ ...common, accountType, country: "Japan" });
+    assert.equal(result.success, true, accountType);
+    if (result.success) assert.equal(result.data.accountType, accountType);
+  }
 });

@@ -17,7 +17,7 @@ export interface PaginatedResponse<T> {
 }
 
 // User Types
-export type UserRole = 'pharmacist' | 'medical_professional' | 'general' | 'student' | 'healthhack' | 'booth' | 'speaker';
+export type UserRole = 'pharmacist' | 'medical_professional' | 'general' | 'student' | 'healthhack' | 'booth' | 'speaker' | 'media';
 export type HealthHackLevel = 'm1' | 'm2' | 'm3' | 'm4' | 'm5' | 'm6' | 'undergraduate';
 export type StudentLevel = 'postgraduate' | 'undergraduate';
 export type AccountStatus = 'pending_approval' | 'active' | 'rejected';

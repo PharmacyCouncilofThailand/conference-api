@@ -17,6 +17,7 @@ export const registerBodySchema = z
       "healthhack",
       "booth",
       "speaker",
+      "media",
     ]),
     organization: z.string().optional(),
     university: z.string().optional(),

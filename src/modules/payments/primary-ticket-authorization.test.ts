@@ -15,9 +15,10 @@ test("new roles retain only eligible real ticket IDs and unrestricted tickets", 
     { id: 22, allowedRoles: 'booth', allowedStudentLevels: null },
     { id: 23, allowedRoles: null, allowedStudentLevels: null },
     { id: 25, allowedRoles: 'speaker', allowedStudentLevels: null },
+    { id: 26, allowedRoles: '["media"]', allowedStudentLevels: null },
     { id: 24, allowedRoles: 'student', allowedStudentLevels: 'undergraduate' },
   ];
-  for (const [role, expected] of [["healthhack", [21, 23]], ["booth", [22, 23]], ["speaker", [23, 25]], ["general", [23]], ["pharmacist", [23]], ["medical_professional", [23]], ["student", [23]]] as const) {
+  for (const [role, expected] of [["healthhack", [21, 23]], ["booth", [22, 23]], ["speaker", [23, 25]], ["media", [23, 26]], ["general", [23]], ["pharmacist", [23]], ["medical_professional", [23]], ["student", [23]]] as const) {
     const result = authorizePrimaryTicketCandidates(special, { effectiveRole: role, effectiveStudentLevel: null }, null);
     assert.deepEqual(result.map(row => row.id), expected);
   }

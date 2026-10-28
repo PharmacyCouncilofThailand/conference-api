@@ -85,6 +85,7 @@ async function resolveFreeTicket(
     healthhack: ["healthhack"],
     booth: ["booth"],
     speaker: ["speaker"],
+    media: ["media"],
   };
   const roles = roleMap[packageId];
   if (!roles) return null;

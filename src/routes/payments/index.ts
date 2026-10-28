@@ -568,6 +568,7 @@ async function resolveTicketId(
       healthhack: ["healthhack"],
       booth: ["booth"],
       speaker: ["speaker"],
+      media: ["media"],
     };
     const roles = roleMap[packageId];
     if (roles) {
