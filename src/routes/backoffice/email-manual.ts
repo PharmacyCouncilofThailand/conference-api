@@ -984,7 +984,7 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get("/recipients", async (request, reply) => {
-    const query = request.query as { eventId?: string; template?: string; q?: string };
+    const query = request.query as { eventId?: string; template?: string; q?: string; source?: string };
     const eventId = parseEventId(query.eventId);
     const template = parseTemplate(query.template);
     const search = (query.q ?? "").trim();
@@ -992,6 +992,12 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
 
     if (!eventId) return reply.status(400).send({ success: false, error: "eventId is required" });
     if (!template) return reply.status(400).send({ success: false, error: "Valid template is required" });
+    if (query.source !== undefined && query.source !== "manual") {
+      return reply.status(400).send({ success: false, error: "source must be manual when provided" });
+    }
+    if (query.source !== undefined && template !== "manual-registration") {
+      return reply.status(400).send({ success: false, error: "source is only supported for Registration Confirmation" });
+    }
 
     try {
       const event = await loadEventScope(eventId);
@@ -1221,6 +1227,7 @@ export default async function emailManualRoutes(fastify: FastifyInstance) {
             and(
               eq(registrations.eventId, eventId),
               eq(registrations.status, "confirmed" as any),
+              query.source === "manual" ? eq(registrations.source, "manual") : undefined,
               search
                 ? or(
                     ilike(registrations.regCode, `%${search}%`),
