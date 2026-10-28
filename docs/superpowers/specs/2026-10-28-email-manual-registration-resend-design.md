@@ -1,7 +1,7 @@
 # Email Manual: Manual Registration Confirmation Resend
 
 Date: 2026-10-28 (Asia/Bangkok)
-Status: Design approved in chat; written spec awaiting user review
+Status: Design and written spec approved by the user on 2026-10-28
 
 ## Goal and approved scope
 
