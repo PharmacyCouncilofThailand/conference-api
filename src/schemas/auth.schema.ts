@@ -85,7 +85,7 @@ export const registerBodySchema = z
   });
 
 export const loginBodySchema = z.object({
-  email: z.string().email("Invalid email address").optional(),
+  email: z.string().trim().email("Invalid email address").optional(),
   pharmacyLicenseId: z.string().optional(),
   password: z.string().min(1, "Password is required"),
   recaptchaToken: z.string().optional(),

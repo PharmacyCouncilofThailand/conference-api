@@ -10,6 +10,7 @@ import { backofficeLoginSchema } from "../../schemas/backoffice.schema.js";
 import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { JWT_EXPIRY } from "../../constants/auth.js";
+import { emailMatches, exactEmailFirst } from "../../utils/emailMatch.js";
 
 export default async function (fastify: FastifyInstance) {
   fastify.post("/login", async (request, reply) => {
@@ -38,7 +39,8 @@ export default async function (fastify: FastifyInstance) {
       const staffList = await db
         .select()
         .from(backofficeUsers)
-        .where(eq(backofficeUsers.email, email))
+        .where(emailMatches(backofficeUsers.email, email))
+        .orderBy(exactEmailFirst(backofficeUsers.email, email))
         .limit(1);
 
 
