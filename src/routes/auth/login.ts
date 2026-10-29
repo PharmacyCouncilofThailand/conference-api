@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { verifyRecaptcha, isRecaptchaEnabled } from "../../utils/recaptcha.js";
 import { JWT_EXPIRY } from "../../constants/auth.js";
+import { emailMatches, exactEmailFirst } from "../../utils/emailMatch.js";
 
 export default async function (fastify: FastifyInstance) {
   fastify.post("/login", async (request, reply) => {
@@ -43,7 +44,9 @@ export default async function (fastify: FastifyInstance) {
       // 2. Find user (by email OR pharmacyLicenseId based on what is provided)
       let userQuery = db.select().from(users);
       if (email) {
-        userQuery = userQuery.where(eq(users.email, email)) as any;
+        userQuery = userQuery
+          .where(emailMatches(users.email, email))
+          .orderBy(exactEmailFirst(users.email, email)) as any;
       } else if (pharmacyLicenseId) {
         userQuery = userQuery.where(eq(users.pharmacyLicenseId, pharmacyLicenseId)) as any;
       }
