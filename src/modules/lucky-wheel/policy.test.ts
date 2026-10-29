@@ -5,6 +5,7 @@ import {
   publishWheelBodySchema,
   spinInputSchema,
   stockAdjustmentBodySchema,
+  winPercentsBodySchema,
 } from "./schemas.js";
 import type { WheelSegment } from "./types.js";
 
@@ -256,4 +257,19 @@ test("fixed percentages over 100 are drawn proportionally and others get nothing
   ];
   assert.deepEqual(segmentWeights(segments), [6000, 6000, 0]);
   assert.throws(() => chooseSegment(segments, () => 12_000), /draw index/i);
+});
+
+test("win rate requests accept 0.01 steps or null and reject zero, over 100 and duplicates", () => {
+  const segmentId = "00000000-0000-4000-8000-000000000061";
+  const base = { reason: "ปรับเรท", idempotencyKey: "00000000-0000-4000-8000-000000000062" };
+  for (const winPercent of [30, 6.67, 100, null]) {
+    assert.equal(winPercentsBodySchema.safeParse({ ...base, segments: [{ segmentId, winPercent }] }).success, true);
+  }
+  for (const winPercent of [0, -1, 100.01, 1.234]) {
+    assert.equal(winPercentsBodySchema.safeParse({ ...base, segments: [{ segmentId, winPercent }] }).success, false);
+  }
+  assert.equal(winPercentsBodySchema.safeParse({
+    ...base,
+    segments: [{ segmentId, winPercent: 30 }, { segmentId, winPercent: 20 }],
+  }).success, false);
 });

@@ -307,7 +307,7 @@ export async function readAdminWheelState(
     SELECT
       seg.id, seg.kind, seg.name_th, seg.name_en, seg.image_id,
       img.object_key AS image_key, img.public_url AS image_url,
-      seg.enabled, seg.position, seg.remaining, seg.retired_at,
+      seg.enabled, seg.position, seg.remaining, seg.win_percent, seg.retired_at,
       (
         SELECT count(*)::int
         FROM lucky_wheel_spins spin
@@ -396,6 +396,7 @@ export async function readAdminWheelState(
       enabled: segment.enabled,
       position: segment.position,
       remaining: segment.remaining,
+      winPercent: segment.win_percent === null ? null : Number(segment.win_percent),
       allocated: segment.allocated_count,
       collected: segment.collected_count,
     })),
@@ -780,6 +781,84 @@ export async function adjustStock(
       poolRevision: nextPoolRevision,
       replayed: false,
     };
+  });
+}
+
+export async function setWinPercents(
+  database: WheelDatabase,
+  actor: WheelActor,
+  eventId: number,
+  segments: Array<{ segmentId: string; winPercent: number | null }>,
+  reason: string,
+  idempotencyKey: string,
+) {
+  return database.transaction(async (tx) => {
+    const txDb = tx as unknown as WheelDatabase;
+    const wheel = await wheelRow(txDb, eventId, true);
+    if (!wheel) {
+      throw new WheelError(409, "WHEEL_NOT_READY", "Lucky wheel has not been configured for this event");
+    }
+    const admin = await requireAdmin(txDb, actor, eventId);
+    const requested = segments.map((segment) => ({
+      segmentId: segment.segmentId,
+      winPercent: segment.winPercent === null ? null : Math.round(segment.winPercent * 100) / 100,
+    }));
+
+    const replayRows = await tx.execute(sql`
+      SELECT after_snapshot
+      FROM lucky_wheel_audit_events
+      WHERE event_id = ${eventId}
+        AND actor_backoffice_user_id = ${admin.id}
+        AND operation = 'win_percent_set'
+        AND idempotency_key = ${idempotencyKey}
+      LIMIT 1
+      FOR UPDATE
+    `);
+    const replay = (replayRows as unknown as Array<{ after_snapshot: Record<string, unknown> }>)[0];
+    if (replay) {
+      if (
+        JSON.stringify(replay.after_snapshot.segments) !== JSON.stringify(requested) ||
+        replay.after_snapshot.reason !== reason.trim()
+      ) {
+        throw new WheelError(409, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used with another win rate request");
+      }
+      return { eventId, segments: requested, reason: reason.trim(), idempotencyKey, replayed: true };
+    }
+
+    const existing = new Map((await segmentRows(txDb, wheel.id, true)).map((row) => [row.id, row]));
+    const before: Array<{ segmentId: string; winPercent: number | null }> = [];
+    for (const segment of requested) {
+      const row = existing.get(segment.segmentId);
+      if (!row) {
+        throw new WheelError(400, "INVALID_WHEEL_REQUEST", "Win rate can only be set for a current wheel segment", {
+          segmentId: segment.segmentId,
+        });
+      }
+      before.push({ segmentId: segment.segmentId, winPercent: row.win_percent === null ? null : Number(row.win_percent) });
+    }
+    for (const segment of requested) {
+      await tx.execute(sql`
+        UPDATE lucky_wheel_segments
+        SET win_percent = ${segment.winPercent},
+            updated_at = clock_timestamp()
+        WHERE id = ${segment.segmentId}
+          AND wheel_id = ${wheel.id}
+      `);
+    }
+    await tx.execute(sql`
+      INSERT INTO lucky_wheel_audit_events (
+        wheel_id, event_id, actor_backoffice_user_id, operation,
+        idempotency_key, reason, before_snapshot, after_snapshot
+      )
+      VALUES (
+        ${wheel.id}, ${eventId}, ${admin.id}, 'win_percent_set',
+        ${idempotencyKey}, ${reason.trim()},
+        ${JSON.stringify({ segments: before })}::jsonb,
+        ${JSON.stringify({ segments: requested, reason: reason.trim() })}::jsonb
+      )
+    `);
+
+    return { eventId, segments: requested, reason: reason.trim(), idempotencyKey, replayed: false };
   });
 }
 

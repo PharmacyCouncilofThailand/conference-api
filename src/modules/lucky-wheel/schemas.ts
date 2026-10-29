@@ -73,6 +73,20 @@ export const stockAdjustmentBodySchema = z.object({
   idempotencyKey: uuidKey,
 }).strict();
 
+export const winPercentsBodySchema = z.object({
+  segments: z.array(z.object({
+    segmentId: uuidKey,
+    winPercent: z.number().gt(0).max(100).multipleOf(0.01).nullable(),
+  }).strict()).min(1).max(256),
+  reason: boundedText(500),
+  idempotencyKey: uuidKey,
+}).strict().superRefine((value, context) => {
+  const ids = value.segments.map((segment) => segment.segmentId);
+  if (new Set(ids).size !== ids.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["segments"], message: "segment IDs must be unique" });
+  }
+});
+
 export const setWheelPausedBodySchema = z.object({
   paused: z.boolean(),
   reason: boundedText(500),

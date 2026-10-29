@@ -28,6 +28,7 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   let publishCalls = 0;
   let stockCalls = 0;
   let pauseCalls = 0;
+  let winPercentCalls = 0;
   let stateCalls = 0;
   let initializeCalls = 0;
   let dayReadCalls = 0;
@@ -72,6 +73,12 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
       stockCalls += 1;
       assert.equal(actor.id, 7);
       return { eventId, segmentId, before: 0, after: delta, delta, reason, idempotencyKey, poolRevision: 2, replayed: false };
+    },
+    setWinPercentsFn: async (_db, actor, eventId, segments, reason, idempotencyKey) => {
+      winPercentCalls += 1;
+      assert.equal(actor.id, 7);
+      assert.deepEqual(segments, [{ segmentId: configuration.segments[0].id, winPercent: 30 }]);
+      return { eventId, segments, reason, idempotencyKey, replayed: false };
     },
     setWheelPausedFn: async (_db, actor, eventId, paused, reason, idempotencyKey) => {
       pauseCalls += 1;
@@ -580,6 +587,41 @@ test("lucky wheel routes use authenticated server actors, strict bodies, admin D
   });
   assert.equal(stock.statusCode, 200);
   assert.equal(stockCalls, 1);
+
+  const invalidWinPercent = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3/win-percents",
+    headers: { "x-test-token": "admin" },
+    payload: {
+      segments: [{ segmentId: configuration.segments[0].id, winPercent: 0 }],
+      reason: "ปรับเรท",
+      idempotencyKey: randomUUID(),
+    },
+  });
+  assert.equal(invalidWinPercent.statusCode, 400);
+  const attendeeWinPercent = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3/win-percents",
+    headers: { "x-test-token": "attendee" },
+    payload: {
+      segments: [{ segmentId: configuration.segments[0].id, winPercent: 30 }],
+      reason: "ปรับเรท",
+      idempotencyKey: randomUUID(),
+    },
+  });
+  assert.equal(attendeeWinPercent.statusCode, 403);
+  const winPercent = await app.inject({
+    method: "PUT",
+    url: "/backoffice/events/3/win-percents",
+    headers: { "x-test-token": "admin" },
+    payload: {
+      segments: [{ segmentId: configuration.segments[0].id, winPercent: 30 }],
+      reason: "ปรับเรท",
+      idempotencyKey: randomUUID(),
+    },
+  });
+  assert.equal(winPercent.statusCode, 200);
+  assert.equal(winPercentCalls, 1);
 
   const pause = await app.inject({
     method: "PUT",

@@ -17,6 +17,7 @@ import {
   redemptionInputSchema,
   rewardLookupBodySchema,
   setWheelPausedBodySchema,
+  winPercentsBodySchema,
   spinInputSchema,
   stockAdjustmentBodySchema,
   wheelDayDateSchema,
@@ -41,6 +42,7 @@ import {
   readAdminSpins,
   readAdminWheelState,
   setWheelPaused,
+  setWinPercents,
   validateAdminActor,
   WheelError,
   type WheelActor,
@@ -72,6 +74,7 @@ export interface LuckyWheelRouteOptions {
   publishWheelFn?: typeof publishWheel;
   adjustStockFn?: typeof adjustStock;
   setWheelPausedFn?: typeof setWheelPaused;
+  setWinPercentsFn?: typeof setWinPercents;
   readAdminWheelStateFn?: typeof readAdminWheelState;
   initializeWheelFn?: typeof initializeWheel;
   setupWheelAttendanceFn?: typeof setupWheelAttendance;
@@ -214,6 +217,7 @@ export async function luckyWheelAdminRoutes(
   const publishWheelFn = options.publishWheelFn ?? publishWheel;
   const adjustStockFn = options.adjustStockFn ?? adjustStock;
   const setWheelPausedFn = options.setWheelPausedFn ?? setWheelPaused;
+  const setWinPercentsFn = options.setWinPercentsFn ?? setWinPercents;
   const readAdminWheelStateFn = options.readAdminWheelStateFn ?? readAdminWheelState;
   const initializeWheelFn = options.initializeWheelFn ?? initializeWheel;
   const setupWheelAttendanceFn = options.setupWheelAttendanceFn ?? setupWheelAttendance;
@@ -578,6 +582,40 @@ export async function luckyWheelAdminRoutes(
         return reply.send({ ...result, requestId: request.id });
       } catch (error) {
         request.log.error({ code: error instanceof WheelError ? error.code : "LUCKY_WHEEL_STOCK_FAILED" });
+        return sendWheelError(reply, error, request.id);
+      }
+    },
+  );
+
+  fastify.put(
+    "/events/:eventId/win-percents",
+    { config: { rateLimit: false }, preHandler: adminRateLimit, bodyLimit: 32 * 1024 },
+    async (request, reply) => {
+      const eventResult = eventIdSchema.safeParse((request.params as { eventId?: unknown }).eventId);
+      const bodyResult = winPercentsBodySchema.safeParse(request.body);
+      if (!eventResult.success || !bodyResult.success) {
+        return invalid(reply, request.id);
+      }
+      try {
+        const admin = await requireAdminFromRequest(
+          database,
+          request,
+          reply,
+          eventResult.data,
+          validateAdminActorFn,
+        );
+        if (!admin) return;
+        const result = await setWinPercentsFn(
+          database,
+          admin,
+          eventResult.data,
+          bodyResult.data.segments,
+          bodyResult.data.reason,
+          bodyResult.data.idempotencyKey,
+        );
+        return reply.send({ ...result, requestId: request.id });
+      } catch (error) {
+        request.log.error({ code: error instanceof WheelError ? error.code : "LUCKY_WHEEL_WIN_PERCENT_FAILED" });
         return sendWheelError(reply, error, request.id);
       }
     },
