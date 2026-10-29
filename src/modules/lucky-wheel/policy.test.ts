@@ -259,6 +259,25 @@ test("fixed percentages over 100 are drawn proportionally and others get nothing
   assert.throws(() => chooseSegment(segments, () => 12_000), /draw index/i);
 });
 
+test("prize rates stay exact when all prizes are set and no-prize ignores its own percentage", () => {
+  const segments = [
+    segment({ id: "pen", kind: "prize", position: 0, remaining: 5, winPercent: 30 }),
+    segment({ id: "notebook", kind: "prize", position: 1, remaining: 5, winPercent: 30 }),
+    segment({ id: "mug", kind: "prize", position: 2, remaining: 5, winPercent: 5 }),
+    segment({ id: "lose-a", kind: "no_prize", position: 3, winPercent: 10 }),
+    segment({ id: "lose-b", kind: "no_prize", position: 4 }),
+  ];
+  const weights = segmentWeights(segments);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  assert.deepEqual(weights.map((weight) => Math.round((weight / total) * 10_000) / 100), [30, 30, 5, 17.5, 17.5]);
+
+  segments[0].remaining = 0;
+  const live = candidateSegments(segments);
+  const after = segmentWeights(live);
+  const afterTotal = after.reduce((sum, weight) => sum + weight, 0);
+  assert.deepEqual(after.map((weight) => Math.round((weight / afterTotal) * 10_000) / 100), [30, 5, 32.5, 32.5]);
+});
+
 test("win rate requests accept 0.01 steps or null and reject zero, over 100 and duplicates", () => {
   const segmentId = "00000000-0000-4000-8000-000000000061";
   const base = { reason: "ปรับเรท", idempotencyKey: "00000000-0000-4000-8000-000000000062" };

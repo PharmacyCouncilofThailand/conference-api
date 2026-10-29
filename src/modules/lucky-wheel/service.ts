@@ -837,6 +837,27 @@ export async function setWinPercents(
       before.push({ segmentId: segment.segmentId, winPercent: row.win_percent === null ? null : Number(row.win_percent) });
     }
     for (const segment of requested) {
+      if (existing.get(segment.segmentId)?.kind !== "prize" && segment.winPercent !== null) {
+        throw new WheelError(400, "INVALID_WHEEL_REQUEST", "Only prizes can have a fixed win rate", {
+          segmentId: segment.segmentId,
+        });
+      }
+    }
+    const requestedById = new Map(requested.map((segment) => [segment.segmentId, segment.winPercent]));
+    const prizeTotalHundredths = Array.from(existing.values())
+      .filter((row) => row.kind === "prize")
+      .reduce((sum, row) => {
+        const percent = requestedById.has(row.id)
+          ? requestedById.get(row.id)
+          : row.win_percent === null ? null : Number(row.win_percent);
+        return sum + Math.round((percent ?? 0) * 100);
+      }, 0);
+    if (prizeTotalHundredths > 10_000) {
+      throw new WheelError(400, "WIN_PERCENT_OVER_LIMIT", "Prize win rates add up to more than 100%", {
+        totalPercent: prizeTotalHundredths / 100,
+      });
+    }
+    for (const segment of requested) {
       await tx.execute(sql`
         UPDATE lucky_wheel_segments
         SET win_percent = ${segment.winPercent},

@@ -17,7 +17,7 @@ export function chooseSegment(
   if (candidates.length === 0) {
     throw new Error("No eligible wheel segments");
   }
-  if (!candidates.some((segment) => segment.winPercent != null)) {
+  if (!candidates.some((segment) => fixedPercent(segment) !== null)) {
     const index = draw(candidates.length);
     if (!Number.isInteger(index) || index < 0 || index >= candidates.length) {
       throw new Error("Draw index is outside the candidate range");
@@ -38,13 +38,20 @@ export function chooseSegment(
   throw new Error("Draw index is outside the candidate range");
 }
 
-// Integer weights for live candidates. A segment with winPercent keeps that
-// share; the rest of 100% is split equally across segments without one. If
-// the fixed shares already reach 100%, only they can be drawn.
+// Only prizes can have a fixed chance; no-prize slots always take the rest.
+function fixedPercent(segment: WheelSegment): number | null {
+  return segment.kind === "prize" && segment.winPercent != null ? segment.winPercent : null;
+}
+
+// Integer weights for live candidates. A prize with winPercent gets exactly
+// that chance; the rest of 100% is split equally across the other live
+// segments (no-prize slots and prizes without a percentage). Only if nothing
+// else is live, or the fixed shares exceed 100%, are they scaled.
 export function segmentWeights(candidates: WheelSegment[]): number[] {
-  const hundredths = candidates.map((segment) =>
-    segment.winPercent == null ? null : Math.round(segment.winPercent * 100),
-  );
+  const hundredths = candidates.map((segment) => {
+    const percent = fixedPercent(segment);
+    return percent === null ? null : Math.round(percent * 100);
+  });
   const fixedTotal = hundredths.reduce<number>((sum, value) => sum + (value ?? 0), 0);
   const freeCount = hundredths.filter((value) => value === null).length;
   const leftover = Math.max(0, 10_000 - fixedTotal);

@@ -12,6 +12,7 @@ export class WheelError extends Error {
       | "INVALID_WHEEL_REQUEST"
       | "WHEEL_NOT_FOUND"
       | "INSUFFICIENT_STOCK"
+      | "WIN_PERCENT_OVER_LIMIT"
       | "REWARD_CONFIG_ERROR"
       | "REWARD_CREDENTIAL_COLLISION"
       | "ATTENDANCE_SETUP_STALE"
