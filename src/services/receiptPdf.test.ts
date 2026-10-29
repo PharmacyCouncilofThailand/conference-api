@@ -128,7 +128,7 @@ test("ticket description uses the registration participant independently of buye
 
   assert.equal(view.items[0].description, `${TICKET_RECEIPT_LABEL}\nชื่อผู้เข้าร่วมงาน : สมชาย ใจดี`);
   assert.equal(view.items[1].description, "Workshop");
-  assert.equal(view.recipient.name, "หน่วยงานตัวอย่าง");
+  assert.equal(view.recipient.name, "สมชาย ใจดี / หน่วยงานตัวอย่าง");
 });
 
 test("missing or blank registration name does not substitute the buyer name", () => {
@@ -140,4 +140,31 @@ test("missing or blank registration name does not substitute the buyer name", ()
     assert.equal(view.items[0].description, TICKET_RECEIPT_LABEL);
     assert.equal(view.recipient.name, "Receipt User");
   }
+});
+
+test("tax invoice receipt shows the registrant name followed by the tax invoice name", () => {
+  const taxInvoice = { taxName: "บริษัท ตัวอย่าง จำกัด", taxId: "0105555000000", taxFullAddress: "กรุงเทพฯ" };
+  const base = orderOf([{ name: "Early Bird", type: "ticket", price: 1250, quantity: 1 }]);
+
+  assert.equal(
+    toReceiptViewData({ ...base, participantName: "สมชาย ใจดี", taxInvoice }).recipient.name,
+    "สมชาย ใจดี / บริษัท ตัวอย่าง จำกัด",
+  );
+  // No registration name: fall back to the account holder.
+  assert.equal(
+    toReceiptViewData({ ...base, taxInvoice }).recipient.name,
+    "Receipt User / บริษัท ตัวอย่าง จำกัด",
+  );
+  // Same name on both: don't repeat it.
+  assert.equal(
+    toReceiptViewData({ ...base, participantName: "สมชาย ใจดี", taxInvoice: { ...taxInvoice, taxName: "สมชาย ใจดี" } }).recipient.name,
+    "สมชาย ใจดี",
+  );
+  // Blank tax name: registrant only.
+  assert.equal(
+    toReceiptViewData({ ...base, participantName: "สมชาย ใจดี", taxInvoice: { ...taxInvoice, taxName: "  " } }).recipient.name,
+    "สมชาย ใจดี",
+  );
+  // No tax invoice requested: unchanged, account holder name.
+  assert.equal(toReceiptViewData({ ...base, participantName: "สมชาย ใจดี" }).recipient.name, "Receipt User");
 });

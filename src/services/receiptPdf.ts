@@ -111,13 +111,21 @@ export function toReceiptViewData(data: ReceiptData): ReceiptViewData {
   const ticketDescription = participantName
     ? `${TICKET_RECEIPT_LABEL}\nชื่อผู้เข้าร่วมงาน : ${participantName}`
     : TICKET_RECEIPT_LABEL;
+  // With a tax invoice, show the registrant followed by the invoice name.
+  const taxName = data.taxInvoice?.taxName?.trim();
+  const registrantName = participantName || data.customerName;
+  const recipientName = data.taxInvoice
+    ? [registrantName, taxName && taxName !== registrantName ? taxName : ""]
+      .filter(Boolean)
+      .join(" / ")
+    : data.customerName;
 
   return {
     receiptNo: data.orderNumber,
     date: formatThaiDate(data.paidAt),
     organization: getOrganization(),
     recipient: {
-      name: data.taxInvoice?.taxName || data.customerName,
+      name: recipientName,
       idNumber: data.taxInvoice?.taxId || "",
       address: data.taxInvoice?.taxFullAddress || "",
     },
