@@ -122,7 +122,7 @@ export function toReceiptViewData(data: ReceiptData): ReceiptViewData {
       address: data.taxInvoice?.taxFullAddress || "",
     },
     items: data.items.map((i) => ({
-      description: i.type === "ticket" ? TICKET_RECEIPT_LABEL : i.name,
+      description: i.type === "ticket" ? ticketDescription : i.name,
       quantity: i.quantity,
       unitPrice: i.price,
       amount: i.price * i.quantity,
