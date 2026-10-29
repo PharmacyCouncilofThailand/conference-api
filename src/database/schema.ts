@@ -929,6 +929,7 @@ export const luckyWheelSegments = pgTable(
     enabled: boolean("enabled").notNull().default(true),
     position: integer("position").notNull(),
     remaining: integer("remaining"),
+    winPercent: decimal("win_percent", { precision: 5, scale: 2 }),
     retiredAt: timestamp("retired_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -944,6 +945,10 @@ export const luckyWheelSegments = pgTable(
       "lucky_wheel_segments_quantity_consistency_check",
       sql`(${table.kind} = 'prize' and ${table.remaining} is not null and ${table.remaining} >= 0)
         or (${table.kind} = 'no_prize' and ${table.remaining} is null)`,
+    ),
+    check(
+      "lucky_wheel_segments_win_percent_check",
+      sql`${table.winPercent} is null or (${table.winPercent} > 0 and ${table.winPercent} <= 100)`,
     ),
   ],
 );

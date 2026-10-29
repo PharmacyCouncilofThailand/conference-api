@@ -8,6 +8,7 @@ export type WheelSegment = {
   enabled: boolean;
   position: number;
   remaining: number | null;
+  winPercent?: number | null;
 };
 
 export type SpinInput = {

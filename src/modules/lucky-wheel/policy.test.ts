@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { candidateSegments, chooseSegment } from "./policy.js";
+import { candidateSegments, chooseSegment, segmentWeights } from "./policy.js";
 import {
   publishWheelBodySchema,
   spinInputSchema,
@@ -207,4 +207,53 @@ test("wheel request schemas are strict and keep stock/winner/time server-owned",
     }).success,
     false,
   );
+});
+
+test("fixed win percentages take their share and the rest split evenly", () => {
+  const segments = [
+    segment({ id: "pen", kind: "prize", position: 0, remaining: 5, winPercent: 30 }),
+    segment({ id: "notebook", kind: "prize", position: 1, remaining: 5, winPercent: 30 }),
+    segment({ id: "mug", kind: "prize", position: 2, remaining: 5 }),
+    segment({ id: "lose-a", kind: "no_prize", position: 3 }),
+    segment({ id: "lose-b", kind: "no_prize", position: 4 }),
+    segment({ id: "lose-c", kind: "no_prize", position: 5 }),
+  ];
+  const weights = segmentWeights(segments);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  assert.deepEqual(weights.map((weight) => weight / total), [0.3, 0.3, 0.1, 0.1, 0.1, 0.1]);
+
+  const counts = new Map<string, number>();
+  for (let ticket = 0; ticket < total; ticket += 1) {
+    const id = chooseSegment(segments, (max) => {
+      assert.equal(max, total);
+      return ticket;
+    }).id;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  assert.equal(counts.get("pen"), total * 0.3);
+  assert.equal(counts.get("notebook"), total * 0.3);
+  assert.equal(counts.get("lose-c"), total * 0.1);
+});
+
+test("a sold-out fixed-percent prize gives its share back to the others", () => {
+  const segments = [
+    segment({ id: "pen", kind: "prize", position: 0, remaining: 0, winPercent: 30 }),
+    segment({ id: "notebook", kind: "prize", position: 1, remaining: 5, winPercent: 30 }),
+    segment({ id: "lose", kind: "no_prize", position: 2 }),
+  ];
+  const live = candidateSegments(segments);
+  const weights = segmentWeights(live);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  assert.deepEqual(live.map((item) => item.id), ["notebook", "lose"]);
+  assert.deepEqual(weights.map((weight) => weight / total), [0.3, 0.7]);
+});
+
+test("fixed percentages over 100 are drawn proportionally and others get nothing", () => {
+  const segments = [
+    segment({ id: "pen", kind: "prize", position: 0, remaining: 5, winPercent: 60 }),
+    segment({ id: "notebook", kind: "prize", position: 1, remaining: 5, winPercent: 60 }),
+    segment({ id: "lose", kind: "no_prize", position: 2 }),
+  ];
+  assert.deepEqual(segmentWeights(segments), [6000, 6000, 0]);
+  assert.throws(() => chooseSegment(segments, () => 12_000), /draw index/i);
 });

@@ -109,6 +109,7 @@ type SegmentRow = {
   enabled: boolean;
   position: number;
   remaining: number | null;
+  win_percent: string | number | null;
   retired_at: Date | string | null;
 };
 
@@ -165,6 +166,7 @@ function toWheelSegment(row: SegmentRow): WheelSegment {
     enabled: row.enabled,
     position: row.position,
     remaining: row.remaining,
+    winPercent: row.win_percent === null ? null : Number(row.win_percent),
   };
 }
 
@@ -218,7 +220,7 @@ async function segmentRows(
     SELECT
       seg.id, seg.kind, seg.name_th, seg.name_en, seg.image_id,
       img.object_key AS image_key,
-      seg.enabled, seg.position, seg.remaining, seg.retired_at
+      seg.enabled, seg.position, seg.remaining, seg.win_percent, seg.retired_at
     FROM lucky_wheel_segments seg
     LEFT JOIN lucky_wheel_images img ON img.id = seg.image_id
     WHERE seg.wheel_id = ${wheelId}
@@ -879,7 +881,10 @@ export async function getEligibility(
   await requireActiveUser(database, actor.id);
   const wheel = await wheelRow(database, eventId, false);
   const availability = wheel
-    ? (await segmentRows(database, wheel.id, false)).map(toWheelSegment)
+    ? (await segmentRows(database, wheel.id, false)).map((row) => {
+        const { winPercent: _winPercent, ...segment } = toWheelSegment(row);
+        return segment;
+      })
     : [];
   const currentWindow = wheel
     ? await readDayWindowForSpin(database, wheel.id, currentClock.day, false)
