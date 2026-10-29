@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { regCodeFromScan } from '../utils/regCodeFromScan.js';
 
 export const checkinListSchema = z.object({
     page: z.coerce.number().min(1).default(1),
@@ -14,7 +15,8 @@ export const checkinListSchema = z.object({
 });
 
 export const createCheckinSchema = z.object({
-    regCode: z.string().min(1),
+    // Staff may scan the payment-success QR (JSON / check-in URL), not just the code.
+    regCode: z.string().transform(regCodeFromScan).pipe(z.string().min(1)),
     sessionId: z.number().optional(),
     checkInAll: z.boolean().optional(),
     assignedSessionId: z.number().optional(), // Mode 4: staff-assigned fast scan
