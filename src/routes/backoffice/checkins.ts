@@ -51,6 +51,22 @@ async function readHolderBadge(database: typeof defaultDatabase, registrationId:
   };
 }
 
+// HealthHack team and nickname shown on the check-in result (null for other roles).
+// Matched by email to a paid team registration member, same event first.
+async function readHealthHackTeam(database: typeof defaultDatabase, registrationId: number) {
+  const [row] = (await database.execute(sql`
+    SELECT t.team_name AS "teamName", m.nickname
+    FROM registrations r
+    JOIN users u ON u.id = r.user_id AND u.role = 'healthhack'
+    JOIN team_registration_members m
+      ON m.email_normalized = lower(trim(coalesce(u.email, r.email)))
+    JOIN team_registrations t ON t.id = m.registration_id AND t.status = 'paid'
+    WHERE r.id = ${registrationId}
+    ORDER BY (t.event_id = r.event_id) DESC, t.paid_at DESC NULLS LAST
+    LIMIT 1`)) as unknown as Array<{ teamName: string; nickname: string | null }>;
+  return row ? { teamName: row.teamName, nickname: row.nickname } : null;
+}
+
 export default async function (
   fastify: FastifyInstance,
   options: { database?: typeof defaultDatabase },
@@ -667,6 +683,7 @@ export default async function (
         ticketName: (registration as any).ticketType?.name,
         eventName: (registration as any).event?.eventName,
         booth: await readCheckinBooth(db, registration.id),
+        healthHack: await readHealthHackTeam(db, registration.id),
         ...(await readHolderBadge(db, registration.id)),
       };
 
